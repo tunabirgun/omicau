@@ -20,6 +20,8 @@ from typing import Any
 import plotly.graph_objects as go
 from jinja2 import Template
 
+from omicau.reporting._assets import DASHBOARD_CSS, TOOLTIP_JS, GLOSSARY, SECTION_COPY, BADGES
+
 # --------------------------------------------------------------------------- #
 # Color-blind-safe palette (Okabe-Ito) + semantic mapping
 # --------------------------------------------------------------------------- #
@@ -44,6 +46,75 @@ BORDER = "#E2E8F0"
 PLOTLY_FONT = "EB Garamond, Georgia, serif"
 PLOTLY_CONFIG = {"responsive": True, "displaylogo": False,
                  "toImageButtonOptions": {"format": "svg", "scale": 2}}
+
+
+# --------------------------------------------------------------------------- #
+# Plain-language badge + answer-strip helpers (from the design system)
+# --------------------------------------------------------------------------- #
+def _verdict_status(verdict: str) -> str:
+    v = (verdict or "").lower()
+    if v.startswith("predictive"):
+        return "predictive"
+    if v.startswith("redundant"):
+        return "redundant"
+    if "batch-confounded" in v:
+        return "batch_confounded"
+    if "no detectable" in v or "control-like" in v:
+        return "control_like"
+    return "redundant"  # "informative but non-additive" reads as neutral
+
+
+def _rating_status(rating: str) -> str:
+    r = (rating or "").lower()
+    if "high" in r:
+        return "high"
+    if "moderate" in r:
+        return "moderate"
+    return "clean"
+
+
+def _badge(status: str) -> dict:
+    return BADGES.get(status, {"label": status, "icon": "•", "css_class": "badge--neutral"})
+
+
+def _answer_strip(util: dict, rating_status: str) -> list[dict]:
+    gain = util.get("fusion_gain_over_best_single")
+    leak = util.get("leakage_warning")
+    ledger = util.get("modality_ledger", [])
+    confounded = [m["modality"] for m in ledger if m.get("batch_confounded")]
+    dead = [m["modality"] for m in ledger if "no detectable" in str(m.get("verdict", ""))]
+    useful = [m["modality"] for m in ledger if str(m.get("verdict", "")).startswith("predictive")]
+
+    if isinstance(gain, (int, float)) and gain > 0.02:
+        q1 = ("Yes — fusion adds signal", "✚", "answer--added")
+    elif isinstance(gain, (int, float)) and gain > 0.005:
+        q1 = ("Marginally", "△", "answer--mid")
+    else:
+        q1 = ("No — one layer suffices", "•", "answer--neutral")
+
+    if leak or rating_status == "high":
+        q2 = ("No — serious flags", "▲", "answer--warn")
+    elif rating_status == "moderate":
+        q2 = ("With caveats", "△", "answer--mid")
+    else:
+        q2 = ("Yes — clean", "✓", "answer--ok")
+
+    if leak:
+        q3 = ("Re-check CV splits for leakage", "▲", "answer--warn")
+    elif confounded:
+        q3 = (f"Correct batch effects in {confounded[0]}", "△", "answer--mid")
+    elif dead:
+        q3 = (f"Consider dropping {dead[0]}", "△", "answer--mid")
+    elif useful and isinstance(gain, (int, float)) and gain > 0.005:
+        q3 = ("Adopt the fusion model", "✓", "answer--ok")
+    else:
+        q3 = ("Prefer the best single layer", "•", "answer--neutral")
+
+    return [
+        {"q": "Does combining layers help?", "a": q1[0], "icon": q1[1], "cls": q1[2]},
+        {"q": "Is the data trustworthy?", "a": q2[0], "icon": q2[1], "cls": q2[2]},
+        {"q": "What should you do next?", "a": q3[0], "icon": q3[1], "cls": q3[2]},
+    ]
 
 
 # --------------------------------------------------------------------------- #
@@ -367,9 +438,25 @@ def build_report(audit: dict, out_dir: str | Path, config=None) -> dict[str, Pat
     # -- render template --------------------------------------------------- #
     control_vals = [c.get("primary") for c in util.get("controls", []) if c.get("primary") is not None]
     control_max = max(control_vals) if control_vals else None
+
+    summary = audit.get("summary", {})
+    rating_status = _rating_status(summary.get("data_hygiene_rating", ""))
+    answers = _answer_strip(util, rating_status)
+    ledger_items = [
+        {**m, "badge": _badge(_verdict_status(m.get("verdict", "")))}
+        for m in util.get("modality_ledger", [])
+    ]
+
     ctx = {
         "audit": audit,
         "control_max": control_max,
+        "dashboard_css": DASHBOARD_CSS,
+        "tooltip_js": TOOLTIP_JS,
+        "glossary": GLOSSARY,
+        "section_copy": SECTION_COPY,
+        "answers": answers,
+        "rating_badge": _badge(rating_status),
+        "ledger_items": ledger_items,
         "meta": audit.get("meta", {}),
         "env": audit.get("environment", {}),
         "dataset": audit.get("dataset", {}),
@@ -415,95 +502,16 @@ _TEMPLATE = r"""<!doctype html>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
-<style>
-:root{
-  --cobalt:#0072B2; --vermillion:#D55E00; --amber:#E69F00; --teal:#009E73;
-  --slate:#4477AA; --ink:#1A202C; --muted:#64748B; --border:#E2E8F0;
-  --bg:#FBFCFD; --panel:#FFFFFF;
-  --serif:'EB Garamond',Georgia,'Times New Roman',serif;
-  --mono:'JetBrains Mono','Fira Code','SF Mono',ui-monospace,monospace;
-}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--serif);
-  font-size:18px;line-height:1.6;-webkit-font-smoothing:antialiased}
-.wrap{max-width:1180px;margin:0 auto;padding:0 24px 80px}
-header.masthead{border-bottom:1px solid var(--border);padding:34px 0 24px;margin-bottom:8px}
-.brand{font-size:13px;letter-spacing:.22em;text-transform:uppercase;color:var(--cobalt);
-  font-family:var(--mono);font-weight:600}
-h1{font-size:38px;font-weight:600;margin:6px 0 4px;letter-spacing:-.01em}
-.sub{color:var(--muted);font-size:16px}
-.hashline{font-family:var(--mono);font-size:12.5px;color:var(--muted);margin-top:10px;
-  word-break:break-all}
-.tabs{display:flex;gap:6px;border-bottom:1px solid var(--border);margin:22px 0 26px;position:sticky;
-  top:0;background:var(--bg);z-index:5;padding-top:6px}
-.tab{appearance:none;border:none;background:none;font-family:var(--serif);font-size:17px;
-  color:var(--muted);padding:12px 18px;cursor:pointer;border-bottom:2px solid transparent}
-.tab.active{color:var(--ink);border-bottom-color:var(--cobalt);font-weight:600}
-.panel{display:none}.panel.active{display:block}
-.grid{display:grid;gap:18px}
-.grid.cards{grid-template-columns:repeat(auto-fit,minmax(210px,1fr))}
-.card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:20px 22px}
-.card .k{font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;
-  color:var(--muted)}
-.card .v{font-size:30px;font-weight:600;margin-top:6px;font-variant-numeric:tabular-nums}
-.card .v.mono{font-family:var(--mono);font-size:22px}
-.card .note{font-size:14px;color:var(--muted);margin-top:4px}
-section{margin:34px 0}
-h2{font-size:25px;font-weight:600;border-bottom:1px solid var(--border);padding-bottom:8px;
-  margin-bottom:18px}
-h3{font-size:19px;font-weight:600;margin:26px 0 10px}
-.figure{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px 16px;
-  overflow-x:auto}
-.figcap{font-size:14px;color:var(--muted);margin:10px 4px 0}
-.verdict{background:var(--panel);border:1px solid var(--border);border-left:5px solid var(--cobalt);
-  border-radius:10px;padding:20px 24px;font-size:19px}
-.pill{display:inline-block;font-family:var(--mono);font-size:12px;font-weight:600;padding:4px 10px;
-  border-radius:999px;letter-spacing:.03em}
-.pill.ok{background:#E6F0F7;color:var(--cobalt)}
-.pill.warn{background:#FBEBDF;color:var(--vermillion)}
-.pill.mid{background:#FCF4E1;color:#9A6A00}
-.flags{list-style:none;padding:0;margin:14px 0}
-.flags li{padding:10px 14px;border:1px solid var(--border);border-left:4px solid var(--amber);
-  border-radius:8px;margin-bottom:8px;font-size:16px;background:var(--panel)}
-.flags li.clean{border-left-color:var(--teal)}
-ul.recs{padding-left:22px}ul.recs li{margin-bottom:8px}
-.ledger-item{border:1px solid var(--border);border-radius:10px;padding:14px 18px;margin-bottom:10px;
-  background:var(--panel)}
-.ledger-item .name{font-weight:600;font-size:18px}
-.ledger-item .rec{color:var(--muted);font-size:15px;margin-top:4px}
-.table-wrap{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px}
-.table-controls{display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap}
-.table-filter{flex:1;min-width:180px;font-family:var(--serif);font-size:15px;padding:8px 12px;
-  border:1px solid var(--border);border-radius:8px}
-.btn{font-family:var(--mono);font-size:12.5px;font-weight:600;background:var(--cobalt);color:#fff;
-  border:none;border-radius:8px;padding:8px 14px;cursor:pointer}
-.btn:hover{background:#005a8c}
-.table-scroll{overflow-x:auto}
-table.omicau-table{width:100%;border-collapse:collapse;font-size:14.5px}
-table.omicau-table th{font-family:var(--mono);font-size:11.5px;text-transform:uppercase;
-  letter-spacing:.05em;color:var(--muted);text-align:left;padding:10px 12px;cursor:pointer;
-  border-bottom:2px solid var(--border);white-space:nowrap;user-select:none}
-table.omicau-table th:hover{color:var(--ink)}
-table.omicau-table td{padding:9px 12px;border-bottom:1px solid var(--border)}
-table.omicau-table td.num{font-family:var(--mono);text-align:right;font-variant-numeric:tabular-nums}
-table.omicau-table tbody tr:hover{background:#F7FAFC}
-.sort-ind{margin-left:6px;color:var(--cobalt)}
-.flow{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:22px}
-pre.config{background:#0F172A;color:#E2E8F0;font-family:var(--mono);font-size:12.5px;padding:18px;
-  border-radius:10px;overflow-x:auto;line-height:1.5}
-.muted{color:var(--muted)}
-.legend{font-size:13px;color:var(--muted);font-family:var(--mono);margin-top:6px}
-footer{border-top:1px solid var(--border);margin-top:50px;padding-top:20px;color:var(--muted);
-  font-size:14px}
-</style>
+<style>{{ dashboard_css|safe }}</style>
 </head>
 <body>
+{% macro tip(term) %}{% if glossary.get(term) %}<button type="button" class="info" aria-label="Define {{ term }}">i<span class="info__bubble">{{ glossary[term] }}</span></button>{% endif %}{% endmacro %}
+{% macro means(key) %}{% set c = section_copy.get(key) %}{% if c %}<div class="callout callout--means"><div class="callout__label">What this shows</div><div class="callout__body"><p><strong>{{ c.what }}</strong></p><p>How to read it: {{ c.how_to_read }}</p><p>Decision: {{ c.what_to_do }}</p></div></div>{% endif %}{% endmacro %}
 <div class="wrap">
 <header class="masthead">
   <div class="brand">omicau · omics audit</div>
   <h1>{{ meta.run_name or "Multi-omic data audit" }}</h1>
-  <div class="sub">{{ dataset.task }} · {{ dataset.n_samples }} samples ·
-    {{ dataset.modalities|length }} modalities · seed {{ meta.seed }}</div>
+  <div class="sub">{{ dataset.task }} · {{ dataset.n_samples }} samples · {{ dataset.modalities|length }} modalities · seed {{ meta.seed }}</div>
   <div class="hashline">provenance SHA-256: {{ meta.provenance_hash }}</div>
 </header>
 
@@ -514,42 +522,52 @@ footer{border-top:1px solid var(--border);margin-top:50px;padding-top:20px;color
 
 <!-- ===================== EXECUTIVE ===================== -->
 <div id="exec" class="panel active">
-  {% set rating = summary.get('data_hygiene_rating','') %}
-  {% set pill = 'warn' if 'high' in rating else ('mid' if 'moderate' in rating else 'ok') %}
-  <div class="verdict">
-    <span class="pill {{ pill }}">{{ rating.split(':')[0] if rating else 'unrated' }}</span>
-    <p style="margin:14px 0 0">{{ summary.get('clinical_verdict','No verdict available.') }}</p>
+  <div class="answer-strip">
+    {% for a in answers %}
+    <div class="answer {{ a.cls }}">
+      <span class="answer-ic" aria-hidden="true">{{ a.icon }}</span>
+      <div class="answer-q">{{ a.q }}</div>
+      <div class="answer-a">{{ a.a }}</div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="verdict verdict--hero">
+    <span class="verdict__eyebrow">Clinical verdict</span>
+    <span class="badge {{ rating_badge.css_class }}">{{ rating_badge.icon }} {{ rating_badge.label }}</span>
+    <p class="verdict__lead">{{ summary.get('clinical_verdict','No verdict available.') }}</p>
+    <div class="verdict__meta">{{ dataset.n_samples }} samples · {{ dataset.task }} · interpretation source: {{ summary.get('source','rule_based') }}</div>
   </div>
 
   <section>
+    <span class="eyebrow">Headline numbers</span>
     <div class="grid cards">
-      <div class="card"><div class="k">Best fusion {{ models.primary_metric }}</div>
+      <div class="card card--optimal"><div class="k">Best fusion {{ models.primary_metric }} {% if models.task=='classification' %}{{ tip('AUROC') }}{% else %}{{ tip('R²') }}{% endif %}</div>
         <div class="v">{{ '%.3f'|format(util.best_model.primary) if util.best_model and util.best_model.primary is not none else '—' }}</div>
-        <div class="note">{{ util.best_model.name if util.best_model else '' }}</div></div>
-      <div class="card"><div class="k">Fusion gain vs best single</div>
-        <div class="v">{{ '%+.3f'|format(util.fusion_gain_over_best_single) if util.fusion_gain_over_best_single is not none else '—' }}</div>
-        <div class="note">leave-one-modality-out delta</div></div>
+        <div class="plain">Higher is better; chance is about {{ '%.1f'|format(util.chance_level) }}.</div></div>
+      <div class="card {{ 'card--positive' if (util.fusion_gain_over_best_single or 0) > 0.01 else 'card--neutral' }}"><div class="k">Fusion gain {{ tip('Fusion gain (leave-one-out)') }}</div>
+        <div class="v {{ 'pos' if (util.fusion_gain_over_best_single or 0) > 0 else 'neg' }}">{{ '%+.3f'|format(util.fusion_gain_over_best_single) if util.fusion_gain_over_best_single is not none else '—' }}</div>
+        <div class="plain">How much combining layers beats the best single layer.</div></div>
       <div class="card"><div class="k">Samples aligned</div>
         <div class="v">{{ dataset.n_samples }}</div>
-        <div class="note">{{ dataset.get('n_dropped',0) }} dropped in alignment</div></div>
-      <div class="card"><div class="k">Control baseline max</div>
+        <div class="plain">{{ dataset.get('n_dropped',0) }} dropped for a missing outcome.</div></div>
+      <div class="card {{ 'card--risk' if util.leakage_warning else 'card--optimal' }}"><div class="k">Control check {{ tip('Control baseline (shuffled target)') }}</div>
         <div class="v mono">{{ '%.3f'|format(control_max) if control_max is not none else '—' }}</div>
-        <div class="note">{{ 'leakage flagged' if util.leakage_warning else 'near chance — no leakage' }}</div></div>
+        <div class="plain">{{ 'Above chance — leakage flag.' if util.leakage_warning else 'Near chance — no leakage.' }}</div></div>
     </div>
   </section>
 
   <section>
-    <h2>Modality utility ledger</h2>
-    {% for m in util.modality_ledger %}
-      {% set vc = 'warn' if m.batch_confounded or 'no detectable' in m.verdict else ('ok' if 'predictive' in m.verdict else 'mid') %}
-      <div class="ledger-item">
-        <span class="pill {{ vc }}">{{ m.verdict }}</span>
-        <span class="name" style="margin-left:10px">{{ m.modality }}</span>
-        <span class="muted" style="font-family:var(--mono);font-size:13px;margin-left:8px">
-          {{ m.n_features }} features · standalone {{ '%.3f'|format(m.standalone_primary) if m.standalone_primary is not none else '—' }}
-          · gain {{ '%+.3f'|format(m.marginal_gain_classical) if m.marginal_gain_classical is not none else '—' }}</span>
-        <div class="rec">{{ m.recommendation }}</div>
+    <h2>Modality utility ledger {{ tip('Layer verdicts') }}</h2>
+    {% for m in ledger_items %}
+    <div class="ledger-item">
+      <div class="ledger-head">
+        <span class="ledger-name">{{ m.modality }}</span>
+        <span class="badge {{ m.badge.css_class }}">{{ m.badge.icon }} {{ m.badge.label }}</span>
       </div>
+      <div class="ledger-stats">{{ m.n_features }} features · standalone {{ '%.3f'|format(m.standalone_primary) if m.standalone_primary is not none else '—' }} · marginal gain {{ '%+.3f'|format(m.marginal_gain_classical) if m.marginal_gain_classical is not none else '—' }}{% if m.redundant_with %} · overlaps {{ m.redundant_with }} (CKA {{ '%.2f'|format(m.redundancy_max_cka) }}){% endif %}</div>
+      <div class="ledger-rec">{{ m.recommendation }}</div>
+    </div>
     {% endfor %}
   </section>
 
@@ -567,26 +585,35 @@ footer{border-top:1px solid var(--border);margin-top:50px;padding-top:20px;color
     <ul class="recs">
       {% for r in summary.get('actionable_recommendations',[]) %}<li>{{ r }}</li>{% endfor %}
     </ul>
-    <p class="legend">interpretation source: {{ summary.get('source','rule_based') }}</p>
   </section>
+
+  <details class="glossary">
+    <summary>Reading guide — plain-language glossary</summary>
+    <div class="gloss-body">
+      {% for term, definition in glossary.items() %}<p><strong>{{ term }}</strong> — {{ definition }}</p>{% endfor %}
+    </div>
+  </details>
 </div>
 
 <!-- ===================== RESEARCH ===================== -->
 <div id="research" class="panel">
   <section>
     <h2>Cross-modal performance</h2>
+    {{ means('cross_modal_performance') }}
+    <div class="reading-guide">
+      <span class="legend-row"><span class="swatch" style="background:#0072B2"></span>fusion</span>
+      <span class="legend-row"><span class="swatch" style="background:#4477AA"></span>single modality</span>
+      <span class="legend-row"><span class="swatch" style="background:#009E73"></span>leave-one-out</span>
+      <span class="legend-row"><span class="swatch" style="background:#D55E00"></span>control baseline</span>
+    </div>
     <div class="figure">{{ figs.performance|safe }}</div>
-    <p class="figcap">Primary metric ({{ models.primary_metric|upper }}) per model. Cobalt = fusion,
-      slate = single modality, green = leave-one-out, vermillion = control baseline. Error bars are
-      the across-fold standard deviation; dotted line marks chance.</p>
     {{ tables.models|safe }}
   </section>
 
   <section>
-    <h2>Modality redundancy (linear CKA)</h2>
+    <h2>Modality redundancy</h2>
+    {{ means('redundancy') }}
     <div class="figure">{{ figs.cka|safe }}</div>
-    <p class="figcap">Centered kernel alignment between modalities; high values indicate shared
-      representation and probable redundancy.</p>
     <h3>Marginal gain per modality</h3>
     <div class="figure">{{ figs.gain|safe }}</div>
     {{ tables.ledger|safe }}
@@ -594,23 +621,23 @@ footer{border-top:1px solid var(--border);margin-top:50px;padding-top:20px;color
 
   <section>
     <h2>Missingness structure</h2>
+    {{ means('missingness') }}
     <div class="figure">{{ figs.missingness|safe }}</div>
-    <p class="figcap">Per-sample missing fraction by modality (burnt-orange = higher missingness).</p>
     {{ tables.diag|safe }}
   </section>
 
   <section>
-    <h2>Leakage-safe feature attribution</h2>
+    <h2>Feature attribution</h2>
+    {{ means('feature_attribution') }}
     <div class="figure">{{ figs.attribution|safe }}</div>
-    <p class="figcap">Permutation importance from the reference fusion model, computed on held-out
-      folds; colored by source modality.</p>
     {{ tables.attr|safe }}
   </section>
 
   <section>
     <h2>Provenance &amp; environment</h2>
+    {{ means('provenance') }}
     <div class="grid cards">
-      <div class="card"><div class="k">Provenance hash</div><div class="v mono" style="font-size:13px;word-break:break-all">{{ meta.provenance_hash }}</div></div>
+      <div class="card"><div class="k">Provenance hash {{ tip('Provenance hash') }}</div><div class="v mono" style="font-size:13px;word-break:break-all">{{ meta.provenance_hash }}</div></div>
       <div class="card"><div class="k">Device / cores</div><div class="v mono">{{ meta.device }} / {{ meta.cores }}</div></div>
       <div class="card"><div class="k">Python / torch</div><div class="v mono" style="font-size:16px">{{ env.python }} · {{ env.torch }}</div></div>
       <div class="card"><div class="k">Est. wall-time</div><div class="v mono" style="font-size:18px">{{ cost.get('human_readable','—') }}</div></div>
@@ -622,7 +649,7 @@ footer{border-top:1px solid var(--border);margin-top:50px;padding-top:20px;color
 
 <footer>
   Generated by <strong>omicau</strong> v{{ meta.tool_version }} · {{ meta.created }} ·
-  This report is self-contained. Fonts load from Google Fonts; all charts and data are embedded.
+  Self-contained: fonts load from Google Fonts; all charts and data are embedded.
 </footer>
 </div>
 
@@ -682,6 +709,7 @@ function omicauExport(id, sep, ext){
   a.download = id.replace('tbl-','omicau_') + '.' + ext;
   a.click(); URL.revokeObjectURL(a.href);
 }
+{{ tooltip_js|safe }}
 </script>
 </body>
 </html>"""
