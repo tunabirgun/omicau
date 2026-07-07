@@ -70,6 +70,87 @@ omicau verify --config demo/config.json --audit demo/run/audit.json  # compare s
 
 ---
 
+## Use your own data
+
+The remote data hubs are optional shortcuts; **the primary workflow is to point
+omicau at your own matrices.** You provide one file per omic modality, one
+clinical table with the outcome, and a small config that names them.
+
+Ingestion is deliberately forgiving, so you rarely have to reshape anything:
+
+- **Delimiter** is auto-detected (comma, tab, semicolon, or whitespace).
+- **Orientation** is auto-detected by sample-id overlap — a `samples × features`
+  matrix and a `features × samples` matrix (e.g. genes-as-rows expression) both work.
+- **Sample names** are fuzzily matched across files (whitespace, case, and common
+  batch/aliquot suffixes are normalized).
+- Dirty headers, mixed whitespace, common NA tokens (`NA`, `null`, `.`, `?`, …),
+  European decimals, and `±inf` are healed automatically.
+- Missing values stay masked — never imputed at ingest.
+
+Minimal layout (any of CSV/TSV; matrices can be either orientation):
+
+```
+mystudy/
+  rna.csv          # samples × genes  (or genes × samples — auto-detected)
+  protein.csv      # samples × proteins
+  clinical.csv     # one row per sample: sample_id, outcome[, patient_id, batch]
+  config.json
+```
+
+`config.json` (JSON shown; `.toml` and `.yaml` are also accepted):
+
+```json
+{
+  "run_name": "my_study",
+  "output_dir": "run",
+  "modalities": [
+    {"name": "rna",     "path": "rna.csv",     "description": "RNA-seq log-TPM"},
+    {"name": "protein", "path": "protein.csv", "description": "Proteomics"}
+  ],
+  "clinical": {
+    "path": "clinical.csv",
+    "target": "outcome",
+    "sample_id": "sample_id",
+    "group": "patient_id",
+    "batch": "batch",
+    "task": "auto"
+  },
+  "cv": {"n_splits": 5, "seed": 42},
+  "neural": {"enabled": true, "epochs": 60},
+  "llm": {"enabled": false}
+}
+```
+
+```bash
+omicau run --config mystudy/config.json --cores 8
+```
+
+Field notes:
+
+- **`sample_id`** — the clinical column holding sample identifiers (omit to use the
+  table's first column / index). The same ids must appear (after normalization) in
+  each modality matrix; samples are intersected across all files.
+- **`target`** — the clinical column to predict. `task: "auto"` infers
+  classification vs regression; set `"classification"` / `"regression"` to force it.
+- **`group`** (optional, recommended) — a column such as patient id, so multiple
+  samples from one patient never split across train and test (leakage-safe CV).
+- **`batch`** (optional) — a column such as sequencing batch or site; drives the
+  batch-effect diagnostics.
+- Only rows with a non-missing target are kept. Paths are resolved **relative to the
+  config file**, so keep the config next to your matrices.
+
+Start from a working template by generating the mock dataset and editing its
+`config.json` + CSV headers to match your files:
+
+```bash
+omicau bootstrap --dataset mock --out-dir template   # writes a runnable config.json + example CSVs
+```
+
+Add as many modalities as you like (methylation, metabolomics, CNV, …). A single
+modality is allowed — the audit simply skips the cross-modality comparisons.
+
+---
+
 ## Workflow
 
 ```mermaid
