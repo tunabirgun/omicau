@@ -308,17 +308,19 @@ def run(config_path: Path, cores: int | None, device: str, llm: bool | None,
 
 @main.command()
 @click.option("--dataset", required=True,
-              type=click.Choice(["mock", "tcga", "ccle", "cptac", "openpbta"]),
+              type=click.Choice(["mock", "tcga", "ccle", "cptac", "openpbta", "xena",
+                                 "metabolomics"]),
               help="Benchmark cohort to assemble.")
 @click.option("--out-dir", required=True, type=click.Path(path_type=Path),
               help="Directory to write the dataset + config into.")
-@click.option("--study", default=None, help="TCGA study id (default: laml_tcga).")
+@click.option("--study", default=None, help="TCGA study id / Metabolomics Workbench study id.")
 @click.option("--target", default=None, help="Target column / gene, dataset-specific.")
 @click.option("--cancer", default=None, help="CPTAC cohort abbreviation (default: Ucec).")
+@click.option("--preset", default=None, help="Xena preset cohort (default: brca).")
 @click.option("--task", default="classification", help="Mock dataset task.")
 @click.option("--seed", default=42, type=int, help="Seed for the mock dataset.")
 def bootstrap(dataset: str, out_dir: Path, study: str | None, target: str | None,
-              cancer: str | None, task: str, seed: int) -> None:
+              cancer: str | None, preset: str | None, task: str, seed: int) -> None:
     """Download / assemble a benchmark cohort in one step."""
     out_dir.mkdir(parents=True, exist_ok=True)
     click.secho(f"Bootstrapping '{dataset}' into {out_dir}…", fg="cyan")
@@ -339,6 +341,12 @@ def bootstrap(dataset: str, out_dir: Path, study: str | None, target: str | None
         elif dataset == "openpbta":
             from omicau.data import openpbta
             cfg = openpbta.prepare(out_dir, target_column=target or "broad_histology")
+        elif dataset == "xena":
+            from omicau.data import xena
+            cfg = xena.prepare(out_dir, preset=preset or "brca", target=target)
+        elif dataset == "metabolomics":
+            from omicau.data import metabolomics_workbench as mw
+            cfg = mw.prepare(out_dir, study_id=study or "ST000009", target=target)
         else:  # pragma: no cover - click already constrains choices
             raise click.ClickException(f"Unknown dataset '{dataset}'.")
     except Exception as exc:  # noqa: BLE001
