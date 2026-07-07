@@ -245,7 +245,25 @@ class OmicauConfig:
         else:  # default to JSON
             data = json.loads(text)
 
-        return cls.from_dict(data)
+        cfg = cls.from_dict(data)
+        cfg._resolve_paths(path.parent)
+        return cfg
+
+    def _resolve_paths(self, base: Path) -> None:
+        """Resolve relative modality/clinical paths against the config directory."""
+        base = Path(base)
+        for spec in self.modalities:
+            if spec.path and not Path(spec.path).is_absolute():
+                candidate = base / spec.path
+                if candidate.exists():
+                    spec.path = str(candidate)
+        if self.clinical.path and not Path(self.clinical.path).is_absolute():
+            candidate = base / self.clinical.path
+            if candidate.exists():
+                self.clinical.path = str(candidate)
+        # keep output_dir relative to the config too, unless absolute.
+        if self.output_dir and not Path(self.output_dir).is_absolute():
+            self.output_dir = str(base / self.output_dir)
 
     # -- serialization ------------------------------------------------------ #
     def to_dict(self) -> dict[str, Any]:

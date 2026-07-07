@@ -569,11 +569,6 @@ footer{border-top:1px solid var(--border);margin-top:50px;padding-top:20px;color
     </ul>
     <p class="legend">interpretation source: {{ summary.get('source','rule_based') }}</p>
   </section>
-
-  <section>
-    <h2>Pipeline lineage</h2>
-    <div class="flow">{{ flowchart_svg|safe }}</div>
-  </section>
 </div>
 
 <!-- ===================== RESEARCH ===================== -->

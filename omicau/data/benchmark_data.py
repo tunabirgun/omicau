@@ -189,7 +189,7 @@ def write_mock_dataset(
     clin_path = out / "clinical.csv"
     bundle.clinical.to_csv(clin_path, index=False, lineterminator="\n")
 
-    cfg = mock_config(output_dir=str(out / "run"), task=task, seed=seed)
+    cfg = mock_config(output_dir="run", task=task, seed=seed)  # relative to config dir
     for spec in cfg.modalities:
         spec.path = paths[spec.name]
     cfg.clinical.path = clin_path.name
