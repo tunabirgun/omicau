@@ -61,6 +61,25 @@ class CVResult:
         vals = [v for v in self.fold_primary if np.isfinite(v)]
         return float(np.std(vals)) if len(vals) > 1 else 0.0
 
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-native view (finite floats only; NaN -> None)."""
+        def _f(x):
+            return float(x) if np.isfinite(x) else None
+        return {
+            "name": self.name,
+            "task": self.task,
+            "primary": _f(self.primary),
+            "primary_std": _f(self.primary_std),
+            "metrics": {k: _f(v) for k, v in self.metrics.items()},
+            "per_fold": [{k: _f(v) for k, v in fm.items()} for fm in self.per_fold],
+            "fold_primary": [_f(v) for v in self.fold_primary],
+            "n_features": int(self.n_features),
+            "modalities": list(self.modalities),
+            "feature_importance": {k: _f(v) for k, v in self.feature_importance.items()},
+            "n_splits": int(self.extra.get("n_splits", 0)),
+            "device": self.extra.get("device"),
+        }
+
 
 # --------------------------------------------------------------------------- #
 # CV splitting
