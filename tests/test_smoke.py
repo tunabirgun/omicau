@@ -225,6 +225,16 @@ def test_flowchart_svg_offline():
     assert "Provenance SHA-256" in svg
 
 
+def test_dashboard_css_integrity():
+    # Guard the exact bug class where a stray */ in a comment closed the comment
+    # early and silently broke the :root custom-property block.
+    from omicau.reporting._assets import DASHBOARD_CSS as css
+    assert css.count("{") == css.count("}"), "unbalanced CSS braces"
+    assert css.count("/*") == css.count("*/"), "unbalanced CSS comments"
+    assert ":root" in css and "--cobalt:#0072B2" in css.replace(" ", "")
+    assert "</style>" not in css  # would prematurely close the <style> element
+
+
 def _assert_valid_html(path):
     html = path.read_text(encoding="utf-8")
     assert html.strip().lower().startswith("<!doctype html>")
