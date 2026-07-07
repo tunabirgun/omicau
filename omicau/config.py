@@ -107,6 +107,10 @@ class ComputeSpec:
     device: str = "auto"
     #: PyTorch DataLoader workers (0 is safest / headless-cluster friendly).
     torch_workers: int = 0
+    #: Opt-in strict determinism: enables torch deterministic algorithms and sets
+    #: CUBLAS_WORKSPACE_CONFIG (off by default because some ops lack deterministic
+    #: kernels; enabled with warn_only so it never hard-fails a run).
+    deterministic: bool = False
 
 
 @dataclass
@@ -122,7 +126,9 @@ class ReportingSpec:
     html: bool = True
     json: bool = True
     csv: bool = True
-    docs: list[str] = field(default_factory=lambda: ["md", "docx", "tex"])
+    #: The multi-format documentation compiler is a private manuscript tool and
+    #: is not part of the app; the app emits only the HTML dashboard + JSON/CSV.
+    docs: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -309,7 +315,7 @@ class OmicauConfig:
             "controls": {"enabled": True},
             "compute": {"cores": None, "device": "auto"},
             "llm": {"enabled": False, "model": "claude-sonnet-5"},
-            "reporting": {"html": True, "json": True, "csv": True, "docs": ["md", "docx", "tex"]},
+            "reporting": {"html": True, "json": True, "csv": True},
         }
 
 

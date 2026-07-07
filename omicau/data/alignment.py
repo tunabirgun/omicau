@@ -304,23 +304,46 @@ def _encode_target(
 # --------------------------------------------------------------------------- #
 # Provenance
 # --------------------------------------------------------------------------- #
+def _matrix_digest(frame: pd.DataFrame, sample_ids: list[str]) -> str:
+    """Content SHA-256 of an aligned matrix (canonical row/column order)."""
+    sub = frame.reindex(index=sample_ids)
+    sub = sub.reindex(sorted(sub.columns), axis=1)
+    arr = np.ascontiguousarray(sub.to_numpy(dtype=np.float64))
+    return hashlib.sha256(arr.tobytes()).hexdigest()
+
+
 def compute_provenance_hash(
     sample_ids: list[str],
     modalities: dict[str, ModalityMatrix],
     target_name: str,
     task: str,
+    target_values=None,
 ) -> str:
-    """SHA-256 over the canonical sample index and per-modality feature footprint."""
+    """SHA-256 over the aligned sample index, feature footprints, and matrix content.
+
+    Tamper-evident at the value level: the manifest includes a per-modality
+    content digest of the numeric matrix (canonical row/column order) and a
+    digest of the encoded target, so changing any measurement -- not only the
+    samples or features -- changes the hash.
+    """
     h = hashlib.sha256()
-    manifest = {
+    manifest: dict = {
         "samples": list(sample_ids),
         "target": target_name,
         "task": task,
         "modalities": {
-            name: {"features": m.feature_names, "shape": list(m.shape)}
+            name: {
+                "features": m.feature_names,
+                "shape": list(m.shape),
+                "content_sha256": _matrix_digest(m.frame, sample_ids),
+            }
             for name, m in sorted(modalities.items())
         },
     }
+    if target_values is not None:
+        y_arr = np.ascontiguousarray(np.asarray(target_values, dtype=np.float64))
+        manifest["target_sha256"] = hashlib.sha256(y_arr.tobytes()).hexdigest()
+
     import json
 
     h.update(json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode("utf-8"))
@@ -454,7 +477,8 @@ def align_modalities(
     y_raw = clinical[clin_spec.target].copy()
     y_raw.index = pd.Index(sample_ids)
 
-    prov = compute_provenance_hash(sample_ids, aligned_mods, clin_spec.target, task)
+    prov = compute_provenance_hash(sample_ids, aligned_mods, clin_spec.target, task,
+                                   target_values=y_enc.reindex(sample_ids).to_numpy())
 
     if task == "classification":
         counts = y_enc.astype("int64").value_counts().to_dict()

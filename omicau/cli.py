@@ -69,6 +69,19 @@ def _apply_thread_limits(cores: int) -> None:
         pass
 
 
+def _apply_determinism(seed: int, enabled: bool) -> None:
+    """Opt-in strict determinism for reproducible neural training."""
+    if not enabled:
+        return
+    os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+    try:
+        import torch
+        torch.manual_seed(seed)
+        torch.use_deterministic_algorithms(True, warn_only=True)
+    except Exception:  # noqa: BLE001 - determinism is best-effort
+        pass
+
+
 def _human_time(seconds: float) -> str:
     if seconds < 90:
         return f"~{seconds:.0f} s"
@@ -165,7 +178,6 @@ def run_audit(config, *, cores: int, device: str, llm: bool | None,
     from omicau.interpretation.utility import build_utility_ledger
     from omicau.interpretation.llm_summary import build_context, summarize
     from omicau.reporting.reporter import build_report
-    from omicau.reporting.docs_generator import build_documentation
 
     # resolve compute.
     if cores:
@@ -176,6 +188,7 @@ def run_audit(config, *, cores: int, device: str, llm: bool | None,
         config.llm.enabled = llm
     resolved_cores = resolve_cores(config)
     _apply_thread_limits(resolved_cores)
+    _apply_determinism(config.seed, config.compute.deterministic)
     dev = resolve_device(config.compute.device)
     device_tag = f"{platform.node()}/{dev.type}/{resolved_cores}c"
 
@@ -216,11 +229,6 @@ def run_audit(config, *, cores: int, device: str, llm: bool | None,
     if config.reporting.html or config.reporting.json or config.reporting.csv:
         assets = timed("report", lambda: build_report(audit, out_dir, config))
         audit["_assets"] = {k: str(v) for k, v in assets.items()}
-    if config.reporting.docs:
-        docs = timed("documentation",
-                     lambda: build_documentation(audit, out_dir / "docs", config,
-                                                 formats=config.reporting.docs))
-        audit.setdefault("_assets", {}).update({f"doc_{k}": str(v) for k, v in docs.items()})
     return audit
 
 
@@ -271,14 +279,18 @@ def main() -> None:
               help="PyTorch device backend.")
 @click.option("--llm/--no-llm", default=None,
               help="Force-enable or force-disable the optional LLM interpretation tier.")
+@click.option("--deterministic", is_flag=True, default=False,
+              help="Enable strict PyTorch determinism (reproducible neural training).")
 @click.option("--out-dir", type=click.Path(path_type=Path), default=None,
               help="Override the output directory from the config.")
 def run(config_path: Path, cores: int | None, device: str, llm: bool | None,
-        out_dir: Path | None) -> None:
-    """Run the full audit and compile the dashboard + documentation."""
+        deterministic: bool, out_dir: Path | None) -> None:
+    """Run the full audit and compile the interactive dashboard + assets."""
     from omicau.config import OmicauConfig
 
     config = OmicauConfig.from_file(config_path)
+    if deterministic:
+        config.compute.deterministic = True
     if out_dir:
         config.output_dir = str(out_dir)
     click.secho(f"omicau v{__version__} — {config.run_name}", fg="cyan", bold=True)

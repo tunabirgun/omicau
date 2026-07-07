@@ -29,7 +29,6 @@ from omicau.models.neural import MaskedGlobalPoolingFusion, run_neural_benchmark
 from omicau.interpretation.utility import build_utility_ledger
 from omicau.interpretation.llm_summary import build_context, summarize
 from omicau.reporting.reporter import build_report, flowchart_svg
-from omicau.reporting.docs_generator import build_documentation
 
 
 # --------------------------------------------------------------------------- #
@@ -107,12 +106,24 @@ def test_orientation_autodetect_and_dirty_headers(bundle):
 
 
 def test_provenance_hash_deterministic(aligned):
-    h1 = aligned.provenance_hash
+    h1 = compute_provenance_hash(aligned.sample_ids, aligned.modalities, "label", aligned.task)
     h2 = compute_provenance_hash(aligned.sample_ids, aligned.modalities, "label", aligned.task)
     assert len(h1) == 64 and h1 == h2
-    # changing a feature footprint changes the hash.
+    # dropping a modality changes the hash (structural).
     sub = {k: v for k, v in aligned.modalities.items() if k != "noise"}
     assert compute_provenance_hash(aligned.sample_ids, sub, "label", aligned.task) != h1
+
+
+def test_provenance_hash_is_value_level(aligned):
+    from omicau.data.alignment import ModalityMatrix
+    base = compute_provenance_hash(aligned.sample_ids, aligned.modalities, "label", aligned.task)
+    # perturb a single measurement -> the hash must change (tamper-evident).
+    mods = dict(aligned.modalities)
+    frame = mods["signal"].frame.copy()
+    r, c = frame.index[0], frame.columns[0]
+    frame.loc[r, c] = (frame.loc[r, c] or 0.0) + 1.0
+    mods["signal"] = ModalityMatrix("signal", frame)
+    assert compute_provenance_hash(aligned.sample_ids, mods, "label", aligned.task) != base
 
 
 # --------------------------------------------------------------------------- #
@@ -233,9 +244,7 @@ def test_full_pipeline_offline(aligned, pipeline, tmp_path):
     assets = build_report(audit, tmp_path / "offline")
     _assert_valid_html(assets["html"])
     assert json.loads(assets["json"].read_text(encoding="utf-8"))["meta"]["provenance_hash"]
-    docs = build_documentation(audit, tmp_path / "offline" / "docs")
-    for fmt in ("md", "tex", "docx"):
-        assert fmt in docs and docs[fmt].exists() and docs[fmt].stat().st_size > 0
+    assert (tmp_path / "offline" / "model_metrics.csv").exists()
 
 
 def test_full_pipeline_llm_mocked(aligned, pipeline, tmp_path, monkeypatch):

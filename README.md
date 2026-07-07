@@ -43,7 +43,7 @@ pip install ".[all,dev]"      # everything + pytest
 ```
 
 Python ≥ 3.10. Core dependencies: `numpy`, `pandas`, `scipy`, `scikit-learn`,
-`torch`, `plotly`, `click`, `jinja2`, `python-docx`, `tqdm`.
+`torch`, `plotly`, `click`, `jinja2`, `tqdm`.
 
 ## Quickstart
 
@@ -54,9 +54,8 @@ omicau run --config demo/config.json --cores 8     # full audit -> demo/run/repo
 omicau verify --config demo/config.json            # recompute the provenance hash
 ```
 
-Open `demo/run/report.html` for the dashboard; `demo/run/audit.json`,
-`*.csv`, and `demo/run/docs/report.{md,docx,tex}` are the machine-readable and
-documentation assets.
+Open `demo/run/report.html` for the dashboard; `demo/run/audit.json` and the
+`*.csv` files are the machine-readable assets.
 
 ### Verifying a run's provenance hash
 
@@ -83,7 +82,7 @@ flowchart TB
     S5["Fusion benchmarks — classical concat + masked global-pooling neural network"]
     S6["Leakage-safe XAI — permutation importance on held-out folds"]
     S7["Utility & redundancy audit — marginal gain, CKA, batch/missingness/control gates"]
-    S8["Dual reporting — clinical + research dashboard, multi-format docs"]
+    S8["Dual reporting — clinical + research dashboard, JSON/CSV assets"]
     S0 --> S1 --> S2 --> S3 --> S4 --> S5 --> S6 --> S7 --> S8
 ```
 
@@ -120,9 +119,11 @@ Missing values are kept as `NaN` (true masks), never imputed at ingest.
 
 Immediately after alignment, an immutable signature is computed as the SHA-256
 of a canonical JSON manifest of the sorted sample index, each modality's sorted
-feature list and shape, the target name, and the task. Any change to which
-samples or features enter the study changes the hash, locking asset provenance
-across the study lifetime.
+feature list and shape, a **content digest of each aligned matrix** (the numeric
+values in canonical row/column order), a digest of the encoded target, the
+target name, and the task. It is tamper-evident at the value level: changing any
+single measurement — not only which samples or features enter the study —
+changes the hash, locking asset provenance across the study lifetime.
 
 ### 3. Missingness-bias diagnostics
 
@@ -260,9 +261,6 @@ HPC allocations are safe.
   text-filterable, and CSV/TSV-exportable via dependency-free vanilla JavaScript.
 - **Machine-readable**: `audit.json` (full state), `model_metrics.csv`,
   `modality_ledger.csv`, `missingness_tests.csv`.
-- **Documentation**: `report.md`, a line-numbered A4 `report.docx` (black text,
-  Springer-Nature-style headings), and `report.tex` (TikZ flowchart). The
-  flowchart is rendered natively per format — no image toolchain required.
 
 ---
 
@@ -297,9 +295,8 @@ participant-level data is ever transmitted off-platform.
 | numpy | 2.5.0 | torch | 2.12.1 (CPU) |
 | pandas | 3.0.3 | plotly | 6.8.0 |
 | scipy | 1.18.0 | click | 8.4.1 |
-| jinja2 | 3.1.6 | python-docx | 1.2.0 |
-| tqdm | 4.68.3 | requests | 2.34.2 |
-| pytest | 9.1.1 | | |
+| jinja2 | 3.1.6 | tqdm | 4.68.3 |
+| requests | 2.34.2 | pytest | 9.1.1 |
 
 Optional tiers (pinned floors in `pyproject.toml`): `anthropic ≥ 0.39`,
 `cptac ≥ 1.5` (tested against 1.5.14), `google-cloud-storage ≥ 2.10`,
@@ -330,9 +327,13 @@ production.
 - **Determinism**: every stochastic step is seeded (`numpy`, `random`,
   `torch.manual_seed`; per-fold seeds derive from the master seed). Cross-validation
   splits depend only on the target, groups, and seed, so leave-one-out and
-  single-vs-fusion comparisons are exactly paired.
-- **Provenance**: the SHA-256 of the aligned sample index and feature footprints
-  is written to `audit.json` and can be re-checked with `omicau verify`.
+  single-vs-fusion comparisons are exactly paired. Strict bit-level determinism
+  (`torch.use_deterministic_algorithms` + `CUBLAS_WORKSPACE_CONFIG`) is opt-in via
+  `--deterministic` / `compute.deterministic`; it is off by default because some
+  ops lack deterministic kernels (enabled with `warn_only` so it never hard-fails).
+- **Provenance**: the value-level SHA-256 of the aligned matrices, sample index,
+  features, and target is written to `audit.json` and re-checkable with
+  `omicau verify` (exit 1 on any drift).
 - **Environment capture**: `audit.json → environment` records the Python,
   platform, numpy, and torch versions of the run; `runtime_log.txt` records the
   wall-time of every step with a device tag (`hostname/device/cores`).
