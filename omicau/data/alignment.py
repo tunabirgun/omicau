@@ -198,8 +198,22 @@ def read_matrix(
     raw = raw.loc[~raw.index.isin(["", "nan", "None"])]
     raw = raw.loc[:, ~raw.columns.str.match(r"^(Unnamed.*)?$", na=False) | (raw.notna().any())]
 
-    # Coerce every column to numeric.
-    numeric = pd.DataFrame({c: _coerce_numeric_series(raw[c]) for c in raw.columns}, index=raw.index)
+    # Coerce to numeric in one flattened vectorized pass (fast on wide matrices);
+    # only columns that lose a real value fall back to the per-column
+    # European-decimal / thousands-separator repair.
+    shape = raw.shape
+    flat = pd.Series(raw.to_numpy().ravel()).astype("string").str.strip()
+    flat = flat.mask(flat.str.lower().isin(NA_TOKENS))
+    text_present = flat.notna().to_numpy().reshape(shape)
+    num_arr = np.array(pd.to_numeric(flat, errors="coerce").astype("float64").to_numpy(),
+                       dtype=np.float64, copy=True).reshape(shape)
+    num_arr[~np.isfinite(num_arr)] = np.nan
+    numeric = pd.DataFrame(num_arr, index=raw.index, columns=raw.columns)
+
+    # Columns where stripped text was present but did not parse -> repair.
+    needs_repair = np.where((text_present & np.isnan(num_arr)).any(axis=0))[0]
+    for c in needs_repair:
+        numeric.iloc[:, c] = _coerce_numeric_series(raw.iloc[:, c]).to_numpy()
 
     # Drop all-NaN rows/cols produced by structural noise.
     numeric = numeric.dropna(axis=0, how="all").dropna(axis=1, how="all")
