@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "omicau"
+version = "0.1.0"
+description = "Omics Audit: a reproducible, leakage-safe multi-omics data-audit and fusion-benchmarking CLI."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Tuna Birgun" }]
+keywords = ["bioinformatics", "multi-omics", "data-audit", "reproducibility", "machine-learning"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Operating System :: OS Independent",
+]
+
+# Core dependencies keep the tool 100% functional offline, on any platform.
+dependencies = [
+    "numpy>=1.24",
+    "pandas>=2.2",
+    "scipy>=1.11",
+    "scikit-learn>=1.3",
+    "torch>=2.0",
+    "plotly>=5.18",
+    "click>=8.1",
+    "jinja2>=3.1",
+    "python-docx>=1.1",
+    "tqdm>=4.65",
+]
+
+[project.optional-dependencies]
+# Optional plugin tier -- the tool degrades gracefully when these are absent.
+llm = ["anthropic>=0.39"]
+data = ["requests>=2.31", "google-cloud-storage>=2.10", "cptac>=1.5"]
+yaml = ["pyyaml>=6.0"]
+dev = ["pytest>=7.4", "pytest-cov>=4.1"]
+all = [
+    "anthropic>=0.39",
+    "requests>=2.31",
+    "google-cloud-storage>=2.10",
+    "cptac>=1.5",
+    "pyyaml>=6.0",
+    "pytest>=7.4",
+]
+
+[project.scripts]
+omicau = "omicau.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/tunabirgun/omicau"
+
+[tool.setuptools.packages.find]
+include = ["omicau*"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
