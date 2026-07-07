@@ -104,18 +104,46 @@ def fetch_molecular(profile_id: str, entrez_ids: list[int], sample_ids: list[str
     return wide
 
 
-def fetch_clinical(study: str, session) -> pd.DataFrame:
-    """Fetch SAMPLE-level clinical data and pivot to one row per sample."""
-    params = {"clinicalDataType": "SAMPLE", "projection": "DETAILED",
+def _clinical_records(study: str, kind: str, session) -> list[dict]:
+    params = {"clinicalDataType": kind, "projection": "DETAILED",
               "pageSize": 10_000_000, "pageNumber": 0}
-    data = get_json(f"{API}/studies/{study}/clinical-data", params=params, session=session)
-    if not data:
+    return get_json(f"{API}/studies/{study}/clinical-data", params=params, session=session) or []
+
+
+def fetch_clinical(study: str, session) -> pd.DataFrame:
+    """Sample-indexed clinical table with PATIENT-level attributes merged in.
+
+    SAMPLE and PATIENT clinical are both long/tidy. SAMPLE records carry the
+    ``sampleId`` <-> ``patientId`` bridge; PATIENT attributes (e.g. SEX,
+    OS_STATUS, survival) are joined onto each sample by patient. A ``PATIENT_ID``
+    column is retained so multiple samples from one patient can be grouped in
+    leakage-safe cross-validation.
+    """
+    sdata = _clinical_records(study, "SAMPLE", session)
+    if not sdata:
         return pd.DataFrame()
-    df = pd.DataFrame([
-        {"sampleId": r["sampleId"], "attr": r["clinicalAttributeId"], "value": r["value"]}
-        for r in data
+    sdf = pd.DataFrame([
+        {"sampleId": r["sampleId"], "patientId": r.get("patientId"),
+         "attr": r["clinicalAttributeId"], "value": r["value"]}
+        for r in sdata
     ])
-    return df.pivot_table(index="sampleId", columns="attr", values="value", aggfunc="first")
+    sample_wide = sdf.pivot_table(index="sampleId", columns="attr", values="value", aggfunc="first")
+    s2p = sdf.dropna(subset=["patientId"]).groupby("sampleId")["patientId"].first()
+
+    pdata = _clinical_records(study, "PATIENT", session)
+    if pdata:
+        pdf = pd.DataFrame([
+            {"patientId": r["patientId"], "attr": r["clinicalAttributeId"], "value": r["value"]}
+            for r in pdata
+        ]).pivot_table(index="patientId", columns="attr", values="value", aggfunc="first")
+        patient_ids = sample_wide.index.map(s2p)
+        pat_attrs = pdf.reindex(patient_ids)
+        pat_attrs.index = sample_wide.index
+        new_cols = [c for c in pat_attrs.columns if c not in sample_wide.columns]
+        sample_wide = sample_wide.join(pat_attrs[new_cols], how="left")
+
+    sample_wide["PATIENT_ID"] = sample_wide.index.map(s2p)
+    return sample_wide
 
 
 def prepare(out_dir: str | Path, *, study: str = "laml_tcga", target: str | None = None,
@@ -163,5 +191,7 @@ def prepare(out_dir: str | Path, *, study: str = "laml_tcga", target: str | None
             target = clinical.columns[0]
 
     clin_out = clinical.reset_index().rename(columns={"index": "sampleId"})
+    group = "PATIENT_ID" if "PATIENT_ID" in clin_out.columns else None
     return write_dataset(out, modalities, clin_out, sample_col="sampleId", target=target,
-                         run_name=f"tcga_{study}", source=f"cBioPortal:{study}", reports=reports)
+                         group=group, run_name=f"tcga_{study}", source=f"cBioPortal:{study}",
+                         reports=reports)
