@@ -149,6 +149,38 @@ omicau bootstrap --dataset mock --out-dir template   # writes a runnable config.
 Add as many modalities as you like (methylation, metabolomics, CNV, …). A single
 modality is allowed — the audit simply skips the cross-modality comparisons.
 
+### Input format for each omics layer
+
+Every modality is a single **sample × feature numeric matrix**: identifiers live
+in the header row and the index column, and the body is numbers only (blanks or
+`NA`/`null`/`.` for missing). omicau does not care which normalization you used —
+it standardizes inside each cross-validation fold — but the values must be numeric
+and comparable within a column. The table below is guidance, not a hard schema;
+the ingester auto-detects delimiter and orientation, so any of these read as-is.
+
+| Omics layer | Matrix body (value type) | Feature id (columns) | Notes for omicau |
+| --- | --- | --- | --- |
+| **RNA-seq / expression** | log-normalized expression (log2 TPM/FPKM/CPM, or RSEM/`log2(x+1)`) | gene symbol / Ensembl / Entrez | Prefer a log scale; raw counts work but log-transform heavy-tailed counts first. One value per gene per sample. |
+| **Proteomics** | normalized abundance / intensity (usually log2) | UniProt id or gene symbol | Missing values are common and informative (MNAR) — leave them blank/`NA`, do **not** impute. Collapse isoforms to one column per protein. |
+| **DNA methylation** | beta values in `[0,1]` **or** M-values | Illumina probe id (cg…) or gene | Beta and M are both fine as numeric features; don't mix the two in one matrix. |
+| **Metabolomics** | peak area / concentration (often log-transformed) | metabolite name / RefMet / HMDB id | Keep below-detection as blank/`NA`. One column per metabolite. |
+| **Copy number (CNV)** | log2 copy-ratio (continuous) **or** GISTIC discrete `-2…2` | gene symbol | Either continuous or integer levels; keep one convention per matrix. |
+| **miRNA** | log-normalized expression | miRBase id (hsa-miR-…) | Same shape as RNA-seq. |
+| **Somatic mutation** | binary `0/1` (mutated) or a mutation count | gene symbol | Presented as numeric features; a near-constant column (almost all 0) is dropped automatically. |
+
+Universal rules across layers:
+
+- **One file per modality**, samples aligned by id across all files and the
+  clinical table. Feature names must be unique within a modality; the same name in
+  two modalities is fine (omicau namespaces them as `modality::feature`).
+- **Do not pre-impute or pre-scale.** Missing entries stay masked (the neural fuser
+  ignores them; classical models median-impute inside the training fold only), and
+  standardization happens inside each fold — pre-scaling across all samples leaks.
+- **Log-transform skewed counts** (RNA-seq/miRNA/metabolomics) before ingest;
+  omicau standardizes but does not log for you.
+- **Orientation and delimiter are auto-detected**, so genes-as-rows or
+  samples-as-rows, CSV or TSV, all load without a flag.
+
 ---
 
 ## Workflow
@@ -351,18 +383,31 @@ All clients run structural gates (numeric-only, non-finite healing,
 constant-feature dropping, sample-extension matching) and use retry-with-jitter.
 Network access is optional and isolated; the core is unaffected if it is absent.
 
-| Client | Source | Access |
-| --- | --- | --- |
-| `tcga` | cBioPortal public REST API | mRNA + copy-number + clinical, no auth |
-| `ccle` | DepMap (figshare) | RNA-seq + CRISPR dependency target |
-| `cptac` | `cptac` PyPI package | matched proteomics + transcriptomics |
-| `openpbta` | Public AWS S3 (anonymous) | putative-fusion matrix + histologies |
-| `allofus` | Researcher Workbench | WGS/proteomics/RNA-seq, in-Workbench only |
+Only hubs whose live connection was verified are shipped. Each client was probed
+directly against its real endpoint (the connection column reflects that check).
+
+| Client | Source | Modalities → target | Connection |
+| --- | --- | --- | --- |
+| `tcga` | cBioPortal public REST API | mRNA + copy-number + merged sample/patient clinical | **verified** (`laml_tcga`: sex from RNA+CNV, AUROC ≈ 0.90) |
+| `ccle` | DepMap 24Q4 (figshare) | RNA-seq → CRISPR gene-effect dependency | **verified** (1103 lines × 19k genes; SOX10 R² ≈ 0.74) |
+| `xena` | UCSC Xena hubs (no auth) | RNA-seq / methylation / CNV / protein + phenotype | **verified** (TCGA-BRCA PAM50, 1247 samples) |
+| `openpbta` | Public AWS S3 (anonymous) | putative-fusion matrix + histologies | **verified** (`open-targets/v15` S3 listing + TSV headers) |
+| `metabolomics_workbench` | Metabolomics Workbench REST | metabolomics + study factors | **verified** (ST000009: gender AUROC ≈ 0.88) |
+| `cptac` | `cptac` PyPI package | matched proteomics + transcriptomics | needs the `cptac` package (a build toolchain; no Windows/py3.12 wheel) — verified by docs only |
+| `allofus` | All of Us Researcher Workbench | WGS / proteomics / RNA-seq | Workbench-only by design; off-platform it raises a clear error (cannot be externally connected) |
+
+`gdsc` and `linkedomics` were evaluated and **dropped**: their public download
+endpoints do not respond to a scripted client (HTTP 410 and 403 respectively).
 
 The All of Us client runs only inside the secure Researcher Workbench and reads
 the managed `WORKSPACE_CDR` / `WORKSPACE_BUCKET` / `GOOGLE_PROJECT` variables;
 data cannot be exported and off-platform sessions raise a clear error. No
 participant-level data is ever transmitted off-platform.
+
+`omicau` was also validated on external multi-omics datasets that are **not** hubs
+— the MOGONET benchmark (Wang et al., *Nat Commun* 2021): ROSMAP (Alzheimer's,
+three omics, fusion AUROC ≈ 0.80) and BRCA (PAM50 subtype, three omics, fusion
+AUROC ≈ 0.95, with methylation and miRNA correctly flagged redundant with RNA).
 
 ---
 
