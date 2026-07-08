@@ -33,7 +33,7 @@ dependencies = [
 
 [project.optional-dependencies]
 # Optional plugin tier -- the tool degrades gracefully when these are absent.
-llm = ["anthropic>=0.39"]
+llm = ["anthropic>=0.39", "openai>=1.0"]   # anthropic=Claude; openai SDK also drives ChatGPT/Gemini/local
 data = ["requests>=2.31", "google-cloud-storage>=2.10", "cptac>=1.5"]
 yaml = ["pyyaml>=6.0"]
 # Opt-in local web UI (localhost only). The core stays a CLI tool without it.

@@ -40,7 +40,7 @@ masked missing-value handling, control baselines).
 
 ```bash
 pip install .                 # core, fully offline
-pip install ".[llm]"          # + Anthropic LLM interpretation plugin
+pip install ".[llm]"          # + LLM verdict plugin (Claude / ChatGPT / Gemini / local)
 pip install ".[data]"         # + remote data hubs (requests, google-cloud-storage, cptac)
 pip install ".[ui]"           # + optional local no-code web UI (FastAPI + uvicorn)
 pip install ".[all,dev]"      # everything + pytest
@@ -72,13 +72,17 @@ omicau ui                     # opens a browser wizard on 127.0.0.1
 
 `omicau ui` starts a local, single-user server (auto-selected free port, bound to
 `127.0.0.1` behind a one-time token), opens a browser, and walks you through a
-wizard: drop your files, confirm the auto-guessed omic role and orientation of
-each, map the clinical columns (target / patient-group / batch — each shows its
-live consequence, e.g. class balance or the leakage implication of the grouping),
-check cross-file alignment, then run the identical `run_audit` pipeline and read
-the report in-page. **All data stays on the machine — nothing is uploaded.** The
-UI only builds the config and shows the result; it never re-implements the
-science, so the CLI and UI always give the same answer.
+wizard: drop your files (**or load a public cohort from a data hub** — TCGA, Xena,
+CCLE, CPTAC, OpenPBTA, Expression Atlas, Metabolomics Workbench, or an offline
+synthetic demo, via the same connectors the CLI `bootstrap` uses), confirm the
+auto-guessed omic role and orientation of each, map the clinical columns (target /
+patient-group / batch — each shows its live consequence, e.g. class balance or the
+leakage implication of the grouping), check cross-file alignment, optionally add a
+plain-language AI verdict (**Claude, ChatGPT, Gemini, or a local model** — the API
+key stays in memory for that one run and is never stored), then run the identical
+`run_audit` pipeline and read the report in-page. **All data stays on the machine —
+nothing is uploaded.** The UI only builds the config and shows the result; it never
+re-implements the science, so the CLI and UI always give the same answer.
 
 For a no-install experience, a **desktop app** (double-click → opens the UI) can
 be packaged from [`packaging/`](packaging/): a PyInstaller onedir bundle with a
@@ -535,9 +539,13 @@ scored at chance (negative R² for the regression), and no leakage was flagged.
 | requests | 2.34.2 | pytest | 9.1.1 |
 
 Optional tiers (pinned floors in `pyproject.toml`): `anthropic ≥ 0.39`,
-`cptac ≥ 1.5` (tested against 1.5.14), `google-cloud-storage ≥ 2.10`,
-`pyyaml ≥ 6.0`. The API layer targets the current Anthropic Messages API and
-model ids (default `claude-sonnet-5`).
+`openai ≥ 1.0`, `cptac ≥ 1.5` (tested against 1.5.14),
+`google-cloud-storage ≥ 2.10`, `pyyaml ≥ 6.0`. The optional plain-language verdict
+is provider-agnostic: **Claude** (Anthropic Messages API, default
+`claude-sonnet-5`), **ChatGPT** (OpenAI), **Gemini** (Google's OpenAI-compatible
+endpoint), and **local** models (Ollama / LM Studio / vLLM) — the `openai` SDK
+drives the last three. Only the audit's numeric diagnostics are sent (never raw
+data); the key is used for one call and never stored.
 
 ### Upstream database / atlas releases (pinned)
 
