@@ -61,6 +61,10 @@ class CVSpec:
     shuffle: bool = True
     #: Group-level bootstrap resamples for the primary-metric confidence interval.
     n_bootstrap: int = 1000
+    #: Opt-in cross-site stress test: also cross-validate the reference fusion with
+    #: folds blocked on the batch column (leave-one-batch-out), giving an honest
+    #: new-batch generalization estimate alongside the standard CV.
+    batch_blocked: bool = False
 
 
 @dataclass

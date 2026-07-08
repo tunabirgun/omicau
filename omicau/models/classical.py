@@ -157,6 +157,19 @@ def run_classical_benchmarks(aligned, config) -> dict[str, Any]:
     if stack is not None:
         results.append(stack)
 
+    # -- optional batch-blocked (leave-one-batch-out) generalization check --- #
+    if config.cv.batch_blocked and aligned.batch is not None:
+        bcodes = np.unique(aligned.batch.astype("string").to_numpy(), return_inverse=True)[1]
+        n_batches = len(np.unique(bcodes))
+        if n_batches >= 3:
+            factory = _estimator_factory(ref_key, task, seed, n_jobs)
+            bb = cross_validate_estimator(
+                "stress::batch-blocked-FUSION", X_all, y, bcodes, task, factory,
+                feature_names=feats_all, modalities=list(mods),
+                n_splits=min(n_splits, n_batches), seed=seed, shuffle=shuffle,
+                max_features=max_feat, compute_importance=False)
+            results.append(bb)
+
     attach_cis(results + controls, n_boot=config.cv.n_bootstrap, seed=seed)
 
     return {

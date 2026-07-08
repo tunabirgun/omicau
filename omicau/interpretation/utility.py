@@ -216,7 +216,8 @@ def build_utility_ledger(
     fusion_candidates += [r for r in neural_out.get("results", []) if r.name == "neural::FUSION"]
     best = max(fusion_candidates, key=lambda r: (r.primary if np.isfinite(r.primary) else -1), default=None)
     best_single = max(
-        (r for r in classical_out["results"] if "::" in r.name and not r.name.split("::")[1].startswith("FUSION")),
+        (r for r in classical_out["results"] if "::" in r.name and "FUSION" not in r.name
+         and not r.name.startswith(("control::", "stress::"))),
         key=lambda r: (r.primary if np.isfinite(r.primary) else -1), default=None,
     )
 
@@ -236,6 +237,12 @@ def build_utility_ledger(
 
     subgroups = _subgroup_metrics(best, aligned, metric)
 
+    batch_blocked = None
+    bb = cl.get("stress::batch-blocked-FUSION")
+    if bb is not None and fusion_ref is not None and np.isfinite(bb.primary) and np.isfinite(fusion_ref.primary):
+        batch_blocked = {"primary": _r(bb.primary), "standard": _r(fusion_ref.primary),
+                         "optimism_gap": _r(fusion_ref.primary - bb.primary)}
+
     return {
         "primary_metric": metric,
         "task": task,
@@ -244,6 +251,7 @@ def build_utility_ledger(
         "calibration": calibration,
         "auprc_baseline": auprc_baseline,
         "subgroups": subgroups,
+        "batch_blocked": batch_blocked,
         "best_single_modality": _model_brief(best_single),
         "fusion_gain_over_best_single": _r(fusion_gain),
         "modality_ledger": ledger,
