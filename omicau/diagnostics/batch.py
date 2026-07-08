@@ -152,6 +152,8 @@ def batch_effect_diagnostics(aligned, seed: int = 42, n_components: int = 10) ->
         }
 
     # -- batch/target confounding ----------------------------------------- #
+    # The confounding-inflation risk (Nygaard et al. 2016) is a property of the
+    # batch-outcome association, not the outcome type -- test both tasks.
     confounding: dict[str, Any] = {"tested": False}
     if batch is not None and task == "classification":
         try:
@@ -172,6 +174,27 @@ def batch_effect_diagnostics(aligned, seed: int = 42, n_components: int = 10) ->
                     f"(Cramer's V={_f(cramers_v)}, p={_f(p)}); batch effects can leak as signal."
                 )
         except (ValueError, ZeroDivisionError):
+            confounding = {"tested": False}
+    elif batch is not None and task == "regression":
+        # One-way ANOVA of the continuous outcome across batch levels + eta^2.
+        try:
+            y_cont = np.asarray(y, dtype=float)
+            F, p, eta2 = _anova_pc1(y_cont, batch_codes)
+            confounding = {
+                "tested": True,
+                "test": "anova_target_vs_batch",
+                "statistic": _f(F),
+                "p_value": _f(p),
+                "eta_squared": _f(eta2),
+                "flag": bool(_f(p) is not None and _f(p) < ALPHA
+                             and _f(eta2) is not None and eta2 > 0.10),
+            }
+            if confounding["flag"]:
+                flags.append(
+                    f"Batch is confounded with the (continuous) outcome "
+                    f"(eta2={_f(eta2)}, p={_f(p)}); batch effects can leak as signal."
+                )
+        except (ValueError, FloatingPointError):
             confounding = {"tested": False}
 
     return {

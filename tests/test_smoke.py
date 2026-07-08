@@ -40,6 +40,7 @@ def _small_config(task: str = "classification") -> OmicauConfig:
     cfg.classical.models = ["linear"]           # logistic/ridge only -> fast
     cfg.classical.max_features = None
     cfg.cv.n_splits = 3
+    cfg.cv.n_bootstrap = 100                     # small bootstrap keeps the suite fast
     cfg.neural.epochs = 5
     cfg.neural.hidden_dim = 16
     cfg.neural.embed_dim = 8
@@ -413,3 +414,30 @@ def test_batch_verdict_requires_outcome_confounding():
     batch["confounding"] = {"tested": True, "flag": True}
     conf = build_utility_ledger(ad, cl, off, dict(batch), miss)
     assert any(m["batch_confounded"] for m in conf["modality_ledger"])
+
+
+def test_calibration_and_ci_present_for_classification():
+    from omicau.interpretation.utility import build_utility_ledger
+    from omicau.models.base import calibration_metrics
+    b = make_mock_dataset(task="classification", n_samples=100, seed=2)
+    cfg = mock_config(); cfg.classical.models = ["linear"]; cfg.cv.n_splits = 3
+    cfg.neural.enabled = False; cfg.classical.max_features = None; cfg.cv.n_bootstrap = 200
+    ad = align_modalities(b.modalities, b.clinical, cfg)
+    cl = run_classical_benchmarks(ad, cfg)
+    fus = [r for r in cl["results"] if r.name.endswith("FUSION")][0]
+    assert fus.oof_true is not None and fus.extra["ci_low"] is not None       # K1 + CI
+    assert fus.extra["ci_low"] <= fus.primary <= fus.extra["ci_high"]
+    cal = calibration_metrics(fus)
+    assert cal and 0.0 <= cal["brier"] <= 1.0 and cal["ece"] >= 0.0
+    util = build_utility_ledger(ad, cl, {"enabled": False, "results": []},
+                                batch_effect_diagnostics(ad), missingness_diagnostics(ad))
+    assert util["calibration"] is not None
+
+
+def test_regression_batch_confounding_is_tested():
+    b = make_mock_dataset(task="regression", n_samples=120, seed=3)
+    cfg = mock_config(); cfg.clinical.task = "regression"
+    ad = align_modalities(b.modalities, b.clinical, cfg)
+    conf = batch_effect_diagnostics(ad)["confounding"]
+    assert conf["tested"] is True and conf["test"] == "anova_target_vs_batch"
+    assert "eta_squared" in conf and "flag" in conf

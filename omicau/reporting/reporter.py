@@ -327,6 +327,23 @@ def fig_cka(util: dict, include_js: bool) -> str:
     return _fig_html(fig, include_js)
 
 
+def fig_calibration(util: dict, include_js: bool) -> str:
+    cal = util.get("calibration") or {}
+    rel = cal.get("reliability") or {}
+    if not rel.get("mean_predicted"):
+        return "<p class='muted'>Calibration needs a binary classification target.</p>"
+    fig = go.Figure()
+    fig.add_scatter(x=[0, 1], y=[0, 1], mode="lines",
+                    line=dict(dash="dot", color="#94A3B8"), name="perfectly calibrated")
+    fig.add_scatter(x=rel["mean_predicted"], y=rel["fraction_positive"],
+                    mode="lines+markers", line=dict(color=COBALT), marker=dict(size=8),
+                    name="this model")
+    _base_layout(fig, ytitle="observed event frequency")
+    fig.update_layout(xaxis_title="predicted probability",
+                      xaxis=dict(range=[0, 1]), yaxis=dict(range=[0, 1]))
+    return _fig_html(fig, include_js)
+
+
 def fig_missingness(missing: dict, include_js: bool) -> str:
     sm = missing.get("sample_missingness", {})
     by_mod = sm.get("by_modality", {})
@@ -488,6 +505,7 @@ def build_report(audit: dict, out_dir: str | Path, config=None) -> dict[str, Pat
     # -- figures ----------------------------------------------------------- #
     perf_html = fig_performance(models, include_js=True)   # first figure bundles plotly.js
     cka_html = fig_cka(util, include_js=False)
+    cal_html = fig_calibration(util, include_js=False)
     miss_html = fig_missingness(missing, include_js=False)
     gain_html = fig_marginal_gain(util, include_js=False)
     attr_html = fig_attribution(models, include_js=False)
@@ -535,7 +553,7 @@ def build_report(audit: dict, out_dir: str | Path, config=None) -> dict[str, Pat
         "models": models,
         "flowchart_svg": flowchart_svg(),
         "figs": {"performance": perf_html, "cka": cka_html, "missingness": miss_html,
-                 "gain": gain_html, "attribution": attr_html},
+                 "gain": gain_html, "attribution": attr_html, "calibration": cal_html},
         "tables": {"models": model_table, "ledger": ledger_table, "diag": diag_table,
                    "attr": attr_table},
         "config_json": html.escape(json.dumps(audit.get("config", {}), indent=2)),
@@ -699,6 +717,21 @@ _TEMPLATE = r"""<!doctype html>
     <div class="figure">{{ figs.performance|safe }}</div>
     {{ tables.models|safe }}
   </section>
+
+  {% if util.calibration %}
+  <section>
+    <h2>Probability calibration</h2>
+    <p class="rc-sub">Whether predicted probabilities match observed event rates — discrimination (the AUROC above) does not measure this.</p>
+    <div class="figure">{{ figs.calibration|safe }}</div>
+    <div class="consequence">
+      Brier score {{ '%.3f'|format(util.calibration.brier) }} (lower is better) ·
+      expected calibration error {{ '%.3f'|format(util.calibration.ece) }}.
+      These probabilities are research-use-only and may be miscalibrated by construction — the
+      linear/forest classifiers use <code>class_weight='balanced'</code>, which shifts predicted
+      probabilities away from the true event risk. Recalibrate before interpreting them as risks.
+    </div>
+  </section>
+  {% endif %}
 
   <section>
     <h2>Modality redundancy</h2>

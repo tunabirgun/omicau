@@ -209,11 +209,17 @@ def build_utility_ledger(
         best.primary - best_single.primary if (best and best_single and np.isfinite(best.primary) and np.isfinite(best_single.primary)) else float("nan")
     )
 
+    calibration = None
+    if task == "classification" and best is not None:
+        from omicau.models.base import calibration_metrics
+        calibration = calibration_metrics(best)
+
     return {
         "primary_metric": metric,
         "task": task,
         "chance_level": chance,
         "best_model": _model_brief(best),
+        "calibration": calibration,
         "best_single_modality": _model_brief(best_single),
         "fusion_gain_over_best_single": _r(fusion_gain),
         "modality_ledger": ledger,

@@ -366,3 +366,39 @@ def attach_cis(results: list[CVResult], n_boot: int = 1000, seed: int = 42) -> l
         r.extra["ci_low"] = lo
         r.extra["ci_high"] = hi
     return results
+
+
+def calibration_metrics(result: CVResult, n_bins: int = 10) -> dict[str, Any] | None:
+    """Calibration of a binary classifier's OOF probabilities: Brier, ECE, curve.
+
+    Discrimination (AUROC) says nothing about whether predicted risks match
+    observed event rates (Van Calster et al., BMC Medicine 2019). Binary only.
+    """
+    if result.task != "classification" or result.oof_true is None or result.oof_score is None:
+        return None
+    y = np.asarray(result.oof_true)
+    classes = np.unique(y)
+    if len(classes) != 2:
+        return None
+    score = np.asarray(result.oof_score, dtype=float)      # P(positive class)
+    y01 = (y == classes[1]).astype(int)
+    keep = np.isfinite(score)
+    y01, score = y01[keep], score[keep]
+    if len(y01) < 10 or np.ptp(score) == 0:
+        return None
+    brier = float(np.mean((score - y01) ** 2))
+    bins = np.linspace(0.0, 1.0, n_bins + 1)
+    idx = np.clip(np.digitize(score, bins) - 1, 0, n_bins - 1)
+    ece, curve_pred, curve_obs = 0.0, [], []
+    for b in range(n_bins):
+        m = idx == b
+        if not m.any():
+            continue
+        conf, acc = float(score[m].mean()), float(y01[m].mean())
+        ece += (m.sum() / len(score)) * abs(acc - conf)
+        curve_pred.append(conf)
+        curve_obs.append(acc)
+    return {
+        "brier": brier, "ece": float(ece), "n": int(len(score)),
+        "reliability": {"mean_predicted": curve_pred, "fraction_positive": curve_obs},
+    }
