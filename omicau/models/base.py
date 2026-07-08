@@ -48,6 +48,7 @@ class CVResult:
     per_fold: list[dict[str, float]] = field(default_factory=list)
     fold_primary: list[float] = field(default_factory=list)  # per-fold primary metric
     feature_importance: dict[str, float] = field(default_factory=dict)
+    feature_importance_std: dict[str, float] = field(default_factory=dict)  # across-fold stability
     n_features: int = 0
     modalities: list[str] = field(default_factory=list)
     extra: dict[str, Any] = field(default_factory=dict)
@@ -82,6 +83,7 @@ class CVResult:
             "n_features": int(self.n_features),
             "modalities": list(self.modalities),
             "feature_importance": {k: _f(v) for k, v in self.feature_importance.items()},
+            "feature_importance_std": {k: _f(v) for k, v in self.feature_importance_std.items()},
             "n_splits": int(self.extra.get("n_splits", 0)),
             "device": self.extra.get("device"),
             # per-fold spread of the primary metric -- fold dispersion, NOT a
@@ -240,8 +242,7 @@ def cross_validate_estimator(
 
     per_fold: list[dict[str, float]] = []
     fold_primary: list[float] = []
-    importance_acc = np.zeros(X.shape[1]) if compute_importance else None
-    importance_folds = 0
+    importance_stack: list[np.ndarray] = []   # per-fold permutation importances
 
     for train_idx, val_idx in splitter.split(X, y, groups):
         pipe = make_pipeline(estimator_factory(), task, X.shape[1], max_features, seed)
@@ -278,8 +279,7 @@ def cross_validate_estimator(
                     pipe, X[val_idx], y[val_idx],
                     n_repeats=importance_repeats, random_state=seed, scoring=scoring,
                 )
-                importance_acc += r.importances_mean
-                importance_folds += 1
+                importance_stack.append(r.importances_mean)
             except (ValueError, RuntimeError):
                 pass
 
@@ -292,9 +292,13 @@ def cross_validate_estimator(
         metrics = score_predictions(y, oof_pred, oof_pred, task)
 
     importance: dict[str, float] = {}
-    if compute_importance and importance_folds:
-        mean_imp = importance_acc / importance_folds
+    importance_std: dict[str, float] = {}
+    if compute_importance and importance_stack:
+        arr = np.vstack(importance_stack)
+        mean_imp = arr.mean(axis=0)
+        std_imp = arr.std(axis=0) if arr.shape[0] > 1 else np.zeros_like(mean_imp)
         importance = {feature_names[i]: float(mean_imp[i]) for i in range(len(feature_names))}
+        importance_std = {feature_names[i]: float(std_imp[i]) for i in range(len(feature_names))}
 
     return CVResult(
         name=name,
@@ -303,6 +307,7 @@ def cross_validate_estimator(
         per_fold=per_fold,
         fold_primary=[float(v) for v in fold_primary],
         feature_importance=importance,
+        feature_importance_std=importance_std,
         n_features=int(X.shape[1]),
         modalities=list(modalities),
         extra={"n_splits": int(k)},

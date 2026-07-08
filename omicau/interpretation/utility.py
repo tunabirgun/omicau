@@ -110,13 +110,28 @@ def build_utility_ledger(
     nn_fusion = nn.get("neural::FUSION")
 
     # -- controls / leakage gate ------------------------------------------ #
-    controls = [{"name": r.name, "primary": _r(r.primary)} for r in classical_out.get("controls", [])]
-    worst_control = max((c["primary"] for c in controls if c["primary"] is not None), default=chance)
+    controls = [{"name": r.name, "primary": _r(r.primary),
+                 "ci_low": getattr(r, "extra", {}).get("ci_low"),
+                 "ci_high": getattr(r, "extra", {}).get("ci_high")}
+                for r in classical_out.get("controls", [])]
     alarm = chance + CONTROL_MARGIN
-    leakage = worst_control > alarm
+    present = [c for c in controls if c["primary"] is not None]
+
+    def _sig_above_chance(c):
+        # A control leaks when it is *significantly* above chance: its 95% CI lower
+        # bound clears chance. Falls back to a fixed margin when no CI is available.
+        # (Gating on the CI *upper* bound would fire on any wide small-sample CI.)
+        if c.get("ci_low") is not None:
+            return c["ci_low"] > chance
+        return c["primary"] > alarm
+
+    worst_control = max((c["primary"] for c in present), default=chance)
+    leaking = [c for c in present if _sig_above_chance(c)]
+    leakage = bool(leaking)
     leakage_text = (
-        f"A control baseline scored {worst_control:.3f} (chance ~ {chance:.2f}, alarm > {alarm:.2f}); "
-        "treat reported gains with caution and re-check group-aware splitting."
+        f"A control baseline ({leaking[0]['name'].split('::')[-1]}) is significantly above chance "
+        f"(score {leaking[0]['primary']:.3f}, chance ~ {chance:.2f}); treat reported gains with "
+        "caution and re-check group-aware splitting."
         if leakage
         else f"All control baselines scored near chance (~ {chance:.2f}); the harness shows no leakage."
     )
@@ -210,9 +225,14 @@ def build_utility_ledger(
     )
 
     calibration = None
+    auprc_baseline = None
     if task == "classification" and best is not None:
         from omicau.models.base import calibration_metrics
         calibration = calibration_metrics(best)
+        yv = np.asarray(aligned.y)
+        cls = np.unique(yv)
+        if len(cls) == 2:                     # AUPRC is only interpretable vs prevalence
+            auprc_baseline = float(np.mean(yv == cls[1]))
 
     return {
         "primary_metric": metric,
@@ -220,6 +240,7 @@ def build_utility_ledger(
         "chance_level": chance,
         "best_model": _model_brief(best),
         "calibration": calibration,
+        "auprc_baseline": auprc_baseline,
         "best_single_modality": _model_brief(best_single),
         "fusion_gain_over_best_single": _r(fusion_gain),
         "modality_ledger": ledger,

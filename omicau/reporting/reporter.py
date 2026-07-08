@@ -515,7 +515,7 @@ def build_report(audit: dict, out_dir: str | Path, config=None) -> dict[str, Pat
     ledger_table = render_table("tbl-ledger", led_header, led_rows, numeric_cols={1, 2, 3, 4, 5})
     diag_table = render_table("tbl-diag", diag_header, diag_rows, numeric_cols={3, 4, 5})
     attr_rows, attr_header = _attr_rows(models)
-    attr_table = render_table("tbl-attr", attr_header, attr_rows, numeric_cols={2})
+    attr_table = render_table("tbl-attr", attr_header, attr_rows, numeric_cols={2, 3})
 
     # -- render template --------------------------------------------------- #
     control_vals = [c.get("primary") for c in util.get("controls", []) if c.get("primary") is not None]
@@ -566,13 +566,14 @@ def build_report(audit: dict, out_dir: str | Path, config=None) -> dict[str, Pat
 
 
 def _attr_rows(models: dict):
-    header = ["rank", "feature (modality::name)", "importance"]
+    header = ["rank", "feature (modality::name)", "importance", "±SD across folds"]
     fusion = next((r for r in models.get("classical", []) if r["name"].endswith("::FUSION")
                    and r.get("feature_importance")), None)
     if not fusion:
         return [], header
     imp = sorted(fusion["feature_importance"].items(), key=lambda kv: kv[1], reverse=True)[:40]
-    return [[i + 1, k, v] for i, (k, v) in enumerate(imp)], header
+    stds = fusion.get("feature_importance_std", {})
+    return [[i + 1, k, v, stds.get(k)] for i, (k, v) in enumerate(imp)], header
 
 
 # --------------------------------------------------------------------------- #
@@ -752,6 +753,13 @@ _TEMPLATE = r"""<!doctype html>
   <section>
     <h2>Feature attribution</h2>
     {{ means('feature_attribution') }}
+    <div class="consequence">
+      Importances are <strong>unconditional permutation importance</strong>, which over-credits
+      correlated predictors and can split or inflate importance among collinear features (Hooker
+      et al. 2021; Strobl et al. 2008). Omic layers are highly collinear, so read the ranking as
+      indicative, not causal, and weigh the across-fold ±SD column — a large SD means an unstable,
+      low-confidence attribution.
+    </div>
     <div class="figure">{{ figs.attribution|safe }}</div>
     {{ tables.attr|safe }}
   </section>
