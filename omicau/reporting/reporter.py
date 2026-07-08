@@ -480,7 +480,10 @@ def _build_dome(audit: dict) -> dict:
     grouped = bool((cfg.get("clinical") or {}).get("group"))
     resample = "group-level" if grouped else "sample-level"
     has_stacking = any(r.get("name") == "stacking::FUSION" for r in models.get("classical", []))
-    regimes = "early (feature concatenation), intermediate (masked global-pooling neural network)"
+    neural_on = bool(models.get("neural", {}).get("enabled"))
+    regimes = "early (feature concatenation)"
+    if neural_on:
+        regimes += ", intermediate (masked global-pooling neural network)"
     if has_stacking:
         regimes += ", late (stacking)"
     return {
