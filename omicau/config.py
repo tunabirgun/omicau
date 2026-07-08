@@ -140,10 +140,19 @@ class ComputeSpec:
 
 @dataclass
 class LLMSpec:
+    #: Optional plain-language verdict via a user-supplied model. NOTE: there is
+    #: deliberately NO api_key field here -- the key is never part of the config,
+    #: so it can never be written to config.json / audit.json / the report / the
+    #: provenance hash. The key is supplied per-run (UI field, held in memory only)
+    #: or via the named environment variable, and used only for that run's call.
     enabled: bool = False
+    provider: str = "anthropic"          # anthropic(Claude) | openai(ChatGPT) | gemini | local | openai_compatible
     model: str = "claude-sonnet-5"
-    api_key_env: str = "ANTHROPIC_API_KEY"
+    api_key_env: str = "ANTHROPIC_API_KEY"   # env-var NAME for the CLI path; never the key value
+    base_url: str | None = None          # gemini/local override; full URL (e.g. http://localhost:11434/v1)
+    openai_api: str = "chat"             # "chat" (universal) | "responses" (openai only, needs openai>=1.66)
     max_tokens: int = 2000
+    timeout: float = 60.0
 
 
 @dataclass

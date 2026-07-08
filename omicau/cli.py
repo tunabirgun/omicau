@@ -181,8 +181,13 @@ def _log_runtime(log_path: Path, step: str, elapsed: float, device_tag: str) -> 
 
 
 def run_audit(config, *, cores: int, device: str, llm: bool | None,
+              api_key: str | None = None,
               echo=lambda *_a, **_k: None) -> dict[str, Any]:
-    """Execute the full audit and compile all report assets; return the audit dict."""
+    """Execute the full audit and compile all report assets; return the audit dict.
+
+    ``api_key`` is an ephemeral, UI-supplied model key: it is used only for this
+    run's plain-language verdict call and is never stored, logged, or written to
+    any output (config.json / audit.json / report / provenance hash)."""
     from omicau.data.alignment import load_and_align
     from omicau.diagnostics import batch_effect_diagnostics, missingness_diagnostics
     from omicau.models.classical import resolve_cores, run_classical_benchmarks
@@ -244,7 +249,7 @@ def run_audit(config, *, cores: int, device: str, llm: bool | None,
     util = timed("utility_ledger",
                  lambda: build_utility_ledger(aligned, classical, neural, batch, missing))
     summary = timed("interpretation",
-                    lambda: summarize(build_context(aligned, util, missing, batch), config))
+                    lambda: summarize(build_context(aligned, util, missing, batch), config, api_key=api_key))
 
     audit = _assemble_audit(aligned, classical, neural, util, summary, missing, batch,
                             config, cost, dev.type, resolved_cores)

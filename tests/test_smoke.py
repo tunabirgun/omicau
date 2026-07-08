@@ -553,3 +553,141 @@ def test_regression_batch_confounding_is_tested():
     conf = batch_effect_diagnostics(ad)["confounding"]
     assert conf["tested"] is True and conf["test"] == "anova_target_vs_batch"
     assert "eta_squared" in conf and "flag" in conf
+
+
+# --------------------------------------------------------------------------- #
+# LLM tier: multi-provider routing + the UI key-privacy contract
+# --------------------------------------------------------------------------- #
+def test_llm_client_routes_providers_and_defaults(monkeypatch):
+    # One OpenAI-family stub records exactly how each provider is dialed.
+    seen = {}
+
+    class _Msg:
+        content = "ok"
+
+    class _Choice:
+        message = _Msg()
+
+    class _Completions:
+        def create(self, **kw):
+            seen.update(kw)
+            return types.SimpleNamespace(choices=[_Choice()])
+
+    class _Chat:
+        completions = _Completions()
+
+    class _OpenAI:
+        def __init__(self, **kw):
+            seen["base_url"] = kw.get("base_url")
+            seen["api_key"] = kw.get("api_key")
+        chat = _Chat()
+
+    fake = types.ModuleType("openai")
+    fake.OpenAI = _OpenAI
+    monkeypatch.setitem(sys.modules, "openai", fake)
+
+    from omicau.interpretation import llm_client as C
+
+    # Gemini -> OpenAI-compatible endpoint with the Google base URL, user key preserved.
+    seen.clear()
+    C.call_llm(provider="gemini", model="gemini-3.5-flash", api_key="k1", base_url=None,
+               system="s", user="u", max_tokens=10, timeout=5.0)
+    assert seen["base_url"] == C.GEMINI_OPENAI_BASE and seen["api_key"] == "k1"
+
+    # Local -> Ollama default base URL and the SDK-required placeholder key when none given.
+    seen.clear()
+    C.call_llm(provider="local", model="llama3.1", api_key="", base_url=None,
+               system="s", user="u", max_tokens=10, timeout=5.0)
+    assert seen["base_url"] == C.OLLAMA_DEFAULT_BASE and seen["api_key"] == "ollama"
+
+    # Plain OpenAI -> SDK default endpoint (no base_url override).
+    seen.clear()
+    C.call_llm(provider="openai", model="gpt-5.5", api_key="k2", base_url=None,
+               system="s", user="u", max_tokens=10, timeout=5.0)
+    assert seen["base_url"] is None and seen["api_key"] == "k2"
+
+
+def test_ui_error_redaction_scrubs_api_key():
+    from omicau.ui.routes import _redact
+    secret = "sk-ant-verysecretkey1234567890"
+    msg = f"Auth failed for key {secret} at api.example.com"
+    out = _redact(msg, secret)
+    assert secret not in out and "<redacted-api-key>" in out
+    # Backstop: a key-shaped token is scrubbed even when the exact secret is unknown.
+    other = "boom: gsk_ABCDEFGHIJKLMNOPQRSTUVWX leaked"
+    assert "gsk_ABCDEFGHIJKLMNOPQRSTUVWX" not in _redact(other, None)
+
+
+def test_ui_run_passes_key_to_worker_but_never_stores_it(tmp_path, monkeypatch):
+    # The UI key-privacy contract, proven end to end: the ephemeral key reaches the
+    # audit worker yet never lands in the session state, progress, or any response.
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+    import time
+    from fastapi.testclient import TestClient
+    from omicau.ui.server import create_app
+
+    captured = {}
+
+    def _fake_run_audit(cfg, *, cores, device, llm, api_key=None, echo=lambda *_a, **_k: None):
+        captured["api_key"] = api_key
+        echo("interpretation")
+        return {"meta": {"provenance_hash": "HASH123"}, "_assets": {"html": "<html>ok</html>"}}
+
+    monkeypatch.setattr("omicau.cli.run_audit", _fake_run_audit)
+
+    app = create_app(token="secret", workspace=tmp_path)
+    client = TestClient(app)
+    H = {"X-Omicau-Token": "secret"}
+    sid = client.post("/api/session", headers=H).json()["session"]
+
+    # Minimal session: one clinical file so the config assembles (run_audit is mocked).
+    clin = Path(app.state.sessions[sid]["dir"]) / "clinical.csv"
+    clin.write_text("id,y\ns1,1\ns2,0\n", encoding="utf-8")
+    app.state.sessions[sid]["files"] = [
+        {"filename": "clinical.csv", "path": str(clin), "role": "clinical",
+         "orientation": "samples_as_rows"}]
+    app.state.sessions[sid]["clinical_map"] = {"sample_id": "id", "target": "y", "task": "auto"}
+
+    SECRET = "sk-ephemeral-KEY-abcdefghijklmnop"
+    r = client.post(f"/api/session/{sid}/run", headers=H, json={"api_key": SECRET})
+    assert r.json().get("started") is True
+
+    for _ in range(50):                       # worker runs in a thread; poll to completion
+        st = client.get(f"/api/session/{sid}/progress", headers=H).json()
+        if st["status"] in ("done", "error"):
+            break
+        time.sleep(0.05)
+    assert st["status"] == "done", st
+
+    assert captured["api_key"] == SECRET                       # key reached the worker
+    dump = json.dumps(app.state.sessions[sid], default=str)    # ... but is nowhere in state
+    assert SECRET not in dump
+    assert SECRET not in json.dumps(st)                        # ... nor in any client response
+
+
+def test_ui_run_without_key_is_unchanged(tmp_path, monkeypatch):
+    # Regression guard: the common no-LLM run path still starts with no body.
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+    from fastapi.testclient import TestClient
+    from omicau.ui.server import create_app
+
+    def _fake_run_audit(cfg, *, cores, device, llm, api_key=None, echo=lambda *_a, **_k: None):
+        assert api_key is None
+        return {"meta": {"provenance_hash": "H"}, "_assets": {"html": "<html/>"}}
+
+    monkeypatch.setattr("omicau.cli.run_audit", _fake_run_audit)
+    app = create_app(token="secret", workspace=tmp_path)
+    client = TestClient(app)
+    H = {"X-Omicau-Token": "secret"}
+    sid = client.post("/api/session", headers=H).json()["session"]
+    clin = Path(app.state.sessions[sid]["dir"]) / "clinical.csv"
+    clin.write_text("id,y\ns1,1\ns2,0\n", encoding="utf-8")
+    app.state.sessions[sid]["files"] = [
+        {"filename": "clinical.csv", "path": str(clin), "role": "clinical",
+         "orientation": "samples_as_rows"}]
+    app.state.sessions[sid]["clinical_map"] = {"sample_id": "id", "target": "y", "task": "auto"}
+
+    r = client.post(f"/api/session/{sid}/run", headers=H)   # no JSON body at all
+    assert r.json().get("started") is True

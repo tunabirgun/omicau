@@ -46,8 +46,29 @@ const state = {
   clinicalCols: null,
   clinical: { target: "", sample_id: "", group: "", batch: "", task: "auto" },
   options: { run_name: "my_audit", n_splits: 5, neural: true,
-             batch_blocked: false, batch_adjust_sensitivity: false, normalization: "none" },
+             batch_blocked: false, batch_adjust_sensitivity: false, normalization: "none",
+             llm: { enabled: false, provider: "anthropic", model: "claude-sonnet-5", base_url: "" } },
   align: null, preflight: null, run: null,
+};
+
+// The AI model API key lives ONLY in this in-memory variable — never in `state`
+// that gets POSTed to /options, never persisted. It travels once, in the /run body.
+let LLM_API_KEY = "";
+
+// Friendly provider catalogue: label + default model + where to get a key.
+const PROVIDERS = {
+  anthropic: { label: "Claude (Anthropic)", model: "claude-sonnet-5", needsKey: true,
+    keyUrl: "https://console.anthropic.com/settings/keys",
+    keyLabel: "Anthropic API key", where: "console.anthropic.com → API Keys" },
+  openai: { label: "ChatGPT (OpenAI)", model: "gpt-5.5", needsKey: true,
+    keyUrl: "https://platform.openai.com/api-keys",
+    keyLabel: "OpenAI API key", where: "platform.openai.com → API keys" },
+  gemini: { label: "Gemini (Google)", model: "gemini-3.5-flash", needsKey: true,
+    keyUrl: "https://aistudio.google.com/apikey",
+    keyLabel: "Google AI Studio API key", where: "aistudio.google.com → Get API key" },
+  local: { label: "Local model on this computer (Ollama / LM Studio)", model: "llama3.1",
+    needsKey: false, base_url: "http://localhost:11434/v1",
+    where: "install Ollama, then run: ollama pull llama3.1 — nothing leaves your machine" },
 };
 
 const $ = (s) => document.querySelector(s);
@@ -481,6 +502,7 @@ RENDERERS.options = async () => {
   wrap.append(box);
   wrap.append(el("p", { class: "consequence", style: "margin-top:10px" },
     "The stress test and batch-adjustment probe are optional robustness checks and need a mapped batch column. The probe never corrects your data — it reports alongside the standard result, and omicau refuses to run it when batch is confounded with the outcome."));
+  wrap.append(llmCard(o));
   wrap.append(footer({ back: true, next: advance }));
   return wrap;
 
@@ -495,6 +517,72 @@ RENDERERS.options = async () => {
     goStep(state.step + 1);
   }
 };
+
+// LLM verdict card (optional) — shown at the bottom of Options.
+function llmCard(o) {
+  const card = el("div", { class: "hero-card", style: "margin-top:20px" });
+  card.append(el("span", { class: "eyebrow" }, "Plain-language summary — optional"));
+  card.append(el("p", { class: "lead", style: "font-size:15px;margin:8px 0 0" },
+    "Turn the audit numbers into a short written verdict using an AI model you choose — " +
+    "Claude, ChatGPT, Gemini, or a model running locally on this computer."));
+  card.append(el("p", { class: "consequence", style: "margin-top:8px" },
+    "Only the audit's summary statistics are sent to the model — never your raw data. " +
+    "If you skip this, omicau still writes its built-in rule-based summary."));
+  const enable = el("input", { type: "checkbox", id: "llm-enable" });
+  if (o.llm.enabled) enable.setAttribute("checked", "checked");
+  card.append(el("label", { style: "display:flex;gap:10px;align-items:center;font-weight:600;margin-top:14px" },
+    enable, "Add an AI plain-English verdict"));
+  const body = el("div", { id: "llm-body", style: "margin-top:6px" });
+  card.append(body);
+  const rebuild = () => { body.innerHTML = ""; if (o.llm.enabled) fillLlmBody(body, o); };
+  enable.addEventListener("change", () => { o.llm.enabled = enable.checked; rebuild(); });
+  rebuild();
+  return card;
+}
+
+function fillLlmBody(body, o) {
+  const row = (label, help, control) => el("div", { style: "margin:16px 0" },
+    el("label", { style: "display:block;font-weight:600;margin-bottom:4px" }, label),
+    help ? el("div", { class: "note-line", style: "margin-bottom:6px" }, help) : null, control);
+
+  // Provider picker
+  const provSel = el("select", { style: "min-width:320px" });
+  Object.entries(PROVIDERS).forEach(([k, p]) =>
+    provSel.append(el("option", { value: k, selected: o.llm.provider === k }, p.label)));
+  provSel.addEventListener("change", () => {
+    o.llm.provider = provSel.value;
+    const np = PROVIDERS[o.llm.provider];
+    o.llm.model = np.model;                 // sensible default; user can edit
+    o.llm.base_url = np.base_url || "";
+    LLM_API_KEY = "";                       // never carry a key across providers
+    fillLlmBody(body, o);                   // re-render for the new provider
+  });
+  const p = PROVIDERS[o.llm.provider] || PROVIDERS.anthropic;
+
+  // Model id (editable)
+  const modelIn = el("input", { type: "text", value: o.llm.model, style: "min-width:320px" });
+  modelIn.addEventListener("input", () => (o.llm.model = modelIn.value));
+
+  body.innerHTML = "";
+  body.append(row("Which service", null, provSel));
+  body.append(row("Model", "Paste any model name your account supports.", modelIn));
+
+  if (p.needsKey) {
+    const keyIn = el("input", { type: "password", value: LLM_API_KEY, autocomplete: "off",
+      placeholder: "paste your key here", style: "min-width:320px" });
+    keyIn.addEventListener("input", () => (LLM_API_KEY = keyIn.value));
+    const help = el("div", { class: "note-line", style: "margin-bottom:6px" },
+      "Held in memory for this one run only — never saved, logged, or written to the report. ",
+      el("a", { href: p.keyUrl, target: "_blank", rel: "noopener" }, "Get a key: " + p.where));
+    body.append(el("div", { style: "margin:16px 0" },
+      el("label", { style: "display:block;font-weight:600;margin-bottom:4px" }, p.keyLabel),
+      help, keyIn));
+  } else {
+    const urlIn = el("input", { type: "text", value: o.llm.base_url || "", style: "min-width:320px" });
+    urlIn.addEventListener("input", () => (o.llm.base_url = urlIn.value));
+    body.append(row("Server address", "Where your local model is listening. " + p.where, urlIn));
+  }
+}
 
 // --------------------------------------------------------------------------- //
 // Step 7 — preflight + run + progress
@@ -533,7 +621,12 @@ async function startRun() {
   state.run = { status: "running", stages: [] };
   render();
   try {
-    await api(`/api/session/${state.session}/run`, { method: "POST" });
+    // No-key runs stay byte-identical to before; the key only ever rides this one body.
+    const opts = LLM_API_KEY
+      ? { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ api_key: LLM_API_KEY }) }
+      : { method: "POST" };
+    await api(`/api/session/${state.session}/run`, opts);
     poll();
   } catch (e) {
     state.run = { status: "error", stages: [], error: e.message };
@@ -592,6 +685,7 @@ RENDERERS.results = async () => {
 
   async function newAudit() {
     const s = await api("/api/session", { method: "POST" });
+    LLM_API_KEY = "";                          // drop any key from the finished run
     Object.assign(state, { session: s.session, step: 0, files: [], rolesOk: false,
       clinicalCols: null, clinical: { target: "", sample_id: "", group: "", batch: "", task: "auto" },
       align: null, preflight: null, run: null });

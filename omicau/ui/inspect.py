@@ -296,6 +296,20 @@ def build_config_dict(session: dict) -> dict[str, Any]:
                "batch_adjust_sensitivity": bool(session.get("batch_adjust_sensitivity", False)) and not confounded},
         "neural": {"enabled": session.get("neural", True)},
         "normalization": {"preset": session.get("normalization", "none")},
-        "llm": {"enabled": False},
+        # Non-secret LLM routing only (provider/model/base_url); the API KEY is
+        # NEVER part of the config -- it travels separately as an ephemeral run arg.
+        "llm": _llm_block(session.get("llm")),
     }
     return cfg
+
+
+def _llm_block(llm: dict | None) -> dict[str, Any]:
+    """Non-secret LLM config from wizard state. Deliberately drops any key field."""
+    llm = llm or {}
+    if not llm.get("enabled") or (llm.get("provider", "none") == "none"):
+        return {"enabled": False}
+    block = {"enabled": True, "provider": llm.get("provider", "anthropic"),
+             "model": llm.get("model") or "claude-sonnet-5"}
+    if llm.get("base_url"):
+        block["base_url"] = llm["base_url"]
+    return block          # note: NO api_key / api_key_env value copied from the UI

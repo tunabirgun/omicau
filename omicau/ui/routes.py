@@ -8,10 +8,21 @@ leaves the machine. Long runs execute in a background thread and stream named
 stages via polling.
 """
 
+import re
 import secrets
 import threading
 import traceback
 from pathlib import Path
+
+_KEYISH = re.compile(r"\b(sk|xai|gsk|or|key)[-_][A-Za-z0-9\-_]{16,}\b")
+
+
+def _redact(text: str, secret: str | None) -> str:
+    """Scrub an API key from any user-facing error string: the exact key first,
+    then a key-shaped-token backstop. Never let a crafted error leak the secret."""
+    if secret and len(secret) >= 6:
+        text = text.replace(secret, "<redacted-api-key>")
+    return _KEYISH.sub("<redacted-api-key>", text)
 
 
 def register(app) -> None:  # noqa: C901 - a flat set of small handlers
@@ -127,6 +138,10 @@ def register(app) -> None:  # noqa: C901 - a flat set of small handlers
                   "batch_adjust_sensitivity", "normalization"):
             if k in payload:
                 s[k] = payload[k]
+        if "llm" in payload and isinstance(payload["llm"], dict):
+            # persist ONLY non-secret LLM routing; strip any key the client sent.
+            s["llm"] = {k2: payload["llm"].get(k2)
+                        for k2 in ("enabled", "provider", "model", "base_url")}
         return {"ok": True}
 
     def _modalities(s: dict) -> list[dict]:
@@ -153,6 +168,7 @@ def register(app) -> None:  # noqa: C901 - a flat set of small handlers
             "batch_adjust_sensitivity": s.get("batch_adjust_sensitivity", False),
             "batch_confounded": s.get("batch_confounded", False),
             "normalization": s.get("normalization", "none"),
+            "llm": s.get("llm"),          # non-secret routing only (no key)
         })
 
     @app.post("/api/session/{sid}/preflight")
@@ -176,30 +192,33 @@ def register(app) -> None:  # noqa: C901 - a flat set of small handlers
                          "total_seconds": cost["total_seconds"]}}
 
     @app.post("/api/session/{sid}/run")
-    async def run(sid: str):
+    async def run(sid: str, payload: dict | None = None):
         s = _sess(sid)
         if s.get("run") and s["run"]["status"] == "running":
             return {"ok": True, "already": True}
         s["run"] = {"status": "running", "stages": [], "error": None, "report": None,
                     "provenance": None}
         cfg_dict = _config_dict(s)
+        # The API key travels ONLY here: request body -> this local -> worker arg.
+        # It is never stored on the session, config, audit, log, or manifest.
+        api_key = (payload or {}).get("api_key") or None
 
-        def _worker():
+        def _worker(api_key=api_key):
             try:
                 from omicau.config import OmicauConfig
                 from omicau.cli import run_audit
                 cfg = OmicauConfig.from_dict(cfg_dict)
-                audit = run_audit(cfg, cores=None, device="auto", llm=False,
+                audit = run_audit(cfg, cores=None, device="auto", llm=None, api_key=api_key,
                                   echo=lambda m: s["run"]["stages"].append(str(m)))
-                # write payload fields BEFORE flipping status, so a reader that sees
-                # status=="done" always sees a consistent report/provenance.
                 s["run"]["provenance"] = audit["meta"]["provenance_hash"]
                 s["run"]["report"] = audit.get("_assets", {}).get("html")
                 s["run"]["status"] = "done"          # published last
             except Exception as exc:  # noqa: BLE001
-                s["run"]["error"] = f"{exc}"
-                s["run"]["trace"] = traceback.format_exc()
-                s["run"]["status"] = "error"         # published last
+                s["run"]["error"] = _redact(str(exc), api_key)   # never surface the key
+                s["run"]["trace"] = _redact(traceback.format_exc(), api_key)
+                s["run"]["status"] = "error"
+            finally:
+                api_key = None                        # drop the reference after use
 
         threading.Thread(target=_worker, daemon=True).start()
         return {"ok": True, "started": True}

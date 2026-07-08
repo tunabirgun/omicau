@@ -41,15 +41,17 @@ _SYSTEM_PROMPT = (
 # --------------------------------------------------------------------------- #
 # Public entry point
 # --------------------------------------------------------------------------- #
-def summarize(context: dict[str, Any], config) -> dict[str, Any]:
-    """Return the interpretation summary, via LLM if enabled else rule-based."""
+def summarize(context: dict[str, Any], config, *, api_key: str | None = None) -> dict[str, Any]:
+    """Return the interpretation summary, via a user-supplied LLM if enabled else
+    rule-based. The ephemeral ``api_key`` (UI-supplied, in memory only) wins over
+    the named environment variable; it stays a local and is never persisted."""
     llm = config.llm
     if llm.enabled:
-        api_key = os.environ.get(llm.api_key_env, "").strip()
-        if api_key:
-            result = _try_llm(context, llm, api_key)
+        key = (api_key or os.environ.get(llm.api_key_env, "")).strip()
+        if key:
+            result = _try_llm(context, llm, key)
             if result is not None:
-                result["source"] = f"llm:{llm.model}"
+                result["source"] = f"llm:{llm.provider}:{llm.model}"
                 return result
     fallback = _rule_based(context)
     fallback["source"] = "rule_based"
@@ -77,27 +79,21 @@ def _retry_backoff(fn, *, retries: int = 4, base: float = 1.0, cap: float = 20.0
 
 
 def _try_llm(context: dict[str, Any], llm, api_key: str) -> dict[str, Any] | None:
-    try:
-        import anthropic  # type: ignore
-    except ImportError:
-        return None
-
-    client = anthropic.Anthropic(api_key=api_key)
+    from omicau.interpretation import llm_client
     payload = json.dumps(_sanitize_context(context), sort_keys=True)
 
     def _call():
-        resp = client.messages.create(
-            model=llm.model,
-            max_tokens=llm.max_tokens,
-            system=_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": f"Audit diagnostics (JSON):\n{payload}"}],
-        )
-        if getattr(resp, "stop_reason", None) == "refusal":
-            raise RuntimeError("model refused")
-        text = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text")
-        return text
+        return llm_client.call_llm(
+            provider=llm.provider, model=llm.model, api_key=api_key,
+            base_url=getattr(llm, "base_url", None),
+            system=_SYSTEM_PROMPT, user=f"Audit diagnostics (JSON):\n{payload}",
+            max_tokens=llm.max_tokens, timeout=getattr(llm, "timeout", 60.0),
+            openai_api=getattr(llm, "openai_api", "chat"))
 
-    text = _retry_backoff(_call)
+    try:
+        text = _retry_backoff(_call)
+    except ImportError:            # provider SDK absent -> degrade to rule_based
+        return None
     if not text:
         return None
     parsed = _parse_json(text)
