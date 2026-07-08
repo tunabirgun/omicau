@@ -854,8 +854,9 @@ _TEMPLATE = r"""<!doctype html>
       Brier score {{ '%.3f'|format(util.calibration.brier) }} (lower is better) ·
       expected calibration error {{ '%.3f'|format(util.calibration.ece) }}.
       These probabilities are research-use-only and may be miscalibrated by construction — balanced
-      class weights (logistic/forest) or an over-confident softmax (neural) shift predicted
-      probabilities away from the true event risk. Recalibrate before interpreting them as risks.
+      class weights (logistic/forest), overconfident boosted-tree scores (gradient boosting), or an
+      over-confident softmax (neural) shift predicted probabilities away from the true event risk.
+      Recalibrate before interpreting them as risks.
     </div>
   </section>
   {% endif %}
