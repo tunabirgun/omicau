@@ -2,10 +2,11 @@
 
 A reproducible, leakage-safe, platform-agnostic command-line tool that audits
 multi-omic datasets: it ingests non-standardized matrices, aligns them, locks
-their provenance with a cryptographic hash, tests for missingness bias and batch
-effects, benchmarks classical and neural data-fusion models under group-aware
-cross-validation, attributes predictive signal to individual features, and
-compiles both a clinical dashboard and publication-grade documentation.
+their provenance with a value-level cryptographic hash, tests for missingness
+bias and batch effects, benchmarks classical and neural data-fusion models under
+group-aware cross-validation, attributes predictive signal to individual
+features, and compiles an interactive dual clinical/research dashboard alongside
+machine-readable JSON/CSV assets.
 
 The core runs fully offline with no LLM connection and no orchestration
 framework. Optional tiers (an LLM interpretation plugin, remote data hubs)
@@ -189,7 +190,7 @@ Universal rules across layers:
 flowchart TB
     S0["Multi-modal ingestion — auto-delimiter, orientation, fuzzy sample-name match"]
     S1["Alignment & masking — sample intersection, drop missing endpoints, NaN masks"]
-    S2["Provenance SHA-256 — hash of sample index + feature footprints"]
+    S2["Provenance SHA-256 — value-level hash of matrices + sample index + target"]
     S3["Cost / runtime estimate — N×P_m, K folds, E epochs, device, cores"]
     S4["Nested group-aware CV — impute + scale + select fitted inside train folds only"]
     S5["Fusion benchmarks — classical concat + masked global-pooling neural network"]
@@ -404,10 +405,12 @@ the managed `WORKSPACE_CDR` / `WORKSPACE_BUCKET` / `GOOGLE_PROJECT` variables;
 data cannot be exported and off-platform sessions raise a clear error. No
 participant-level data is ever transmitted off-platform.
 
-`omicau` was also validated on external multi-omics datasets that are **not** hubs
-— the MOGONET benchmark (Wang et al., *Nat Commun* 2021): ROSMAP (Alzheimer's,
-three omics, fusion AUROC ≈ 0.80) and BRCA (PAM50 subtype, three omics, fusion
-AUROC ≈ 0.95, with methylation and miRNA correctly flagged redundant with RNA).
+`omicau` was also validated on external datasets that are **not** hubs: the
+MOGONET benchmark (Wang et al., *Nat Commun* 2021) — ROSMAP (Alzheimer's, three
+omics, fusion AUROC ≈ 0.80) and BRCA (PAM50 subtype, three omics, fusion AUROC
+≈ 0.95, with methylation and miRNA correctly flagged redundant with RNA) — and a
+GEO microarray series (GSE19804 lung tumor-vs-normal, 120 samples × ~54k probes,
+AUROC ≈ 0.99). All controls scored at chance with no leakage flagged.
 
 ---
 
