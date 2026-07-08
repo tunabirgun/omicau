@@ -306,22 +306,52 @@ def run(config_path: Path, cores: int | None, device: str, llm: bool | None,
         click.secho(f"\nOpen the dashboard: {assets['html']}", fg="cyan")
 
 
-@main.command()
+_BOOTSTRAP_EPILOG = """\
+\b
+Per-dataset usage (all write a runnable config.json + matrices):
+  mock          synthetic, fully offline (redundant/confounded/noise layers)
+                  omicau bootstrap --dataset mock --out-dir demo [--task classification|regression]
+  tcga          cBioPortal (no auth): mRNA + copy-number + merged clinical
+                  omicau bootstrap --dataset tcga --out-dir d --study laml_tcga --target SEX
+  ccle          DepMap 24Q4 (figshare): expression -> CRISPR gene-effect (regression)
+                  omicau bootstrap --dataset ccle --out-dir d --target SOX10   # any gene
+  xena          UCSC Xena hub: multi-omics + phenotype
+                  omicau bootstrap --dataset xena --out-dir d --preset brca --target PAM50Call_RNAseq
+  openpbta      public S3 (v15): putative-fusion matrix + histologies
+                  omicau bootstrap --dataset openpbta --out-dir d --target broad_histology
+  metabolomics  Metabolomics Workbench REST: metabolites + study factors
+                  omicau bootstrap --dataset metabolomics --out-dir d --study ST000009 --target gender
+  cptac         requires the `cptac` package: matched proteomics + transcriptomics
+                  omicau bootstrap --dataset cptac --out-dir d --cancer Ucec
+
+Omit --target to let the client pick a sensible default. Remote clients need
+`pip install omicau[data]`; the mock is fully offline.
+"""
+
+
+@main.command(epilog=_BOOTSTRAP_EPILOG)
 @click.option("--dataset", required=True,
               type=click.Choice(["mock", "tcga", "ccle", "cptac", "openpbta", "xena",
                                  "metabolomics"]),
-              help="Benchmark cohort to assemble.")
+              help="Benchmark cohort to assemble (see examples below).")
 @click.option("--out-dir", required=True, type=click.Path(path_type=Path),
               help="Directory to write the dataset + config into.")
-@click.option("--study", default=None, help="TCGA study id / Metabolomics Workbench study id.")
-@click.option("--target", default=None, help="Target column / gene, dataset-specific.")
+@click.option("--study", default=None,
+              help="TCGA study id (e.g. laml_tcga) or Metabolomics Workbench id (e.g. ST000009).")
+@click.option("--target", default=None,
+              help="Target column / gene (dataset-specific; omit for the client default).")
 @click.option("--cancer", default=None, help="CPTAC cohort abbreviation (default: Ucec).")
 @click.option("--preset", default=None, help="Xena preset cohort (default: brca).")
-@click.option("--task", default="classification", help="Mock dataset task.")
+@click.option("--task", default="classification",
+              help="Mock dataset task: classification or regression.")
 @click.option("--seed", default=42, type=int, help="Seed for the mock dataset.")
 def bootstrap(dataset: str, out_dir: Path, study: str | None, target: str | None,
               cancer: str | None, preset: str | None, task: str, seed: int) -> None:
-    """Download / assemble a benchmark cohort in one step."""
+    """Download / assemble a benchmark cohort in one step.
+
+    Produces an omicau-ready dataset (modality CSVs + clinical.csv + config.json)
+    so that `omicau run --config <out-dir>/config.json` works immediately.
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
     click.secho(f"Bootstrapping '{dataset}' into {out_dir}…", fg="cyan")
     try:
