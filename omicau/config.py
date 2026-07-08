@@ -137,20 +137,35 @@ class ReportingSpec:
     docs: list[str] = field(default_factory=list)
 
 
+#: Named normalization presets. "none" is the neutral default (whitespace-only,
+#: case-preserving, no suffix stripping) so non-human / case-sensitive sample
+#: ids are never silently altered. "tcga" opts into the legacy behavior:
+#: uppercase + collapse a TCGA aliquot barcode to its patient stem.
+_TCGA_ALIQUOT_SUFFIX = r"(-\d{2}[A-Z])?(-\d{2}[A-Z]-\d{4}-\d{2})?$"
+NORMALIZATION_PRESETS: dict[str, dict[str, Any]] = {
+    "none": {},
+    "tcga": {"uppercase": True, "strip_suffix_regex": [_TCGA_ALIQUOT_SUFFIX]},
+}
+
+
 @dataclass
 class NormalizationSpec:
     """Fuzzy sample-name normalization applied before alignment."""
 
+    #: Named preset resolved at load time (see NORMALIZATION_PRESETS). Explicit
+    #: fields below always override the preset. "none" keeps ids verbatim except
+    #: for whitespace; "tcga" restores uppercase + aliquot-suffix collapse.
+    preset: str = "none"
     enabled: bool = True
-    uppercase: bool = True
+    #: Case-fold ids. Default False so case-sensitive ids are preserved; the
+    #: "tcga" preset sets this True.
+    uppercase: bool = False
     strip_whitespace: bool = True
     #: Regexes removed from the *start* of each id (batch prefixes).
     strip_prefix_regex: list[str] = field(default_factory=list)
     #: Regexes removed from the *end* of each id (barcode / vial suffixes).
-    #: The default collapses a TCGA aliquot barcode to its patient stem.
-    strip_suffix_regex: list[str] = field(
-        default_factory=lambda: [r"(-\d{2}[A-Z])?(-\d{2}[A-Z]-\d{4}-\d{2})?$"]
-    )
+    #: Empty by default; the "tcga" preset adds the aliquot-barcode collapse.
+    strip_suffix_regex: list[str] = field(default_factory=list)
 
 
 # --------------------------------------------------------------------------- #
@@ -176,6 +191,11 @@ class OmicauConfig:
 
     run_name: str = "omicau_run"
     output_dir: str = "omicau_output"
+    #: Study organism, free-text, carried into audit.json / DOME / model card /
+    #: report — never into the provenance hash (a mutable annotation, not data).
+    #: "unspecified" so no organism is assumed; human hub clients stamp
+    #: "Homo sapiens". Examples: "Mus musculus", "Danio rerio", "Zea mays".
+    organism: str = "unspecified"
     modalities: list[ModalitySpec] = field(default_factory=list)
     clinical: ClinicalSpec = field(default_factory=ClinicalSpec)
     cv: CVSpec = field(default_factory=CVSpec)
@@ -214,7 +234,13 @@ class OmicauConfig:
         for key, spec_cls in _NESTED.items():
             if key in data:
                 sub = data.pop(key)
-                kwargs[key] = _filter_construct(spec_cls, sub) if isinstance(sub, dict) else sub
+                if isinstance(sub, dict):
+                    if key == "normalization":
+                        preset = NORMALIZATION_PRESETS.get(sub.get("preset", "none"), {})
+                        sub = {**preset, **sub}  # explicit user keys win over preset
+                    kwargs[key] = _filter_construct(spec_cls, sub)
+                else:
+                    kwargs[key] = sub
 
         # scalar top-level keys.
         top_names = {f.name for f in fields(cls)}
@@ -300,6 +326,7 @@ class OmicauConfig:
         return {
             "run_name": "example_audit",
             "output_dir": "omicau_output",
+            "organism": "Homo sapiens",
             "seed": 42,
             "modalities": [
                 {"name": "rna", "path": "rna.csv", "description": "RNA-seq log-TPM"},

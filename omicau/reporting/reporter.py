@@ -503,6 +503,7 @@ def _build_dome(audit: dict) -> dict:
             "modalities": {m["name"]: m["n_features"] for m in ds.get("modalities", [])},
             "target": (cfg.get("clinical") or {}).get("target"),
             "task": ds.get("task"),
+            "organism": meta.get("organism", "unspecified"),
             "provenance_sha256": meta.get("provenance_hash"),
             "missing_values": miss_desc,
             "samples_dropped": ds.get("n_dropped", 0),
@@ -554,6 +555,7 @@ def _model_card_md(audit: dict) -> str:
         "",
         "## Data",
         f"- Samples: {ds.get('n_samples')} ({ds.get('n_dropped', 0)} dropped for a missing outcome)",
+        f"- Organism: {meta.get('organism', 'unspecified')}",
         f"- Task: {ds.get('task')}; target defined by the clinical table",
         f"- Modalities (features): {mods}",
         f"- Provenance SHA-256: `{meta.get('provenance_hash')}`",
@@ -724,7 +726,7 @@ _TEMPLATE = r"""<!doctype html>
 <header class="masthead">
   <div class="brand">omicau · omics audit</div>
   <h1>{{ meta.run_name or "Multi-omic data audit" }}</h1>
-  <div class="sub">{{ dataset.task }} · {{ dataset.n_samples }} samples · {{ dataset.modalities|length }} modalities · seed {{ meta.seed }}</div>
+  <div class="sub">{{ dataset.task }} · {{ dataset.n_samples }} samples · {{ dataset.modalities|length }} modalities · {{ meta.organism or 'unspecified' }} · seed {{ meta.seed }}</div>
   <div class="hashline">provenance SHA-256: {{ meta.provenance_hash }}</div>
 </header>
 

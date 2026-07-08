@@ -238,7 +238,8 @@ def _assemble_audit(aligned, classical, neural, util, summary, missing, batch,
         "meta": {"run_name": config.run_name, "tool_version": __version__,
                  "created": time.strftime("%Y-%m-%d %H:%M:%S"),
                  "provenance_hash": aligned.provenance_hash, "device": device_type,
-                 "cores": cores, "seed": config.seed},
+                 "cores": cores, "seed": config.seed,
+                 "organism": config.organism},
         "environment": _environment(),
         "dataset": {"n_samples": aligned.n_samples, "task": aligned.task,
                     "class_names": aligned.class_names,
@@ -323,6 +324,8 @@ Per-dataset usage (all write a runnable config.json + matrices):
                   omicau bootstrap --dataset metabolomics --out-dir d --study ST000009 --target gender
   cptac         requires the `cptac` package: matched proteomics + transcriptomics
                   omicau bootstrap --dataset cptac --out-dir d --cancer Ucec
+  expression_atlas  EMBL-EBI Expression Atlas: cross-organism RNA-seq (log2 CPM) + a factor target
+                  omicau bootstrap --dataset expression_atlas --out-dir d --study E-GEOD-100100 --target "RNA interference"
 
 Omit --target to let the client pick a sensible default. Remote clients need
 `pip install omicau[data]`; the mock is fully offline.
@@ -332,12 +335,13 @@ Omit --target to let the client pick a sensible default. Remote clients need
 @main.command(epilog=_BOOTSTRAP_EPILOG)
 @click.option("--dataset", required=True,
               type=click.Choice(["mock", "tcga", "ccle", "cptac", "openpbta", "xena",
-                                 "metabolomics"]),
+                                 "metabolomics", "expression_atlas"]),
               help="Benchmark cohort to assemble (see examples below).")
 @click.option("--out-dir", required=True, type=click.Path(path_type=Path),
               help="Directory to write the dataset + config into.")
 @click.option("--study", default=None,
-              help="TCGA study id (e.g. laml_tcga) or Metabolomics Workbench id (e.g. ST000009).")
+              help="TCGA study id (e.g. laml_tcga), Metabolomics Workbench id (e.g. ST000009), "
+                   "or Expression Atlas accession (e.g. E-GEOD-100100).")
 @click.option("--target", default=None,
               help="Target column / gene (dataset-specific; omit for the client default).")
 @click.option("--cancer", default=None, help="CPTAC cohort abbreviation (default: Ucec).")
@@ -377,6 +381,9 @@ def bootstrap(dataset: str, out_dir: Path, study: str | None, target: str | None
         elif dataset == "metabolomics":
             from omicau.data import metabolomics_workbench as mw
             cfg = mw.prepare(out_dir, study_id=study or "ST000009", target=target)
+        elif dataset == "expression_atlas":
+            from omicau.data import expression_atlas as gxa
+            cfg = gxa.prepare(out_dir, accession=study or gxa.DEFAULT_ACCESSION, target=target)
         else:  # pragma: no cover - click already constrains choices
             raise click.ClickException(f"Unknown dataset '{dataset}'.")
     except Exception as exc:  # noqa: BLE001

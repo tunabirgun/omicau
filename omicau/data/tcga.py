@@ -194,4 +194,5 @@ def prepare(out_dir: str | Path, *, study: str = "laml_tcga", target: str | None
     group = "PATIENT_ID" if "PATIENT_ID" in clin_out.columns else None
     return write_dataset(out, modalities, clin_out, sample_col="sampleId", target=target,
                          group=group, run_name=f"tcga_{study}", source=f"cBioPortal:{study}",
-                         reports=reports)
+                         organism="Homo sapiens",
+                         normalization_preset="tcga", reports=reports)

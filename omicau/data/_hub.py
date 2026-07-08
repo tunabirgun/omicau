@@ -173,7 +173,9 @@ PROVENANCE_NOTE = (
 def write_dataset(out: Path, modalities: dict[str, pd.DataFrame], clinical: pd.DataFrame,
                   *, sample_col: str, target: str, run_name: str, source: str,
                   group: str | None = None, batch: str | None = None,
-                  task: str = "auto", reports: dict | None = None) -> Path:
+                  task: str = "auto", organism: str = "unspecified",
+                  normalization_preset: str | None = None,
+                  reports: dict | None = None) -> Path:
     """Emit modality CSVs, a clinical CSV, and a ready-to-run ``config.json``.
 
     Returns the path to the config. This is the common landing format every hub
@@ -202,12 +204,15 @@ def write_dataset(out: Path, modalities: dict[str, pd.DataFrame], clinical: pd.D
     config = {
         "run_name": run_name,
         "output_dir": "run",  # relative to this config's directory
+        "organism": organism,
         "modalities": mod_specs,
         "clinical": clinical_spec,
         "cv": {"n_splits": 5, "seed": 42},
         "_provenance_note": PROVENANCE_NOTE,
         "_validation": reports or {},
     }
+    if normalization_preset:
+        config["normalization"] = {"preset": normalization_preset}
     cfg_path = out / "config.json"
     cfg_path.write_text(json.dumps(config, indent=2), encoding="utf-8", newline="")
     return cfg_path
