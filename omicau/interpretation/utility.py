@@ -234,6 +234,8 @@ def build_utility_ledger(
         if len(cls) == 2:                     # AUPRC is only interpretable vs prevalence
             auprc_baseline = float(np.mean(yv == cls[1]))
 
+    subgroups = _subgroup_metrics(best, aligned, metric)
+
     return {
         "primary_metric": metric,
         "task": task,
@@ -241,6 +243,7 @@ def build_utility_ledger(
         "best_model": _model_brief(best),
         "calibration": calibration,
         "auprc_baseline": auprc_baseline,
+        "subgroups": subgroups,
         "best_single_modality": _model_brief(best_single),
         "fusion_gain_over_best_single": _r(fusion_gain),
         "modality_ledger": ledger,
@@ -278,6 +281,35 @@ def _verdict(standalone_useful, adds, redundant, batch_confounded, red_partner, 
                 "Predictive on its own yet not additive in fusion; likely overlapping with the retained layers.")
     return ("no detectable signal (control-like)",
             "Performs near chance and adds nothing; a candidate to drop.")
+
+
+def _subgroup_metrics(best, aligned, metric_key):
+    """Re-score the best model's pooled OOF within strata of the batch/site column
+    — a fairness/generalization check. Pure re-aggregation, no retraining."""
+    if best is None or getattr(best, "oof_true", None) is None or aligned.batch is None:
+        return None
+    from omicau.models.base import score_predictions
+    y = np.asarray(best.oof_true)
+    score = np.asarray(best.oof_score)
+    pred = np.asarray(best.oof_pred)
+    task = aligned.task
+    strata = aligned.batch.astype("string").to_numpy()
+    rows = []
+    for lvl in sorted(set(strata)):
+        m = strata == lvl
+        if m.sum() < 5:
+            continue
+        if task == "classification" and len(np.unique(y[m])) < 2:
+            rows.append({"stratum": str(lvl), "n": int(m.sum()), "primary": None})
+            continue
+        hard = pred[m].astype(int) if task == "classification" else pred[m]
+        v = score_predictions(y[m], score[m], hard, task).get(metric_key)
+        rows.append({"stratum": str(lvl), "n": int(m.sum()), "primary": _r(v)})
+    vals = [r["primary"] for r in rows if r["primary"] is not None]
+    if len(vals) < 2:
+        return None
+    return {"by": aligned.batch.name, "metric": metric_key, "strata": rows,
+            "gap": _r(max(vals) - min(vals))}
 
 
 def _missing_flags_by_modality(missing_diag: dict | None) -> dict[str, bool]:

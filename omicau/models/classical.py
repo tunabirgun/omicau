@@ -62,6 +62,36 @@ def _reference_key(keys: list[str]) -> str:
     return keys[0]
 
 
+def _run_stacking(aligned, results, ref_key, config, groups, n_jobs, seed):
+    """Late-integration stacking: cross-validate a meta-learner over the
+    single-modality out-of-fold predictions. Leakage-safe because the base
+    predictions are out-of-fold and the meta-learner is itself cross-validated,
+    so the reported metric is honest (not in-sample on the OOF matrix)."""
+    mods = aligned.modality_names
+    if len(mods) < 2:
+        return None
+    task = aligned.task
+    y = aligned.y.to_numpy()
+    cl = {r.name: r for r in results}
+    cols: list[np.ndarray] = []
+    names: list[str] = []
+    for m in mods:
+        r = cl.get(f"{ref_key}::{m}")
+        if r is None or r.oof_score is None:
+            return None
+        s = np.asarray(r.oof_score, dtype=float).reshape(len(y), -1)
+        cols.append(s)
+        names += [m] if s.shape[1] == 1 else [f"{m}[{j}]" for j in range(s.shape[1])]
+    meta_X = np.hstack(cols)
+    factory = _estimator_factory("linear", task, seed, n_jobs)
+    return cross_validate_estimator(
+        "stacking::FUSION", meta_X, y, groups, task, factory,
+        feature_names=names, modalities=list(mods),
+        n_splits=config.cv.n_splits, seed=seed, shuffle=config.cv.shuffle,
+        max_features=None, compute_importance=False,
+    )
+
+
 def run_classical_benchmarks(aligned, config) -> dict[str, Any]:
     """Run the full classical benchmark grid over an aligned dataset."""
     task = aligned.task
@@ -121,6 +151,11 @@ def run_classical_benchmarks(aligned, config) -> dict[str, Any]:
         if config.controls.random_noise:
             Xn = rng.normal(size=X_all.shape)
             controls.append(run("control::random_noise", Xn, feats_all, mods))
+
+    # -- late-integration stacking (meta-learner over per-modality OOF) ----- #
+    stack = _run_stacking(aligned, results, ref_key, config, groups, n_jobs, seed)
+    if stack is not None:
+        results.append(stack)
 
     attach_cis(results + controls, n_boot=config.cv.n_bootstrap, seed=seed)
 

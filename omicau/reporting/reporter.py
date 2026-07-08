@@ -734,6 +734,20 @@ _TEMPLATE = r"""<!doctype html>
   </section>
   {% endif %}
 
+  {% if util.subgroups %}
+  <section>
+    <h2>Subgroup performance</h2>
+    <p class="rc-sub">The best model's {{ util.subgroups.metric|upper }} re-scored within each level of <code>{{ util.subgroups.by }}</code> — a global metric can hide large subgroup disparities (Obermeyer et al., <em>Science</em> 2019).</p>
+    <div class="preview-table"><table>
+      <tr><th>{{ util.subgroups.by }}</th><th>n</th><th>{{ util.subgroups.metric|upper }}</th></tr>
+      {% for s in util.subgroups.strata %}
+      <tr><td>{{ s.stratum }}</td><td>{{ s.n }}</td><td>{{ '%.3f'|format(s.primary) if s.primary is not none else '—' }}</td></tr>
+      {% endfor %}
+    </table></div>
+    <div class="consequence">Largest gap across strata: <strong>{{ '%.3f'|format(util.subgroups.gap) }}</strong>{% if util.subgroups.gap and util.subgroups.gap > 0.1 %} — a wide gap; investigate site/subgroup bias before trusting the global metric{% endif %}.</div>
+  </section>
+  {% endif %}
+
   <section>
     <h2>Modality redundancy</h2>
     {{ means('redundancy') }}
