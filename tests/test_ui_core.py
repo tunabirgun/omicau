@@ -151,3 +151,49 @@ def test_api_full_flow_end_to_end(tmp_path):
     assert prog["report_ready"] and prog["provenance"] == pf["provenance_hash"]
     rep = client.get(f"/api/session/{sid}/report", headers=hdr)
     assert rep.status_code == 200 and "<!doctype html>" in rep.text.lower()
+
+
+def test_inspect_rejects_empty_and_headeronly(tmp_path):
+    import pytest as _pt
+    empty = tmp_path / "empty.csv"; empty.write_text("", encoding="utf-8")
+    header = tmp_path / "header.csv"; header.write_text("id,a,b\n", encoding="utf-8")
+    for p in (empty, header):
+        with _pt.raises(ValueError):
+            I.inspect_matrix(p)
+        with _pt.raises(ValueError):
+            I.read_clinical(p)
+
+
+def test_target_consequence_regression_with_missing(tmp_path):
+    import pandas as pd
+    clin = tmp_path / "c.csv"
+    ages = list(range(20, 45)) + [None, None]        # >12 unique numeric + missing
+    pd.DataFrame({"sample_id": [f"S{i}" for i in range(len(ages))], "age": ages}).to_csv(clin, index=False)
+    out = I.target_consequence(clin, "age")
+    assert out["ok"] and out["task"] == "regression"
+
+
+def test_alignment_positional_index_fallback(tmp_path):
+    import pandas as pd
+    # a modality whose ids are the positional index 0..4, and a clinical with no
+    # usable id column -> the engine (and now the preview) index positionally.
+    mod = tmp_path / "rna.csv"
+    pd.DataFrame({"g1": [1, 2, 3, 4, 5], "g2": [5, 4, 3, 2, 1]},
+                 index=[str(i) for i in range(5)]).to_csv(mod, index_label="")
+    clin = tmp_path / "clin.csv"
+    pd.DataFrame({"outcome": ["a", "b", "a", "b", "a"]}).to_csv(clin, index=False)
+    rep = I.alignment_preview([{"name": "rna", "path": str(mod), "orientation": "samples_as_rows"}],
+                              str(clin), None)
+    assert rep["matched_all_layers"] == 5
+
+
+def test_api_rejects_unparseable_upload(tmp_path):
+    pytest.importorskip("fastapi"); pytest.importorskip("httpx")
+    from fastapi.testclient import TestClient
+    from omicau.ui.server import create_app
+    hdr = {"X-Omicau-Token": "t"}
+    c = TestClient(create_app(token="t", workspace=tmp_path / "ws"))
+    sid = c.post("/api/session", headers=hdr).json()["session"]
+    bad = [("files", ("empty.csv", b"", "text/csv"))]
+    r = c.post(f"/api/session/{sid}/upload", files=bad, headers=hdr)
+    assert r.status_code == 400 and "empty.csv" in r.json()["detail"]   # 400, not a 500 crash

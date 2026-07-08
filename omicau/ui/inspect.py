@@ -52,11 +52,18 @@ def _read_text(path: str | Path, limit: int | None = None) -> str:
     return txt[:limit] if limit else txt
 
 
+def _require_tabular(text: str) -> None:
+    """Reject empty / header-only files with a clear message (not a pandas trace)."""
+    if len([ln for ln in text.splitlines() if ln.strip()]) < 2:
+        raise ValueError("File is empty or has no data rows (need a header plus at least one row).")
+
+
 def inspect_matrix(path: str | Path, filename: str | None = None,
                    max_rows: int = 6, max_cols: int = 8) -> dict[str, Any]:
     """Preview a modality matrix: delimiter, shape, both axes' labels, a grid."""
     filename = filename or Path(path).name
     text = _read_text(path)
+    _require_tabular(text)
     delim = _detect_delimiter(text[:8192])
     df = pd.read_csv(io.StringIO(text), sep=delim, engine="python", dtype="string",
                      index_col=0, header=0)
@@ -87,6 +94,7 @@ def _short(v: Any, n: int = 12) -> str:
 # --------------------------------------------------------------------------- #
 def read_clinical(path: str | Path) -> pd.DataFrame:
     text = _read_text(path)
+    _require_tabular(text)
     delim = _detect_delimiter(text[:8192])
     return pd.read_csv(io.StringIO(text), sep=delim, engine="python", dtype="string")
 
@@ -119,7 +127,9 @@ def target_consequence(path: str | Path, column: str, task: str = "auto") -> dic
     s = df[column]
     numeric = pd.to_numeric(s, errors="coerce")
     n_unique = int(s.nunique(dropna=True))
-    inferred = ("regression" if (numeric.notna().all() and n_unique > 12) else "classification")
+    present = max(1, int(s.notna().sum()))
+    is_numeric = int(numeric.notna().sum()) >= 0.8 * present     # ignore missing values
+    inferred = "regression" if (is_numeric and n_unique > 12) else "classification"
     if task == "auto":
         task = inferred
     out: dict[str, Any] = {"ok": True, "task": task, "n_missing": int(s.isna().sum())}
@@ -129,7 +139,8 @@ def target_consequence(path: str | Path, column: str, task: str = "auto") -> dic
         out["n_classes"] = n_unique
         if n_unique < 2:
             out["ok"] = False
-            out["message"] = "Only one class present — cannot train a classifier."
+            out["message"] = ("No valid values found in the target column." if n_unique == 0
+                              else "Only one class present — cannot train a classifier.")
         else:
             mn, mx = counts.min(), counts.max()
             out["balance"] = "balanced" if mn >= 0.4 * mx else "imbalanced"
@@ -212,9 +223,11 @@ def alignment_preview(modalities: list[dict], clinical_path: str | Path,
     norm = norm or NormalizationSpec()
     clin = read_clinical(clinical_path)
     if clinical_sample_col and clinical_sample_col in clin.columns:
-        clin_ids_raw = clin[clinical_sample_col].astype("string").tolist()
+        # named id column: drop missing ids so '<NA>' is never treated as an id.
+        clin_ids_raw = [str(x) for x in clin[clinical_sample_col] if pd.notna(x)]
     else:
-        clin_ids_raw = clin.iloc[:, 0].astype("string").tolist()
+        # no sample-id column -> mirror the engine, which uses the positional index.
+        clin_ids_raw = [str(i) for i in range(len(clin))]
     clin_ids = set(normalize_names(clin_ids_raw, norm))
 
     per_layer = []

@@ -5,6 +5,11 @@
 
 const TOKEN = (document.cookie.match(/omicau_token=([^;]+)/) || [])[1] ||
               new URLSearchParams(location.search).get("token") || "";
+// The server already set the token as a cookie; drop it from the URL so it is
+// not retained in browser history or sent as a Referer.
+if (new URLSearchParams(location.search).get("token")) {
+  try { history.replaceState(null, "", location.pathname); } catch (_) { /* ignore */ }
+}
 
 async function api(path, opts = {}) {
   const headers = Object.assign({}, opts.headers || {});
@@ -12,9 +17,8 @@ async function api(path, opts = {}) {
   else headers["X-Omicau-Token"] = TOKEN;
   const r = await fetch(path, Object.assign({}, opts, { headers }));
   if (!r.ok) {
-    let msg;
-    try { msg = (await r.json()).detail || (await r.json()).error || r.statusText; }
-    catch { msg = r.statusText; }
+    let msg = r.statusText;
+    try { const j = await r.json(); msg = j.detail || j.error || r.statusText; } catch { /* keep statusText */ }
     throw new Error(msg);
   }
   const ct = r.headers.get("content-type") || "";
@@ -233,7 +237,12 @@ RENDERERS.roles = async () => {
   state.files.forEach((f) => {
     const sel = el("select");
     ROLE_OPTIONS.forEach((r) => sel.append(el("option", { value: r, selected: r === f.role }, r)));
-    sel.addEventListener("change", () => { f.role = sel.value; validate(); });
+    sel.addEventListener("change", () => {
+      f.role = sel.value;
+      state.clinicalCols = null;                        // the clinical file may have changed
+      state.clinical = { target: "", sample_id: "", group: "", batch: "", task: "auto" };
+      validate();
+    });
     list.append(el("div", { class: "file-row" },
       el("span", { class: "fname" }, f.filename),
       el("span", { class: "chip " + (f.confidence === "high" ? "hi" : "lo") },
@@ -254,12 +263,10 @@ RENDERERS.roles = async () => {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ roles }) });
     state.rolesOk = r.ok;
-    const m = $("#rolemsg"); if (m) {
-      m.innerHTML = "";
-      if (r.ok) m.append(el("div", { class: "msg-ok" }, "Roles look good — " + r.omics.join(", ") + " + clinical."));
-      else r.errors.forEach((e) => m.append(el("div", { class: "msg-error" }, e)));
-    }
-    const b = document.querySelector(".btn-row .btn-primary");
+    msg.innerHTML = "";                                  // local refs work before mount too
+    if (r.ok) msg.append(el("div", { class: "msg-ok" }, "Roles look good — " + r.omics.join(", ") + " + clinical."));
+    else r.errors.forEach((e) => msg.append(el("div", { class: "msg-error" }, e)));
+    const b = foot.querySelector(".btn-primary");
     if (b) b.disabled = !r.ok;
   }
   async function advance() {
@@ -474,10 +481,16 @@ RENDERERS.run = async () => {
 };
 
 async function startRun() {
+  if (state.run && state.run.status === "running") return;   // ignore a double click
   state.run = { status: "running", stages: [] };
-  await api(`/api/session/${state.session}/run`, { method: "POST" });
   render();
-  poll();
+  try {
+    await api(`/api/session/${state.session}/run`, { method: "POST" });
+    poll();
+  } catch (e) {
+    state.run = { status: "error", stages: [], error: e.message };
+    render();
+  }
 }
 
 async function renderProgress(wrap) {
