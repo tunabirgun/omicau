@@ -270,7 +270,16 @@ def cross_validate_estimator(
         fold_primary.append(fold_metrics.get(PRIMARY_METRIC[task], np.nan))
 
         if compute_importance and len(val_idx) >= 5:
+            # permutation_importance re-scores once per feature x repeat -- thousands of
+            # tiny predicts. If the fitted estimator kept n_jobs>1, each of those predicts
+            # fans out across all cores; under Windows spawn the per-call dispatch overhead
+            # dominates and a high-dimensional run appears to hang. Pin n_jobs=1 for the
+            # importance pass only (identical results, just no nested parallelism).
+            est = pipe.named_steps.get("estimator")
+            prev_njobs = getattr(est, "n_jobs", None)
             try:
+                if prev_njobs not in (None, 1):
+                    est.n_jobs = 1
                 scoring = "roc_auc" if (task == "classification" and n_classes == 2) else (
                     "accuracy" if task == "classification" else "r2"
                 )
@@ -281,6 +290,9 @@ def cross_validate_estimator(
                 importance_stack.append(r.importances_mean)
             except (ValueError, RuntimeError):
                 pass
+            finally:
+                if prev_njobs not in (None, 1):
+                    est.n_jobs = prev_njobs
 
     # Pooled OOF metrics.
     if task == "classification":
