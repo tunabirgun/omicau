@@ -11,24 +11,25 @@ DASHBOARD_CSS = ":root{\n  --cobalt:#0072B2;      \n  --vermillion:#D55E00;  \n 
 TOOLTIP_JS = "/* ---- Append inside the existing <script>. Reveal is pure CSS (:hover/:focus/\n   :focus-within); this only adds Escape-to-dismiss and a touch-focus nudge.\n   The glossary needs NO JS (native <details>). --------------------------------- */\n\n// Escape dismisses the focused tooltip (works for the .info button trigger)\ndocument.addEventListener('keydown', function (e) {\n  if (e.key === 'Escape') {\n    var a = document.activeElement;\n    if (a && a.classList && a.classList.contains('info')) a.blur();\n  }\n});\n\n// Touch devices: tap focuses the button so :focus-within reveals the bubble,\n// without triggering any navigation or form submit.\ndocument.querySelectorAll('.info').forEach(function (b) {\n  b.addEventListener('click', function (e) { e.preventDefault(); });\n});"
 
 GLOSSARY = {
-    "AUROC": "A 0-to-1 score for telling two groups apart. 0.5 is a coin-flip; 1.0 is always right.",
-    "R²": "A score for predicting a number. 0 is no better than guessing the average; 1.0 is perfect.",
+    "AUROC": "A 0-to-1 score for telling two groups apart. 0.5 is a coin-flip; 1.0 separates the two groups perfectly.",
+    "R²": "A score for predicting a number. 1.0 is perfect; 0 means no better than guessing the average, and it can go negative on held-out data — a model that predicts worse than the mean.",
     "Fusion gain (leave-one-out)": "How much the score rises when all data layers are combined versus the single best layer alone. Near zero means combining adds nothing.",
     "Redundancy (CKA)": "How alike two layers are, from 0 (unrelated) to 1 (near-identical). High overlap means one layer largely repeats another.",
     "Batch effect": "A technical signature from when or where samples were processed that a model can mistake for real biology.",
     "Missingness bias (MNAR)": "When which values are missing is itself informative, so gaps in the data can fake a real signal.",
-    "Control baseline (shuffled target)": "The same model trained on scrambled labels. It should score near chance; if it beats chance, the pipeline is leaking.",
+    "Control baseline (shuffled target)": "The same model trained on scrambled labels. It should score near chance; a single run sometimes edges above chance by luck, so leakage is flagged only when it reliably beats chance — its confidence interval clears the chance line.",
     "Group-aware cross-validation / leakage": "Keeping each subject's samples (e.g. all samples from one patient, animal, or plant) entirely in training or entirely in testing, never split across both, so scores are not secretly inflated.",
-    "Provenance hash": "A SHA-256 fingerprint of the exact inputs and settings. If a byte changes, the hash changes, proving the report matches the data.",
+    "Provenance hash": "A SHA-256 fingerprint of the exact input data — the aligned matrices, sample index, and target. If a byte changes, the hash changes, proving the report matches the data.",
     "Layer verdicts": "One word per data type: predictive (adds real signal), redundant (repeats another), batch-confounded (technical artifact), or control-like (no better than noise).",
     "AUPRC": "A 0-to-1 score for finding the rare positive cases. Its no-skill baseline is not 0.5 but the fraction of cases that are positive, so judge it against that prevalence line.",
     "Prevalence": "The share of samples that are positive (have the outcome). It sets the no-skill baseline for AUPRC.",
     "Balanced accuracy": "Accuracy averaged so each class counts equally, so a model cannot look good just by always guessing the common class.",
     "Chance level": "The score a model gets from guessing with no real information — about 0.5 for a two-group AUROC, and the prevalence for AUPRC.",
+    "Clears chance": "Reliably beats guessing: the lower end of the 95% confidence interval sits above the chance line. The leakage alarm and 'the signal is real' calls use this, not a single point estimate, so ordinary noise across the several control runs is not mistaken for signal.",
     "Discrimination": "Whether the model ranks a true positive above a true negative (what AUROC measures). It says nothing about whether the predicted probabilities are numerically right.",
     "Calibration": "Whether a predicted probability matches reality: among cases given 70%, about 70% should actually be positive. A model can rank well yet still report wrong probabilities.",
     "Brier score": "The average squared error of the predicted probabilities. Lower is better; it rewards being both correct and honestly confident.",
-    "Expected calibration error (ECE)": "The average gap between predicted probability and observed event rate across probability bins. Lower is better; 0 is perfect calibration.",
+    "Expected calibration error (ECE)": "The average gap between predicted probability and observed event rate across probability bins. Lower is better; near 0 means well calibrated as measured (binning can mask small offsetting errors).",
     "Cross-validation": "Rotating which samples are held out for testing so every sample is scored by a model that never saw it during training.",
     "Held-out (out-of-fold)": "Scored on samples the model was not trained on. Only held-out scores are trustworthy; scoring on training data flatters the model.",
     "Leakage": "When information from the test samples sneaks into training, so scores look great in-house but collapse on new data.",
@@ -36,12 +37,14 @@ GLOSSARY = {
     "Optimism gap": "How much the standard estimate overstates performance versus a harder test on an unseen batch. A large gap warns the headline score will not hold on new data.",
     "Cross-site stress test (batch-blocked)": "Testing on a batch the model never trained on, which estimates how it will do at a new site or run — usually harder than standard cross-validation.",
     "Marginal gain": "What one layer adds on top of all the others: the combined score minus the score with that layer removed. Near zero means the layer is redundant.",
-    "Confounding": "A third factor (often processing batch) that drives both a data layer and the outcome, so the layer's apparent signal is really the artifact.",
+    "Confounding": "A third factor (often processing batch) that drives both a data layer and the outcome, so the layer's apparent signal may be partly or wholly the artifact.",
     "Permutation importance": "How much the score drops when one feature's values are shuffled. A bigger drop means the model relied on that feature more.",
     "Collinearity (unconditional importance)": "When features move together, importance gets shared or double-counted, so a shuffled-one-at-a-time ranking can mislead. Read it as indicative, not causal.",
     "Stacking (late fusion)": "Combining layers by letting a small model learn how to weigh each layer's separate prediction, rather than merging their raw features.",
     "Reference estimator": "The single algorithm (e.g. random forest) used consistently across layers so comparisons reflect the data, not a change of method.",
     "DOME": "A standard checklist (Data, Optimization, Model, Evaluation) for reporting machine learning in biology so a run can be judged and reproduced.",
+    "Fusion": "Combining several data types (layers) into one model, instead of using each alone. omicau's question is whether fusion predicts the outcome better than the single best layer.",
+    "Modality / layer": "One data type measured on the same samples — for example RNA, protein, methylation, or metabolites. Each is one input table (samples x features).",
 }
 
 SECTION_COPY = {
@@ -63,7 +66,7 @@ SECTION_COPY = {
     "missingness": {
         "what": "Whether missing values are spread evenly or cluster in a way that could bias the results.",
         "how_to_read": "Flags mean gaps line up with the outcome or with processing batches, which can create a false signal.",
-        "what_to_do": "Investigate flagged layers before trusting them; consider re-collecting or statistically imputing the missing data."
+        "what_to_do": "Investigate flagged layers before trusting them; for outcome-linked missingness, model the missingness rather than impute it away (imputation assumes the gaps are random and erases the very signal this flag detects)."
     },
     "feature_attribution": {
         "what": "Which specific measurements the model leaned on most to make its predictions.",

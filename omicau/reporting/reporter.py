@@ -137,10 +137,18 @@ def _trust_checklist(audit: dict, util: dict, missing: dict, batch: dict,
                                    if leak else ", so a random target is not predictable — as it should be.")})
 
     if n is not None:
-        ss = "pass" if n >= 40 else "caution"
+        # key on independent units (groups), not raw rows — replicates of one
+        # subject do not add independent evidence, and rewarding raw n would
+        # reward pseudoreplication.
+        n_groups = ds.get("n_groups")
+        eff = n_groups if n_groups else n
+        unit = "independent groups" if n_groups else "samples"
+        ss = "pass" if eff >= 40 else "caution"
         checks.append({"label": "Adequate sample size", "status": ss,
-                       "note": (f"{n} aligned samples." if ss == "pass"
-                                else f"only {n} samples — scores are unstable and can look better here than they will on new data.")})
+                       "note": (f"{n} aligned samples"
+                                + (f" across {n_groups} independent groups." if n_groups else ".")
+                                if ss == "pass"
+                                else f"only {eff} {unit} — scores are unstable and can look better here than they will on new data.")})
 
     if task == "classification":
         bal = ds.get("class_balance") or {}

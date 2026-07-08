@@ -246,8 +246,8 @@ def test_run_audit_in_process_contract(tmp_path):
     audit = run_audit(cfg, cores=2, device="cpu", llm=False, echo=lambda m: stages.append(str(m)))
 
     assert audit["meta"]["provenance_hash"]
-    assert "ingest_align" in " ".join(stages)          # named stages streamed
-    assert any("report" in s for s in stages)
+    assert "Reading and aligning data layers" in " ".join(stages)   # human step labels streamed
+    assert any("Building the dashboard and files" in s for s in stages)
     assets = audit.get("_assets", {})
     assert "html" in assets and Path(assets["html"]).exists()
     assert "json" in assets and Path(assets["json"]).exists()

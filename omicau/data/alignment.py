@@ -251,7 +251,7 @@ def normalize_names(labels, spec) -> list[str]:
             s = rx.sub("", s, count=1)
         for rx in suffixes:
             s = rx.sub("", s, count=1)
-        if getattr(spec, "uppercase", True):
+        if getattr(spec, "uppercase", False):
             s = s.upper()
         out.append(s.strip())
     return out
@@ -324,6 +324,47 @@ def _matrix_digest(frame: pd.DataFrame, sample_ids: list[str]) -> str:
     sub = sub.reindex(sorted(sub.columns), axis=1)
     arr = np.ascontiguousarray(sub.to_numpy(dtype=np.float64))
     return hashlib.sha256(arr.tobytes()).hexdigest()
+
+
+def check_grouping(aligned) -> None:
+    """Preflight on the grouping column, run before any cross-validation.
+
+    The whole leakage guarantee rests on the user naming the ``group`` column
+    correctly, so this makes the common mistakes loud instead of silent:
+    * no group column -> warn that every row is treated as independent (scores
+      can be inflated by pseudoreplication);
+    * ~one group per sample -> warn that grouping is a no-op;
+    * a class confined to a single group -> raise a plain message, since
+      leakage-safe (group-aware) CV would hold that whole class out and the
+      classifier would train on a single class (the raw sklearn error otherwise).
+    """
+    groups = aligned.groups
+    n = aligned.n_samples
+    if groups is None:
+        warnings.warn(
+            "No 'group' column set: cross-validation treats every row as an independent "
+            "sample. If several rows share a subject (repeated tissues, timepoints, replicates, "
+            "or a litter / cage / plot), set clinical.group -- otherwise scores may be "
+            "optimistically inflated by pseudoreplication.", stacklevel=2)
+        return
+    g = np.asarray(groups)
+    n_groups = len(np.unique(g))
+    if n_groups >= n:
+        warnings.warn(
+            f"The 'group' column has about one level per sample ({n_groups} groups for {n} "
+            "samples), so group-aware splitting does nothing. Point it at the shared unit "
+            "(subject / litter / cage / plot), not a per-sample id.", stacklevel=2)
+        return
+    if aligned.task == "classification" and aligned.y is not None:
+        y = np.asarray(aligned.y)
+        groups_per_class = pd.DataFrame({"y": y, "g": g}).groupby("y")["g"].nunique()
+        if (groups_per_class < 2).any():
+            raise ValueError(
+                "The 'group' column is confounded with the outcome: at least one outcome class "
+                "comes from a single group, so leakage-safe (group-aware) cross-validation would "
+                "hold that whole class out and cannot train. Group by the independent replicate "
+                "unit (culture / colony / subject / plot), not by the strain or condition that "
+                "defines the outcome.")
 
 
 def compute_provenance_hash(

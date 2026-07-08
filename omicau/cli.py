@@ -213,13 +213,15 @@ def run_audit(config, *, cores: int, device: str, llm: bool | None,
         result = fn()
         dt = time.perf_counter() - t
         _log_runtime(log_path, step, dt, device_tag)
-        echo(f"  · {_STEP_LABEL.get(step, step)}: {dt:.1f}s")
+        echo(f"  |{_STEP_LABEL.get(step, step)}: {dt:.1f}s")
         return result
 
-    echo("Ingesting and aligning modalities…")
+    echo("Ingesting and aligning modalities...")
     aligned = timed("ingest_align", lambda: load_and_align(config))
+    from omicau.data.alignment import check_grouping
+    check_grouping(aligned)   # preflight: warn on missing/no-op grouping, raise on class==group
     echo(f"  provenance SHA-256 (a fingerprint of these exact inputs): {aligned.provenance_hash}")
-    echo(f"  {aligned.n_samples} samples · {aligned.task} · modalities {aligned.feature_counts()}")
+    echo(f"  {aligned.n_samples} samples |{aligned.task} |modalities {aligned.feature_counts()}")
 
     cost = estimate_runtime(aligned, config, dev.type, resolved_cores)
     echo(f"Estimated wall-time: {cost['human_readable']} "
@@ -254,6 +256,7 @@ def _assemble_audit(aligned, classical, neural, util, summary, missing, batch,
                  "organism": config.organism},
         "environment": _environment(),
         "dataset": {"n_samples": aligned.n_samples, "task": aligned.task,
+                    "n_groups": (int(aligned.groups.nunique()) if aligned.groups is not None else None),
                     "class_names": aligned.class_names,
                     "class_balance": aligned.report.get("class_balance"),
                     "feature_counts": aligned.feature_counts(),
@@ -279,7 +282,7 @@ def _assemble_audit(aligned, classical, neural, util, summary, missing, batch,
 @click.group(context_settings={"help_option_names": ["-h", "--help"]})
 @click.version_option(__version__, prog_name="omicau")
 def main() -> None:
-    """omicau — a reproducible, leakage-safe multi-omics data-audit CLI."""
+    """omicau - a reproducible, leakage-safe multi-omics data-audit CLI."""
     _utf8_stdout()
 
 
@@ -306,7 +309,7 @@ def run(config_path: Path, cores: int | None, device: str, llm: bool | None,
         config.compute.deterministic = True
     if out_dir:
         config.output_dir = str(out_dir)
-    click.secho(f"omicau v{__version__} — {config.run_name}", fg="cyan", bold=True)
+    click.secho(f"omicau v{__version__} - {config.run_name}", fg="cyan", bold=True)
     try:
         audit = run_audit(config, cores=cores, device=device, llm=llm, echo=click.echo)
     except Exception as exc:  # noqa: BLE001 - present errors clearly to end users
@@ -369,7 +372,7 @@ def bootstrap(dataset: str, out_dir: Path, study: str | None, target: str | None
     so that `omicau run --config <out-dir>/config.json` works immediately.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
-    click.secho(f"Bootstrapping '{dataset}' into {out_dir}…", fg="cyan")
+    click.secho(f"Bootstrapping '{dataset}' into {out_dir}...", fg="cyan")
     try:
         if dataset == "mock":
             from omicau.data.benchmark_data import write_mock_dataset
@@ -414,7 +417,7 @@ def verify(config_path: Path | None, audit_path: Path | None, expected: str | No
 
     The hash is a deterministic SHA-256 of the aligned sample index and each
     modality's sorted feature footprint, so re-running this on the same inputs
-    reproduces it exactly — any drift in samples or features changes the hash.
+    reproduces it exactly - any drift in samples or features changes the hash.
     """
     recomputed = stored = None
     if audit_path:
@@ -434,7 +437,7 @@ def verify(config_path: Path | None, audit_path: Path | None, expected: str | No
 
     if recomputed and stored and recomputed != stored:
         raise click.ClickException("MISMATCH: recomputed hash differs from the stored audit hash "
-                                   "— the aligned data has drifted.")
+                                   "- the aligned data has drifted.")
     target = expected.strip() if expected else None
     got = recomputed or stored
     if target:
@@ -450,7 +453,7 @@ def verify(config_path: Path | None, audit_path: Path | None, expected: str | No
 @click.option("--port", type=int, default=None, help="Port to bind (default: an auto-selected free port).")
 @click.option("--no-browser", is_flag=True, default=False, help="Do not open a browser automatically.")
 @click.option("--host", default="127.0.0.1", show_default=True,
-              help="Bind address. Keep it localhost — the UI is single-user and local-first.")
+              help="Bind address. Keep it localhost - the UI is single-user and local-first.")
 def ui(port: int | None, no_browser: bool, host: str) -> None:
     """Launch the optional local web UI (no-code, localhost only).
 
