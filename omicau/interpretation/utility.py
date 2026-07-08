@@ -21,7 +21,11 @@ CHANCE = {"classification": 0.5, "regression": 0.0}
 USEFUL_MARGIN = 0.05
 GAIN_EPS = 0.01
 CKA_REDUNDANT = 0.5
-CONTROL_ALARM = 0.62
+# A control baseline trips the leakage alarm when it beats chance by more than
+# this margin. Applied task-aware (chance = 0.5 AUROC for classification, 0.0 R2
+# for regression), so it actually fires on regression -- a fixed 0.62 threshold
+# never could, since a shuffled-target R2 sits near 0.
+CONTROL_MARGIN = 0.12
 
 
 def _by_name(results: list) -> dict[str, Any]:
@@ -99,12 +103,13 @@ def build_utility_ledger(
     # -- controls / leakage gate ------------------------------------------ #
     controls = [{"name": r.name, "primary": _r(r.primary)} for r in classical_out.get("controls", [])]
     worst_control = max((c["primary"] for c in controls if c["primary"] is not None), default=chance)
-    leakage = worst_control > CONTROL_ALARM
+    alarm = chance + CONTROL_MARGIN
+    leakage = worst_control > alarm
     leakage_text = (
-        f"A control baseline scored {worst_control:.3f} (> {CONTROL_ALARM}); "
+        f"A control baseline scored {worst_control:.3f} (chance ~ {chance:.2f}, alarm > {alarm:.2f}); "
         "treat reported gains with caution and re-check group-aware splitting."
         if leakage
-        else "All control baselines scored near chance; the harness shows no leakage."
+        else f"All control baselines scored near chance (~ {chance:.2f}); the harness shows no leakage."
     )
 
     # -- redundancy (CKA) -------------------------------------------------- #
@@ -125,6 +130,10 @@ def build_utility_ledger(
     # -- per-modality ledger ---------------------------------------------- #
     ledger: list[dict[str, Any]] = []
     batch_pm = (batch_diag or {}).get("per_modality", {})
+    # A modality is "batch-confounded" only when its variance is batch-structured
+    # AND batch is confounded with the outcome globally. Batch orthogonal to the
+    # outcome is the harmless case (Nygaard et al. 2016) -- do not flag it.
+    confounded_global = bool((batch_diag or {}).get("confounding", {}).get("flag", False))
     miss_flags_by_mod = _missing_flags_by_modality(missing_diag)
 
     for i, m in enumerate(mods):
@@ -148,13 +157,14 @@ def build_utility_ledger(
                 if standalone.get(mj, chance) >= standalone.get(m, chance):
                     red_partner, red_cka = mj, float(v)
 
-        batch_flag = bool(batch_pm.get(m, {}).get("flag", False))
+        batch_structured = bool(batch_pm.get(m, {}).get("flag", False))
+        batch_confounded = batch_structured and confounded_global
         standalone_useful = np.isfinite(standalone[m]) and standalone[m] > chance + USEFUL_MARGIN
         adds = np.isfinite(gain_c) and gain_c > GAIN_EPS
         redundant = (red_partner is not None and np.isfinite(red_cka) and red_cka > CKA_REDUNDANT and not adds)
 
         verdict, rec = _verdict(
-            standalone_useful, adds, redundant, batch_flag, red_partner,
+            standalone_useful, adds, redundant, batch_confounded, red_partner,
             bool(miss_flags_by_mod.get(m)), leakage,
         )
 
@@ -168,7 +178,8 @@ def build_utility_ledger(
             "marginal_gain_neural": _r(gain_n),
             "redundancy_max_cka": _r(red_cka),
             "redundant_with": red_partner,
-            "batch_confounded": batch_flag,
+            "batch_structured": batch_structured,
+            "batch_confounded": batch_confounded,
             "missingness_biased": bool(miss_flags_by_mod.get(m)),
             "verdict": verdict,
             "recommendation": rec,
@@ -207,13 +218,16 @@ def build_utility_ledger(
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
-def _verdict(standalone_useful, adds, redundant, batch_flag, red_partner, miss_biased, leakage):
-    if batch_flag and not adds:
+def _verdict(standalone_useful, adds, redundant, batch_confounded, red_partner, miss_biased, leakage):
+    if batch_confounded and not adds:
         return ("batch-confounded (no marginal gain)",
-                "Batch structures this layer's variance and it adds no signal; correct the batch effect before trusting it.")
+                "Batch is confounded with the outcome here and this layer adds no signal beyond the "
+                "others; treat any apparent signal from it as untrustworthy (it may be batch leaking as signal).")
     if standalone_useful and adds:
         base = "predictive (adds marginal signal)"
         rec = "Retain: contributes information beyond the other modalities."
+        if batch_confounded:
+            rec += " Caution: batch is confounded with the outcome, so confirm this gain is not batch leakage."
         if miss_biased:
             rec += " Note target-associated missingness; verify the gain is not a missingness artifact."
         if leakage:

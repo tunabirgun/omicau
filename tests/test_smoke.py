@@ -369,3 +369,47 @@ def test_bootstrap_mock_writes_runnable_config(tmp_path):
     from omicau.data.alignment import load_and_align
     ad = load_and_align(cfg)
     assert ad.n_samples > 0 and ad.provenance_hash
+
+
+def test_leakage_gate_is_task_aware():
+    # Regression bug: CONTROL_ALARM=0.62 vs an R2 (chance 0.0) never fired. The
+    # task-aware margin (chance + 0.12) must trip on a leaking regression control.
+    import types
+    from omicau.interpretation.utility import build_utility_ledger
+    b = make_mock_dataset(task="regression", n_samples=120, seed=1)
+    cfg = mock_config(); cfg.clinical.task = "regression"
+    cfg.classical.models = ["linear"]; cfg.cv.n_splits = 3
+    cfg.neural.enabled = False; cfg.classical.max_features = None
+    ad = align_modalities(b.modalities, b.clinical, cfg)
+    cl = run_classical_benchmarks(ad, cfg)
+    miss = missingness_diagnostics(ad); batch = batch_effect_diagnostics(ad)
+    off = {"enabled": False, "results": []}
+    base = build_utility_ledger(ad, cl, off, batch, miss)
+    assert base["chance_level"] == 0.0
+    cl["controls"].append(types.SimpleNamespace(name="control::inject", primary=0.30))
+    hit = build_utility_ledger(ad, cl, off, batch, miss)
+    assert hit["leakage_warning"] is True          # 0.30 > 0.0 + 0.12
+    assert 0.30 < 0.62                              # would have passed under the old fixed threshold
+
+
+def test_batch_verdict_requires_outcome_confounding():
+    # A batch-structured modality must NOT be called "batch-confounded" unless
+    # batch is actually confounded with the outcome (Nygaard's harmless case).
+    from omicau.interpretation.utility import build_utility_ledger
+    b = make_mock_dataset(task="classification", n_samples=80, seed=1)
+    cfg = mock_config(); cfg.classical.models = ["linear"]; cfg.cv.n_splits = 3
+    cfg.neural.enabled = False; cfg.classical.max_features = None
+    ad = align_modalities(b.modalities, b.clinical, cfg)
+    cl = run_classical_benchmarks(ad, cfg)
+    miss = missingness_diagnostics(ad); batch = batch_effect_diagnostics(ad)
+    off = {"enabled": False, "results": []}
+    assert any(v.get("flag") for v in batch["per_modality"].values())   # a structured modality exists
+
+    batch["confounding"] = {"tested": True, "flag": False}
+    clean = build_utility_ledger(ad, cl, off, dict(batch), miss)
+    assert not any(m["batch_confounded"] for m in clean["modality_ledger"])
+    assert not any("correct the batch effect" in m["recommendation"] for m in clean["modality_ledger"])
+
+    batch["confounding"] = {"tested": True, "flag": True}
+    conf = build_utility_ledger(ad, cl, off, dict(batch), miss)
+    assert any(m["batch_confounded"] for m in conf["modality_ledger"])

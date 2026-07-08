@@ -103,7 +103,7 @@ def _answer_strip(util: dict, rating_status: str) -> list[dict]:
     if leak:
         q3 = ("Re-check CV splits for leakage", "▲", "answer--warn")
     elif confounded:
-        q3 = (f"Correct batch effects in {confounded[0]}", "△", "answer--mid")
+        q3 = (f"Distrust the batch-confounded layer: {confounded[0]}", "▲", "answer--warn")
     elif dead:
         q3 = (f"Consider dropping {dead[0]}", "△", "answer--mid")
     elif useful and isinstance(gain, (int, float)) and gain > 0.005:
@@ -155,7 +155,7 @@ def _trust_checklist(audit: dict, util: dict, missing: dict, batch: dict,
     conf = [m["modality"] for m in util.get("modality_ledger", []) if m.get("batch_confounded")]
     checks.append({"label": "No batch confounding",
                    "status": "caution" if conf else "pass",
-                   "note": (f"batch structure dominates: {', '.join(conf)} — correct the batch effect before trusting it."
+                   "note": (f"batch is confounded with the outcome in: {', '.join(conf)} — treat their apparent signal as untrustworthy."
                             if conf else "no layer's signal is dominated by batch structure.")})
 
     flagged = [t for t in missing.get("tests", []) if t.get("flag")]
