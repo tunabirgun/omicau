@@ -15,6 +15,7 @@ import io
 import json
 import sys
 import types
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -223,6 +224,39 @@ def test_flowchart_svg_offline():
     svg = flowchart_svg()
     assert svg.startswith("<svg") and svg.rstrip().endswith("</svg>")
     assert "Provenance SHA-256" in svg
+
+
+def test_run_audit_in_process_contract(tmp_path):
+    # The contract the optional UI binds to: build a config object, call
+    # run_audit(config, echo=...) in-process, receive streamed named stages and
+    # get back the audit dict (provenance hash) + asset paths — no CLI, no files
+    # beyond the dataset.
+    from omicau.cli import run_audit
+    write_mock_dataset(tmp_path / "ds", task="classification", seed=3, n_samples=54)
+    cfg = OmicauConfig.from_file(tmp_path / "ds" / "config.json")
+    cfg.classical.models = ["linear"]
+    cfg.cv.n_splits = 3
+    cfg.neural.enabled = False
+    cfg.classical.max_features = None
+    cfg.xai.enabled = False
+    cfg.reporting.docs = []
+
+    stages: list[str] = []
+    audit = run_audit(cfg, cores=2, device="cpu", llm=False, echo=lambda m: stages.append(str(m)))
+
+    assert audit["meta"]["provenance_hash"]
+    assert "ingest_align" in " ".join(stages)          # named stages streamed
+    assert any("report" in s for s in stages)
+    assets = audit.get("_assets", {})
+    assert "html" in assets and Path(assets["html"]).exists()
+    assert "json" in assets and Path(assets["json"]).exists()
+
+
+def test_dashboard_offline_no_external_fonts():
+    from omicau.reporting._assets import FONT_FACES
+    assert FONT_FACES.count("@font-face") >= 6
+    assert "data:font/woff2" in FONT_FACES
+    assert "fonts.googleapis" not in FONT_FACES and "fonts.gstatic" not in FONT_FACES
 
 
 def test_dashboard_css_integrity():

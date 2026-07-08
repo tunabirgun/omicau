@@ -20,7 +20,9 @@ from typing import Any
 import plotly.graph_objects as go
 from jinja2 import Template
 
-from omicau.reporting._assets import DASHBOARD_CSS, TOOLTIP_JS, GLOSSARY, SECTION_COPY, BADGES
+from omicau.reporting._assets import (
+    DASHBOARD_CSS, TOOLTIP_JS, GLOSSARY, SECTION_COPY, BADGES, FONT_FACES,
+)
 
 # --------------------------------------------------------------------------- #
 # Color-blind-safe palette (Okabe-Ito) + semantic mapping
@@ -451,6 +453,7 @@ def build_report(audit: dict, out_dir: str | Path, config=None) -> dict[str, Pat
         "audit": audit,
         "control_max": control_max,
         "dashboard_css": DASHBOARD_CSS,
+        "font_faces": FONT_FACES,
         "tooltip_js": TOOLTIP_JS,
         "glossary": GLOSSARY,
         "section_copy": SECTION_COPY,
@@ -499,9 +502,7 @@ _TEMPLATE = r"""<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>omicau audit — {{ meta.run_name }}</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>{{ font_faces|safe }}</style>
 <style>{{ dashboard_css|safe }}</style>
 </head>
 <body>
