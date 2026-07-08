@@ -1,0 +1,42 @@
+# Build the desktop app on each OS and attach the installers to a GitHub Release.
+# PyInstaller cannot cross-compile, so each artifact is built on its own runner.
+name: build-desktop
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            script: powershell -File packaging/build-windows.ps1
+            artifact: dist/omicau
+          - os: ubuntu-latest
+            script: bash packaging/build-linux.sh
+            artifact: dist/omicau-x86_64.AppImage
+          - os: macos-14          # Apple Silicon (arm64)
+            script: bash packaging/build-macos.sh
+            artifact: dist/omicau-arm64.dmg
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build
+        run: ${{ matrix.script }}
+        env:
+          # Signing secrets are injected only in the release environment.
+          OMICAU_SIGN_CERT: ${{ secrets.WINDOWS_SIGN_CERT }}
+          OMICAU_SIGN_PASS: ${{ secrets.WINDOWS_SIGN_PASS }}
+          OMICAU_SIGN_ID: ${{ secrets.MACOS_SIGN_ID }}
+          OMICAU_NOTARY_PROFILE: ${{ secrets.MACOS_NOTARY_PROFILE }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: omicau-${{ matrix.os }}
+          path: ${{ matrix.artifact }}

@@ -78,6 +78,13 @@ the report in-page. **All data stays on the machine — nothing is uploaded.** T
 UI only builds the config and shows the result; it never re-implements the
 science, so the CLI and UI always give the same answer.
 
+For a no-install experience, a **desktop app** (double-click → opens the UI) can
+be packaged from [`packaging/`](packaging/): a PyInstaller onedir bundle with a
+private CPU-only PyTorch runtime, wrapped as a signed Windows installer (Inno
+Setup), a Linux AppImage, and a notarized macOS (arm64) `.dmg`, built per-OS in
+CI (`.github/workflows/release.yml`). See `packaging/README.md` for sizes and
+signing. HPC/headless clusters use the `pip` package + CLI, not the GUI.
+
 ### Verifying a run's provenance hash
 
 Every run prints and stores a SHA-256 hash of the aligned data. It is
