@@ -81,12 +81,15 @@ def _badge(status: str) -> dict:
 def _answer_strip(util: dict, rating_status: str) -> list[dict]:
     gain = util.get("fusion_gain_over_best_single")
     leak = util.get("leakage_warning")
+    single = util.get("single_modality", False)
     ledger = util.get("modality_ledger", [])
     confounded = [m["modality"] for m in ledger if m.get("batch_confounded")]
     dead = [m["modality"] for m in ledger if "no detectable" in str(m.get("verdict", ""))]
     useful = [m["modality"] for m in ledger if str(m.get("verdict", "")).startswith("predictive")]
 
-    if isinstance(gain, (int, float)) and gain > 0.02:
+    if single:
+        q1 = ("Single-layer honesty check", "•", "answer--neutral")
+    elif isinstance(gain, (int, float)) and gain > 0.02:
         q1 = ("Yes — fusion adds signal", "✚", "answer--added")
     elif isinstance(gain, (int, float)) and gain > 0.005:
         q1 = ("Marginally", "△", "answer--mid")
@@ -104,6 +107,10 @@ def _answer_strip(util: dict, rating_status: str) -> list[dict]:
         q3 = ("Re-check that no subject or group is split across train and test (leakage)", "▲", "answer--warn")
     elif confounded:
         q3 = (f"Distrust {confounded[0]}: its signal tracks the processing batch, not biology", "▲", "answer--warn")
+    elif single and useful:
+        q3 = ("This layer predicts on its own — validate externally", "✓", "answer--ok")
+    elif single:
+        q3 = ("This layer does not beat chance here", "•", "answer--neutral")
     elif dead:
         q3 = (f"Consider dropping {dead[0]}", "△", "answer--mid")
     elif useful and isinstance(gain, (int, float)) and gain > 0.005:
@@ -111,8 +118,9 @@ def _answer_strip(util: dict, rating_status: str) -> list[dict]:
     else:
         q3 = ("Prefer the best single layer", "•", "answer--neutral")
 
+    q1_label = "What kind of check is this?" if single else "Does combining layers help?"
     return [
-        {"q": "Does combining layers help?", "a": q1[0], "icon": q1[1], "cls": q1[2]},
+        {"q": q1_label, "a": q1[0], "icon": q1[1], "cls": q1[2]},
         {"q": "Is the data trustworthy?", "a": q2[0], "icon": q2[1], "cls": q2[2]},
         {"q": "What should you do next?", "a": q3[0], "icon": q3[1], "cls": q3[2]},
     ]
@@ -283,11 +291,13 @@ def _classify_model(name: str) -> tuple[str, str]:
     return "single modality", SLATE
 
 
-def fig_performance(models: dict, include_js: bool) -> str:
+def fig_performance(models: dict, include_js: bool, single: bool = False) -> str:
     metric = models.get("primary_metric", "score")
     rows = list(models.get("classical", [])) + list(models.get("neural", {}).get("results", []))
     rows += list(models.get("controls", []))
     rows = [r for r in rows if r.get("primary") is not None]
+    if single:  # the ::FUSION row is the single layer refit on identical data — drop the duplicate
+        rows = [r for r in rows if not (r["name"].endswith("::FUSION") or r["name"] == "neural::FUSION")]
     rows.sort(key=lambda r: r["primary"], reverse=True)
     groups: dict[str, dict[str, list]] = {}
     for r in rows:
@@ -462,12 +472,14 @@ def _write_csv(path: Path, header: list[str], rows: list[list[Any]]) -> None:
             w.writerow(["" if v is None else v for v in r])
 
 
-def _model_rows(models: dict) -> tuple[list[str], list[list[Any]]]:
+def _model_rows(models: dict, single: bool = False) -> tuple[list[str], list[list[Any]]]:
     metric = models.get("primary_metric", "score")
     header = ["model", "type", metric, "95% CI", "n_features", "modalities", "folds"]
     rows = []
     allr = list(models.get("classical", [])) + list(models.get("neural", {}).get("results", []))
     allr += list(models.get("controls", []))
+    if single:  # drop the ::FUSION duplicate of the single layer
+        allr = [r for r in allr if not (r["name"].endswith("::FUSION") or r["name"] == "neural::FUSION")]
     for r in allr:
         label, _ = _classify_model(r["name"])
         lo, hi = r.get("ci_low"), r.get("ci_high")
@@ -489,11 +501,15 @@ def _build_dome(audit: dict) -> dict:
     resample = "group-level" if grouped else "sample-level"
     has_stacking = any(r.get("name") == "stacking::FUSION" for r in models.get("classical", []))
     neural_on = bool(models.get("neural", {}).get("enabled"))
-    regimes = "early (feature concatenation)"
-    if neural_on:
-        regimes += ", intermediate (masked global-pooling neural network)"
-    if has_stacking:
-        regimes += ", late (stacking)"
+    single = bool(audit.get("utility", {}).get("single_modality"))
+    if single:
+        regimes = "single modality (no fusion; standalone leakage-safe benchmark)"
+    else:
+        regimes = "early (feature concatenation)"
+        if neural_on:
+            regimes += ", intermediate (masked global-pooling neural network)"
+        if has_stacking:
+            regimes += ", late (stacking)"
     # Derive the run description from what actually ran, not the requested config.
     ctrl_names = [r.get("name", "").split("::")[-1] for r in models.get("controls", [])]
     controls_desc = (" / ".join(n.replace("_", "-") for n in ctrl_names) + " leakage baselines"
@@ -569,8 +585,8 @@ def _model_card_md(audit: dict) -> str:
         f"- Provenance SHA-256: `{meta.get('provenance_hash')}`",
         "",
         "## Evaluation",
-        f"- Best fusion model: **{best.get('name')}** — {util.get('primary_metric', 'score')} "
-        f"{best.get('primary')}",
+        f"- {'Best model' if util.get('single_modality') else 'Best fusion model'}: "
+        f"**{best.get('name')}** — {util.get('primary_metric', 'score')} {best.get('primary')}",
         "- Group-aware cross-validation with leakage-safe in-fold preprocessing; the primary "
         "metric is reported with a bootstrap 95% confidence interval.",
         "- Leakage controls (shuffled target/features/noise); calibration for binary classification.",
@@ -608,7 +624,8 @@ def build_report(audit: dict, out_dir: str | Path, config=None) -> dict[str, Pat
     missing = audit.get("diagnostics", {}).get("missingness", {})
     batch = audit.get("diagnostics", {}).get("batch", {})
 
-    mheader, mrows = _model_rows(models)
+    _single = bool(util.get("single_modality"))
+    mheader, mrows = _model_rows(models, single=_single)
     _write_csv(out / "model_metrics.csv", mheader, mrows)
     assets["model_metrics"] = out / "model_metrics.csv"
 
@@ -628,7 +645,7 @@ def build_report(audit: dict, out_dir: str | Path, config=None) -> dict[str, Pat
     assets["missingness_tests"] = out / "missingness_tests.csv"
 
     # -- figures ----------------------------------------------------------- #
-    perf_html = fig_performance(models, include_js=True)   # first figure bundles plotly.js
+    perf_html = fig_performance(models, include_js=True, single=_single)   # first figure bundles plotly.js
     cka_html = fig_cka(util, include_js=False)
     cal_html = fig_calibration(util, include_js=False)
     miss_html = fig_missingness(missing, include_js=False)
@@ -776,12 +793,18 @@ _TEMPLATE = r"""<!doctype html>
   <section>
     <span class="eyebrow">Headline numbers</span>
     <div class="grid cards">
-      <div class="card card--optimal"><div class="k">Best fusion {{ models.primary_metric }} {% if models.task=='classification' %}{{ tip('AUROC') }}{% else %}{{ tip('R²') }}{% endif %}</div>
+      <div class="card card--optimal"><div class="k">{% if util.single_modality %}Best model{% else %}Best fusion{% endif %} {{ models.primary_metric }} {% if models.task=='classification' %}{{ tip('AUROC') }}{% else %}{{ tip('R²') }}{% endif %}</div>
         <div class="v">{{ '%.3f'|format(util.best_model.primary) if util.best_model and util.best_model.primary is not none else '—' }}</div>
         <div class="plain">Higher is better; chance is about {{ '%.1f'|format(util.chance_level) }}.</div></div>
+      {% if util.single_modality %}
+      <div class="card card--neutral"><div class="k">Signal over chance</div>
+        <div class="v {{ 'pos' if (util.best_model.primary or 0) > util.chance_level else 'neg' }}">{{ '%+.3f'|format(util.best_model.primary - util.chance_level) if util.best_model and util.best_model.primary is not none else '—' }}</div>
+        <div class="plain">The one layer's score above chance (single-modality run — no fusion to compare).</div></div>
+      {% else %}
       <div class="card {{ 'card--positive' if (util.fusion_gain_over_best_single or 0) > 0.01 else 'card--neutral' }}"><div class="k">Fusion gain {{ tip('Fusion gain (leave-one-out)') }}</div>
         <div class="v {{ 'pos' if (util.fusion_gain_over_best_single or 0) > 0 else 'neg' }}">{{ '%+.3f'|format(util.fusion_gain_over_best_single) if util.fusion_gain_over_best_single is not none else '—' }}</div>
         <div class="plain">How much combining layers beats the best single layer.</div></div>
+      {% endif %}
       <div class="card"><div class="k">Samples aligned</div>
         <div class="v">{{ dataset.n_samples }}</div>
         <div class="plain">{{ dataset.get('n_dropped',0) }} dropped for a missing outcome.</div></div>
@@ -832,7 +855,7 @@ _TEMPLATE = r"""<!doctype html>
 <!-- ===================== RESEARCH ===================== -->
 <div id="research" class="panel">
   <section>
-    <h2>Cross-modal performance</h2>
+    <h2>{% if util.single_modality %}Model performance{% else %}Cross-modal performance{% endif %}</h2>
     {{ means('cross_modal_performance') }}
     <p class="rc-sub">Error bars are a bootstrap 95% confidence interval {{ tip('Bootstrap 95% confidence interval') }}.</p>
     <div class="reading-guide">
@@ -888,11 +911,16 @@ _TEMPLATE = r"""<!doctype html>
   {% endif %}
 
   <section>
-    <h2>Modality redundancy</h2>
+    <h2>{% if util.single_modality %}Layer summary{% else %}Modality redundancy{% endif %}</h2>
+    {% if util.single_modality %}
+    <div class="callout callout--means"><div class="callout__label">Single modality</div>
+      <div class="callout__body">Redundancy (CKA) and marginal-gain analyses compare layers against each other; with one modality there is nothing to compare, so these panels are omitted rather than shown empty.</div></div>
+    {% else %}
     {{ means('redundancy') }}
     <div class="figure">{{ figs.cka|safe }}</div>
     <h3>Marginal gain per modality</h3>
     <div class="figure">{{ figs.gain|safe }}</div>
+    {% endif %}
     {{ tables.ledger|safe }}
   </section>
 

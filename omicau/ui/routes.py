@@ -79,7 +79,8 @@ def register(app) -> None:  # noqa: C901 - a flat set of small handlers
         if not omics:
             errors.append("Add at least one omic-data file.")
         return {"ok": not errors, "errors": errors,
-                "omics": [r["role"] for r in omics], "clinical": bool(clinical)}
+                "omics": [r["role"] for r in omics], "clinical": bool(clinical),
+                "single_modality": len(omics) == 1}
 
     @app.post("/api/session/{sid}/orient")
     async def set_orient(sid: str, payload: dict):

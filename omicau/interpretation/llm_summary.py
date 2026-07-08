@@ -166,11 +166,19 @@ def _rule_based(context: dict[str, Any]) -> dict[str, Any]:
         + "."
     )
 
+    single_modality = util.get("single_modality", False)
     perf = f"{primary:.3f}" if isinstance(primary, (int, float)) else "n/a"
-    verdict_bits = [
-        f"The best fusion model ({best.get('name', 'n/a')}) reaches {metric.upper()}={perf} "
-        f"(chance ~ {chance})."
-    ]
+    if single_modality:
+        verdict_bits = [
+            "With a single modality, omicau runs its leakage-safe honesty check rather than a fusion "
+            f"benchmark. The {best.get('name', 'n/a')} model reaches {metric.upper()}={perf} "
+            f"(chance ~ {chance}) under group-aware cross-validation."
+        ]
+    else:
+        verdict_bits = [
+            f"The best fusion model ({best.get('name', 'n/a')}) reaches {metric.upper()}={perf} "
+            f"(chance ~ {chance})."
+        ]
     if isinstance(gain, (int, float)):
         if gain > 0.01:
             verdict_bits.append(
@@ -210,7 +218,10 @@ def _rule_based(context: dict[str, Any]) -> dict[str, Any]:
     if leakage:
         recs.append("Re-audit cross-validation splits for group leakage (control baseline elevated).")
     if not recs:
-        recs.append("No critical data-hygiene issues detected; proceed with the fusion model.")
+        recs.append(
+            "No critical data-hygiene issues detected; the single-layer signal is the honest ceiling "
+            "here — validate externally." if single_modality
+            else "No critical data-hygiene issues detected; proceed with the fusion model.")
     if isinstance(n_samples, int) and n_samples < 60:
         recs.append(f"Sample size is small (n={n_samples}); treat effect sizes as preliminary.")
 

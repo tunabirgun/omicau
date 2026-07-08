@@ -45,6 +45,7 @@ GLOSSARY = {
     "DOME": "A standard checklist (Data, Optimization, Model, Evaluation) for reporting machine learning in biology so a run can be judged and reproduced.",
     "Fusion": "Combining several data types (layers) into one model, instead of using each alone. omicau's question is whether fusion predicts the outcome better than the single best layer.",
     "Modality / layer": "One data type measured on the same samples — for example RNA, protein, methylation, or metabolites. Each is one input table (samples x features).",
+    "Single-modality honesty check": "With one data layer there is no fusion to benchmark, so omicau instead verifies the single layer's predictive signal is real and leakage-free — group-aware CV, shuffled-label controls, calibration, and bootstrap confidence intervals.",
 }
 
 SECTION_COPY = {

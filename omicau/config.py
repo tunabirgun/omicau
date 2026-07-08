@@ -42,9 +42,13 @@ class ClinicalSpec:
     target: str = "target"
     #: Column holding sample identifiers; None => the table index / first column.
     sample_id: str | None = None
-    #: Column defining groups for group-aware (leakage-safe) cross-validation,
-    #: e.g. patient id when multiple samples share a patient.
-    group: str | None = None
+    #: Column(s) defining independent units for group-aware (leakage-safe) CV.
+    #: A single name (e.g. "patient_id") is the common case. A LIST combines
+    #: several columns into one composite unit for nested / repeated-measure
+    #: designs — CV then blocks on the COARSEST shared unit (e.g. ["animal","run"]
+    #: so all of an animal's tissues, and everything in a run, stay on one side).
+    #: Point it at the OUTERMOST independent replicate unit, not a per-sample id.
+    group: str | list[str] | None = None
     #: Column defining batches for batch-effect diagnostics.
     batch: str | None = None
     #: For binary classification, the label treated as the positive class.

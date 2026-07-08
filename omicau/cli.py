@@ -213,7 +213,7 @@ def run_audit(config, *, cores: int, device: str, llm: bool | None,
         result = fn()
         dt = time.perf_counter() - t
         _log_runtime(log_path, step, dt, device_tag)
-        echo(f"  |{_STEP_LABEL.get(step, step)}: {dt:.1f}s")
+        echo(f"  - {_STEP_LABEL.get(step, step)}: {dt:.1f}s")
         return result
 
     echo("Ingesting and aligning modalities...")
@@ -221,7 +221,11 @@ def run_audit(config, *, cores: int, device: str, llm: bool | None,
     from omicau.data.alignment import check_grouping
     check_grouping(aligned)   # preflight: warn on missing/no-op grouping, raise on class==group
     echo(f"  provenance SHA-256 (a fingerprint of these exact inputs): {aligned.provenance_hash}")
-    echo(f"  {aligned.n_samples} samples |{aligned.task} |modalities {aligned.feature_counts()}")
+    echo(f"  {aligned.n_samples} samples | {aligned.task} | modalities {aligned.feature_counts()}")
+    if len(aligned.modality_names) == 1:
+        echo(f"  single-modality run ({aligned.modality_names[0]}): fusion / redundancy / "
+             "marginal-contribution analyses do not apply; running the leakage-safe honesty check "
+             "(group-aware CV, shuffled-label controls, calibration, bootstrap CIs).")
 
     cost = estimate_runtime(aligned, config, dev.type, resolved_cores)
     echo(f"Estimated wall-time: {cost['human_readable']} "
@@ -341,6 +345,7 @@ Per-dataset usage (all write a runnable config.json + matrices):
                   omicau bootstrap --dataset cptac --out-dir d --cancer Ucec
   expression_atlas  EMBL-EBI Expression Atlas: cross-organism RNA-seq (log2 CPM) + a factor target
                   omicau bootstrap --dataset expression_atlas --out-dir d --study E-GEOD-100100 --target "RNA interference"
+                  [--normalization log2cpm|tmm|median_of_ratios]  (default log2cpm; tmm/mor are whole-matrix)
 
 Omit --target to let the client pick a sensible default. Remote clients need
 `pip install omicau[data]`; the mock is fully offline.
@@ -364,14 +369,25 @@ Omit --target to let the client pick a sensible default. Remote clients need
 @click.option("--task", default="classification",
               help="Mock dataset task: classification or regression.")
 @click.option("--seed", default=42, type=int, help="Seed for the mock dataset.")
+@click.option("--normalization",
+              type=click.Choice(["log2cpm", "tmm", "median_of_ratios"]),
+              default="log2cpm", show_default=True,
+              help="Expression Atlas only: cross-sample count normalization. log2cpm is "
+                   "within-sample (leakage-clean default); tmm / median_of_ratios are "
+                   "whole-matrix (see the dataset's config.json note).")
 def bootstrap(dataset: str, out_dir: Path, study: str | None, target: str | None,
-              cancer: str | None, preset: str | None, task: str, seed: int) -> None:
+              cancer: str | None, preset: str | None, task: str, seed: int,
+              normalization: str) -> None:
     """Download / assemble a benchmark cohort in one step.
 
     Produces an omicau-ready dataset (modality CSVs + clinical.csv + config.json)
     so that `omicau run --config <out-dir>/config.json` works immediately.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
+    if normalization != "log2cpm" and dataset != "expression_atlas":
+        raise click.ClickException(
+            "--normalization applies only to the expression_atlas dataset. "
+            "ccle/xena/tcga ship pre-normalized (e.g. log2 TPM); do not re-normalize them.")
     click.secho(f"Bootstrapping '{dataset}' into {out_dir}...", fg="cyan")
     try:
         if dataset == "mock":
@@ -398,7 +414,8 @@ def bootstrap(dataset: str, out_dir: Path, study: str | None, target: str | None
             cfg = mw.prepare(out_dir, study_id=study or "ST000009", target=target)
         elif dataset == "expression_atlas":
             from omicau.data import expression_atlas as gxa
-            cfg = gxa.prepare(out_dir, accession=study or gxa.DEFAULT_ACCESSION, target=target)
+            cfg = gxa.prepare(out_dir, accession=study or gxa.DEFAULT_ACCESSION, target=target,
+                              normalization=normalization)
         else:  # pragma: no cover - click already constrains choices
             raise click.ClickException(f"Unknown dataset '{dataset}'.")
     except Exception as exc:  # noqa: BLE001

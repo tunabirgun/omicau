@@ -264,7 +264,12 @@ RENDERERS.roles = async () => {
       body: JSON.stringify({ roles }) });
     state.rolesOk = r.ok;
     msg.innerHTML = "";                                  // local refs work before mount too
-    if (r.ok) msg.append(el("div", { class: "msg-ok" }, "Roles look good — " + r.omics.join(", ") + " + clinical."));
+    if (r.ok) {
+      msg.append(el("div", { class: "msg-ok" }, "Roles look good — " + r.omics.join(", ") + " + clinical."));
+      if (r.single_modality)
+        msg.append(el("div", { class: "consequence" },
+          "One omic layer detected — omicau will run its single-modality leakage-safe honesty check (fusion and redundancy need 2+ layers)."));
+    }
     else r.errors.forEach((e) => msg.append(el("div", { class: "msg-error" }, e)));
     const b = foot.querySelector(".btn-primary");
     if (b) b.disabled = !r.ok;

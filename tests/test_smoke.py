@@ -434,6 +434,38 @@ def test_calibration_and_ci_present_for_classification():
     assert util["calibration"] is not None
 
 
+def test_single_modality_is_first_class_and_honest():
+    # one layer -> no fusion gain vs itself, no phantom "overlapping" layer, honest name.
+    b = make_mock_dataset(task="classification", n_samples=80, seed=3)
+    one = list(b.modalities)[0]
+    b.modalities = {one: b.modalities[one]}
+    cfg = mock_config(); cfg.classical.models = ["linear"]; cfg.cv.n_splits = 3
+    cfg.neural.enabled = False; cfg.classical.max_features = None; cfg.cv.n_bootstrap = 80
+    ad = align_modalities(b.modalities, b.clinical, cfg)
+    cl = run_classical_benchmarks(ad, cfg)
+    util = build_utility_ledger(ad, cl, {"enabled": False, "results": []},
+                                batch_effect_diagnostics(ad), missingness_diagnostics(ad))
+    assert util["single_modality"] is True
+    assert util["fusion_gain_over_best_single"] is None          # not a fit vs itself (+0.000)
+    assert util["best_single_modality"] is None
+    assert "FUSION" not in util["best_model"]["name"]            # honestly named single layer
+    assert "overlapping" not in util["modality_ledger"][0]["recommendation"]  # no phantom layer
+
+
+def test_composite_grouping_coarsens_folds():
+    import pandas as pd
+    from omicau.data.alignment import _resolve_group_series
+    from omicau.config import OmicauConfig
+    clin = pd.DataFrame({"animal": ["A", "A", "B", "B"], "run": ["r1", "r1", "r2", "r2"]})
+    ids = ["s1", "s2", "s3", "s4"]
+    g, info = _resolve_group_series(clin, ["animal", "run"], ids)
+    assert info["composite"] is True and info["n_units"] == 2
+    assert sorted(set(g)) == ["A | r1", "B | r2"]                 # coarsest shared unit
+    g1, i1 = _resolve_group_series(clin, "animal", ids)           # scalar unchanged
+    assert i1["composite"] is False and sorted(set(g1)) == ["A", "B"]
+    assert OmicauConfig.from_dict({"clinical": {"group": ["animal", "run"]}}).clinical.group == ["animal", "run"]
+
+
 def test_organism_field_does_not_change_provenance_hash():
     # organism is metadata, never in the hash -> omicau verify stays valid.
     b = make_mock_dataset(task="classification", n_samples=60, seed=1)

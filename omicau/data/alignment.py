@@ -326,6 +326,30 @@ def _matrix_digest(frame: pd.DataFrame, sample_ids: list[str]) -> str:
     return hashlib.sha256(arr.tobytes()).hexdigest()
 
 
+def _resolve_group_series(clinical, group_spec, sample_ids):
+    """Build the group Series from a str or list[str] spec.
+
+    A list is combined column-wise into one categorical whose levels block on the
+    coarsest shared unit (composite grouping for nested / repeated-measure designs).
+    Missing parts are filled 'NA' before joining so a NaN in one column does not
+    silently merge distinct units. Returns (series_or_None, info_or_None)."""
+    if not group_spec:
+        return None, None
+    cols = [group_spec] if isinstance(group_spec, str) else list(group_spec)
+    present = [c for c in cols if c in clinical.columns]
+    missing = [c for c in cols if c not in clinical.columns]
+    if not present:
+        return None, {"requested": cols, "used": [], "missing": missing, "composite": len(cols) > 1}
+    parts = [clinical[c].astype("string").fillna("NA") for c in present]
+    g = parts[0] if len(parts) == 1 else parts[0].str.cat(parts[1:], sep=" | ")
+    g.index = pd.Index(sample_ids)
+    if len(present) > 1:
+        g = g.rename(" | ".join(present))
+    return g, {"requested": cols, "used": present, "missing": missing,
+               "composite": len(present) > 1, "n_units": int(g.nunique()),
+               "label": " | ".join(present)}
+
+
 def check_grouping(aligned) -> None:
     """Preflight on the grouping column, run before any cross-validation.
 
@@ -355,6 +379,14 @@ def check_grouping(aligned) -> None:
             "samples), so group-aware splitting does nothing. Point it at the shared unit "
             "(subject / litter / cage / plot), not a per-sample id.", stacklevel=2)
         return
+    gi = (aligned.report or {}).get("grouping") or {}
+    if gi.get("composite"):
+        warnings.warn(
+            f"Composite group {gi['used']} yields {gi['n_units']} units. If the same subject "
+            "appears in more than one of these columns (e.g. one animal across several runs), "
+            "combining them SPLITS that subject across folds and re-opens the leak. Use a list "
+            "only for nested factors whose coarsest shared block is their combination; otherwise "
+            "set group to the single outermost unit.", stacklevel=2)
     if aligned.task == "classification" and aligned.y is not None:
         y = np.asarray(aligned.y)
         groups_per_class = pd.DataFrame({"y": y, "g": g}).groupby("y")["g"].nunique()
@@ -520,10 +552,12 @@ def align_modalities(
             )
         clinical = clinical.loc[sample_ids]
 
-    groups = None
-    if clin_spec.group and clin_spec.group in clinical.columns:
-        groups = clinical[clin_spec.group].astype("string").fillna("NA")
-        groups.index = pd.Index(sample_ids)
+    groups, group_info = _resolve_group_series(clinical, clin_spec.group, sample_ids)
+    if group_info is not None:
+        report["grouping"] = group_info
+        if group_info["missing"]:
+            report.setdefault("notes", []).append(
+                f"Grouping columns not found and ignored: {group_info['missing']}.")
     batch = None
     if clin_spec.batch and clin_spec.batch in clinical.columns:
         batch = clinical[clin_spec.batch].astype("string").fillna("NA")

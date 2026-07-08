@@ -101,6 +101,7 @@ def build_utility_ledger(
     metric = classical_out["primary_metric"]
     chance = CHANCE[task]
     mods = aligned.modality_names
+    single_modality = len(mods) == 1   # one layer -> no fusion/redundancy/marginal-gain to assess
 
     cl = _by_name(classical_out["results"])
     ref = classical_out["reference_estimator"]
@@ -187,10 +188,15 @@ def build_utility_ledger(
         adds = np.isfinite(gain_c) and gain_c > GAIN_EPS
         redundant = (red_partner is not None and np.isfinite(red_cka) and red_cka > CKA_REDUNDANT and not adds)
 
-        verdict, rec = _verdict(
-            standalone_useful, adds, redundant, batch_confounded, red_partner,
-            bool(miss_flags_by_mod.get(m)), leakage,
-        )
+        if single_modality:
+            verdict, rec = _verdict_single(
+                standalone_useful, batch_confounded, bool(miss_flags_by_mod.get(m)), leakage,
+            )
+        else:
+            verdict, rec = _verdict(
+                standalone_useful, adds, redundant, batch_confounded, red_partner,
+                bool(miss_flags_by_mod.get(m)), leakage,
+            )
 
         top_features = _top_features(fusion_ref, m, k=8) if fusion_ref else []
         ledger.append({
@@ -215,6 +221,10 @@ def build_utility_ledger(
     fusion_candidates = [r for r in classical_out["results"] if r.name.endswith("::FUSION")]
     fusion_candidates += [r for r in neural_out.get("results", []) if r.name == "neural::FUSION"]
     best = max(fusion_candidates, key=lambda r: (r.primary if np.isfinite(r.primary) else -1), default=None)
+    if single_modality:
+        # the ::FUSION fit IS the single layer refit on identical data; surface the
+        # honestly-named single-layer result (linear::{mod}) so no "FUSION" name leaks.
+        best = cl.get(f"{ref}::{mods[0]}") or best
     # best_single spans BOTH classical and neural single-modality models, so the
     # fusion-gain baseline is symmetric with `best` (which includes neural::FUSION).
     single_pool = [r for r in classical_out["results"] if "::" in r.name and "FUSION" not in r.name
@@ -253,14 +263,15 @@ def build_utility_ledger(
         "auprc_baseline": auprc_baseline,
         "subgroups": subgroups,
         "batch_blocked": batch_blocked,
-        "best_single_modality": _model_brief(best_single),
-        "fusion_gain_over_best_single": _r(fusion_gain),
+        "single_modality": single_modality,
+        "best_single_modality": None if single_modality else _model_brief(best_single),
+        "fusion_gain_over_best_single": None if single_modality else _r(fusion_gain),
         "modality_ledger": ledger,
         "redundancy_matrix": {"modalities": mods, "cka": [[_r(v) for v in row] for row in cka]},
         "controls": controls,
         "leakage_warning": leakage,
         "leakage_text": leakage_text,
-        "summary_flags": _summary_flags(ledger, leakage, fusion_gain),
+        "summary_flags": _summary_flags(ledger, leakage, fusion_gain, single_modality, mods),
     }
 
 
@@ -290,6 +301,25 @@ def _verdict(standalone_useful, adds, redundant, batch_confounded, red_partner, 
                 "Predictive on its own yet not additive in fusion; likely overlapping with the retained layers.")
     return ("no detectable signal (control-like)",
             "Performs near chance and adds nothing; a candidate to drop.")
+
+
+def _verdict_single(standalone_useful, batch_confounded, miss_biased, leakage):
+    """Verdict for a single-modality run: no fusion or redundancy to assess, so
+    judge only whether the one layer carries real, leakage-free standalone signal."""
+    if batch_confounded:
+        return ("batch-confounded",
+                "Batch is confounded with the outcome here, so this layer's apparent signal may be "
+                "a technical artifact rather than biology; treat it as untrustworthy.")
+    if not standalone_useful:
+        return ("no detectable signal (near chance)",
+                "Performs near chance; on its own it does not predict the outcome here.")
+    rec = ("This layer carries predictive signal on its own. With one modality there is no fusion or "
+           "redundancy to assess; validate externally before use.")
+    if miss_biased:
+        rec += " Note target-associated missingness; verify the signal is not a missingness artifact."
+    if leakage:
+        rec += " Confirm after resolving the control-baseline leakage warning."
+    return ("predictive (standalone)", rec)
 
 
 def _subgroup_metrics(best, aligned, metric_key):
@@ -356,7 +386,7 @@ def _model_brief(r) -> dict[str, Any] | None:
     }
 
 
-def _summary_flags(ledger, leakage, fusion_gain) -> list[str]:
+def _summary_flags(ledger, leakage, fusion_gain, single_modality=False, mods=None) -> list[str]:
     flags = []
     if leakage:
         flags.append("Control-baseline leakage warning is active.")
@@ -369,7 +399,11 @@ def _summary_flags(ledger, leakage, fusion_gain) -> list[str]:
         flags.append(f"Batch-confounded layer(s): {', '.join(l['modality'] for l in conf)}.")
     if dead:
         flags.append(f"Control-like layer(s) with no signal: {', '.join(l['modality'] for l in dead)}.")
-    if np.isfinite(fusion_gain):
+    if single_modality:
+        name = (mods[0] if mods else "one layer")
+        flags.append(f"Single modality ({name}): fusion, redundancy, and marginal-contribution "
+                     "analyses do not apply.")
+    elif np.isfinite(fusion_gain):
         verb = "improves on" if fusion_gain > GAIN_EPS else "does not beat"
         flags.append(f"Fusion {verb} the best single modality by {fusion_gain:+.3f}.")
     return flags
