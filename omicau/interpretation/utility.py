@@ -254,6 +254,13 @@ def build_utility_ledger(
         batch_blocked = {"primary": _r(bb.primary), "standard": _r(fusion_ref.primary),
                          "optimism_gap": _r(fusion_ref.primary - bb.primary)}
 
+    batch_adjusted = None
+    bad = cl.get("sensitivity::batch-adjusted-FUSION")
+    if bad is not None and fusion_ref is not None and np.isfinite(bad.primary) and np.isfinite(fusion_ref.primary):
+        batch_adjusted = {"primary": _r(bad.primary), "standard": _r(fusion_ref.primary),
+                          "delta": _r(bad.primary - fusion_ref.primary),
+                          "ci_low": bad.extra.get("ci_low"), "ci_high": bad.extra.get("ci_high")}
+
     return {
         "primary_metric": metric,
         "task": task,
@@ -263,6 +270,7 @@ def build_utility_ledger(
         "auprc_baseline": auprc_baseline,
         "subgroups": subgroups,
         "batch_blocked": batch_blocked,
+        "batch_adjusted": batch_adjusted,
         "single_modality": single_modality,
         "best_single_modality": None if single_modality else _model_brief(best_single),
         "fusion_gain_over_best_single": None if single_modality else _r(fusion_gain),

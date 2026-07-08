@@ -270,21 +270,32 @@ def build_config_dict(session: dict) -> dict[str, Any]:
         for m in session.get("modalities", [])
     ]
     clin = session.get("clinical", {})
+    task = clin.get("task", "auto")
+    # A confounded batch fail-closes the correction probe server-side (never trust the UI).
+    confounded = bool(session.get("batch_confounded"))
+    clinical_block: dict[str, Any] = {
+        "path": clin.get("path"),
+        "target": clin.get("target"),
+        "sample_id": clin.get("sample_id"),
+        "group": clin.get("group"),               # str or list[str] (composite grouping)
+        "batch": clin.get("batch"),
+        "task": task,
+    }
+    if task == "survival":                        # survival carries time + event, not a single target
+        clinical_block["time"] = clin.get("time")
+        clinical_block["event"] = clin.get("event")
+        clinical_block["time_unit"] = clin.get("time_unit", "")
     cfg: dict[str, Any] = {
         "run_name": session.get("run_name") or "omicau_ui_run",
         "output_dir": session.get("output_dir", "run"),
         "modalities": modalities,
-        "clinical": {
-            "path": clin.get("path"),
-            "target": clin.get("target"),
-            "sample_id": clin.get("sample_id"),
-            "group": clin.get("group"),
-            "batch": clin.get("batch"),
-            "task": clin.get("task", "auto"),
-        },
+        "clinical": clinical_block,
         "cv": {"n_splits": session.get("n_splits", 5), "seed": session.get("seed", 42),
-               "n_bootstrap": session.get("n_bootstrap", 1000)},
+               "n_bootstrap": session.get("n_bootstrap", 1000),
+               "batch_blocked": bool(session.get("batch_blocked", False)),
+               "batch_adjust_sensitivity": bool(session.get("batch_adjust_sensitivity", False)) and not confounded},
         "neural": {"enabled": session.get("neural", True)},
+        "normalization": {"preset": session.get("normalization", "none")},
         "llm": {"enabled": False},
     }
     return cfg

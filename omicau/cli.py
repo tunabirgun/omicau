@@ -239,7 +239,7 @@ def run_audit(config, *, cores: int, device: str, llm: bool | None,
         classical = timed("classical_benchmarks", lambda: run_survival_benchmark(aligned, config))
         neural = {"enabled": False, "results": []}      # neural survival deferred
     else:
-        classical = timed("classical_benchmarks", lambda: run_classical_benchmarks(aligned, config))
+        classical = timed("classical_benchmarks", lambda: run_classical_benchmarks(aligned, config, batch))
         neural = timed("neural_benchmark", lambda: run_neural_benchmark(aligned, config))
     util = timed("utility_ledger",
                  lambda: build_utility_ledger(aligned, classical, neural, batch, missing))

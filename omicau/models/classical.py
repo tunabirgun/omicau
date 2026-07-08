@@ -96,7 +96,63 @@ def _run_stacking(aligned, results, ref_key, config, groups, n_jobs, seed):
     )
 
 
-def run_classical_benchmarks(aligned, config) -> dict[str, Any]:
+def _run_batch_adjusted_fusion(aligned, config, X_all, feats_all, mods, ref_key, y, groups, n_jobs, seed):
+    """In-fold batch-centering sensitivity probe: re-CV the reference fusion with
+    per-batch location offsets fit on train and applied to val. Returns a CVResult
+    named sensitivity::batch-adjusted-FUSION, or None if the fold-straddle/min-count
+    guard fails (offsets would leak or be noise). Emits no corrected dataset."""
+    from omicau.models.base import make_cv_splitter, make_pipeline, safe_n_splits, score_predictions
+    from omicau.diagnostics.batch_adjust import (
+        apply_batch_centering, can_correct_in_fold, fit_batch_centering)
+    task = aligned.task
+    batch_codes = np.unique(aligned.batch.astype("string").to_numpy(), return_inverse=True)[1]
+    k = safe_n_splits(task, y, groups, config.cv.n_splits)
+    splitter = make_cv_splitter(task, k, seed, config.cv.shuffle, groups)
+    ok, _reason = can_correct_in_fold(splitter, X_all, y, groups, batch_codes,
+                                      config.cv.batch_adjust_min_per_batch)
+    if not ok:
+        return None
+    factory = _estimator_factory(ref_key, task, seed, n_jobs)
+    n = len(y)
+    n_classes = len(np.unique(y)) if task == "classification" else 0
+    multiclass = task == "classification" and n_classes > 2
+    oof_score = np.full((n, n_classes), np.nan) if multiclass else np.full(n, np.nan)
+    oof_pred = np.full(n, np.nan)
+    fold_primary: list[float] = []
+    split_args = (X_all, y, groups) if groups is not None else (X_all, y)
+    for tr, va in splitter.split(*split_args):
+        _, offsets = fit_batch_centering(X_all[tr], batch_codes[tr])   # train-only offsets
+        Xtr = apply_batch_centering(X_all[tr], batch_codes[tr], offsets)
+        Xva = apply_batch_centering(X_all[va], batch_codes[va], offsets)
+        pipe = make_pipeline(factory(), task, X_all.shape[1], config.classical.max_features, seed)
+        pipe.fit(Xtr, y[tr])
+        if task == "classification":
+            proba = pipe.predict_proba(Xva)
+            classes = pipe.named_steps["estimator"].classes_.astype(int)
+            if multiclass:
+                oof_score[np.ix_(va, classes)] = proba
+                sc = proba
+            else:
+                sc = proba[:, 1] if proba.shape[1] > 1 else proba[:, 0]
+                oof_score[va] = sc
+            preds = classes[proba.argmax(axis=1)]
+            oof_pred[va] = preds
+            fold_primary.append(score_predictions(y[va], sc, preds, task).get(PRIMARY_METRIC[task], float("nan")))
+        else:
+            pred = pipe.predict(Xva)
+            oof_score[va] = pred
+            oof_pred[va] = pred
+            fold_primary.append(score_predictions(y[va], pred, pred, task).get(PRIMARY_METRIC[task], float("nan")))
+    mask = ~np.isnan(oof_pred)
+    pooled = score_predictions(y[mask], oof_score[mask], oof_pred[mask], task)
+    return CVResult(
+        name="sensitivity::batch-adjusted-FUSION", task=task, metrics=pooled,
+        fold_primary=[float(v) for v in fold_primary], n_features=int(X_all.shape[1]),
+        modalities=list(mods), oof_true=y, oof_score=oof_score, oof_pred=oof_pred,
+        oof_groups=groups, extra={"n_splits": int(k)})
+
+
+def run_classical_benchmarks(aligned, config, batch_diag=None) -> dict[str, Any]:
     """Run the full classical benchmark grid over an aligned dataset."""
     task = aligned.task
     seed = config.seed
@@ -173,6 +229,15 @@ def run_classical_benchmarks(aligned, config) -> dict[str, Any]:
                 n_splits=min(n_splits, n_batches), seed=seed, shuffle=shuffle,
                 max_features=max_feat, compute_importance=False)
             results.append(bb)
+
+    # -- optional in-fold batch-adjustment SENSITIVITY probe (opt-in, gated) -- #
+    confounded = bool((batch_diag or {}).get("confounding", {}).get("flag", False))
+    if (config.cv.batch_adjust_sensitivity and aligned.batch is not None
+            and not confounded and not config.cv.batch_blocked):
+        ba = _run_batch_adjusted_fusion(aligned, config, X_all, feats_all, mods,
+                                        ref_key, y, groups, n_jobs, seed)
+        if ba is not None:
+            results.append(ba)
 
     attach_cis(results + controls, n_boot=config.cv.n_bootstrap, seed=seed)
 

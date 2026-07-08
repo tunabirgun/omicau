@@ -115,14 +115,16 @@ def register(app) -> None:  # noqa: C901 - a flat set of small handlers
     @app.post("/api/session/{sid}/clinical-map")
     async def clinical_map(sid: str, payload: dict):
         _sess(sid)["clinical_map"] = {
-            k: payload.get(k) for k in ("target", "sample_id", "group", "batch", "task")
+            k: payload.get(k) for k in
+            ("target", "sample_id", "group", "batch", "task", "time", "event", "time_unit")
         }
         return {"ok": True}
 
     @app.post("/api/session/{sid}/options")
     async def options(sid: str, payload: dict):
         s = _sess(sid)
-        for k in ("n_splits", "neural", "run_name", "n_bootstrap"):
+        for k in ("n_splits", "neural", "run_name", "n_bootstrap", "batch_blocked",
+                  "batch_adjust_sensitivity", "normalization"):
             if k in payload:
                 s[k] = payload[k]
         return {"ok": True}
@@ -145,7 +147,12 @@ def register(app) -> None:  # noqa: C901 - a flat set of small handlers
             "modalities": _modalities(s),
             "clinical": {"path": _clinical_path(s), **cm},
             "n_splits": s.get("n_splits", 5),
+            "n_bootstrap": s.get("n_bootstrap", 1000),
             "neural": s.get("neural", True),
+            "batch_blocked": s.get("batch_blocked", False),
+            "batch_adjust_sensitivity": s.get("batch_adjust_sensitivity", False),
+            "batch_confounded": s.get("batch_confounded", False),
+            "normalization": s.get("normalization", "none"),
         })
 
     @app.post("/api/session/{sid}/preflight")

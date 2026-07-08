@@ -36,6 +36,7 @@ GLOSSARY = {
     "Bootstrap 95% confidence interval": "A range for the score obtained by re-drawing the samples many times with replacement; it shows how much the score would wobble on a similar dataset.",
     "Optimism gap": "How much the standard estimate overstates performance versus a harder test on an unseen batch. A large gap warns the headline score will not hold on new data.",
     "Cross-site stress test (batch-blocked)": "Testing on a batch the model never trained on, which estimates how it will do at a new site or run — usually harder than standard cross-validation.",
+    "Batch-adjustment sensitivity": "An optional check that removes each batch's average shift (fit only on training data, per fold) and re-scores. If performance holds, the signal is not just a batch artifact; if it collapses, much of it was. It changes nothing in your data — no corrected file is produced — and it is deliberately skipped when batch is tangled with the outcome.",
     "Marginal gain": "What one layer adds on top of all the others: the combined score minus the score with that layer removed. Near zero means the layer is redundant.",
     "Confounding": "A third factor (often processing batch) that drives both a data layer and the outcome, so the layer's apparent signal may be partly or wholly the artifact.",
     "Permutation importance": "How much the score drops when one feature's values are shuffled. A bigger drop means the model relied on that feature more.",

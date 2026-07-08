@@ -45,7 +45,8 @@ const state = {
   rolesOk: false,
   clinicalCols: null,
   clinical: { target: "", sample_id: "", group: "", batch: "", task: "auto" },
-  options: { run_name: "my_audit", n_splits: 5, neural: true },
+  options: { run_name: "my_audit", n_splits: 5, neural: true,
+             batch_blocked: false, batch_adjust_sensitivity: false, normalization: "none" },
   align: null, preflight: null, run: null,
 };
 
@@ -343,12 +344,35 @@ RENDERERS.clinical = async () => {
   wrap.append(h("Map the clinical columns",
     "Tell omicau which column is the outcome to predict, which identifies the sample, and (recommended) which groups repeated samples so cross-validation stays leakage-safe."));
 
-  wrap.append(colSelect("target", "Outcome to predict (target)", cols, true, "target"));
+  const survival = state.clinical.task === "survival";
+  const taskSel = el("select", { style: "min-width:280px" });
+  [["auto", "Auto-detect (classification / regression)"], ["classification", "Classification"],
+   ["regression", "Regression"], ["survival", "Survival (time-to-event)"]].forEach(([v, t]) => {
+    taskSel.append(el("option", { value: v, selected: state.clinical.task === v }, t));
+  });
+  taskSel.addEventListener("change", async () => {
+    state.clinical.task = taskSel.value;
+    await api(`/api/session/${state.session}/clinical-map`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(state.clinical) });
+    goStep(state.step);                        // re-render to show/hide survival mappers
+  });
+  wrap.append(el("div", { style: "margin:18px 0" },
+    el("label", { style: "display:block;font-weight:600;margin-bottom:6px" }, "Prediction task"), taskSel));
+
+  if (survival) {
+    wrap.append(colSelect("time", "Time to event / follow-up (numeric)", cols, true, null));
+    wrap.append(colSelect("event", "Event indicator (1 = event, 0 = censored)", cols, true, null));
+  } else {
+    wrap.append(colSelect("target", "Outcome to predict (target)", cols, true, "target"));
+  }
   wrap.append(colSelect("sample_id", "Sample identifier", cols, true, null));
   wrap.append(colSelect("group", "Patient / group id (optional, prevents leakage)", cols, false, "group"));
   wrap.append(colSelect("batch", "Batch / site (optional)", cols, false, "batch"));
 
-  const nextOk = () => state.clinical.target && state.clinical.sample_id;
+  const nextOk = () => state.clinical.sample_id && (survival
+    ? (state.clinical.time && state.clinical.event)
+    : state.clinical.target);
   wrap.append(footer({ back: true, nextOk: nextOk(), next: advance }));
   // fire initial consequences
   ["target", "group", "batch"].forEach((k) => { if (state.clinical[k]) showConsequence(k); });
@@ -433,11 +457,30 @@ RENDERERS.options = async () => {
   const neuralIn = el("input", { type: "checkbox" });
   if (o.neural) neuralIn.setAttribute("checked", "checked");
   neuralIn.addEventListener("change", () => (o.neural = neuralIn.checked));
+  const blockIn = el("input", { type: "checkbox" });
+  if (o.batch_blocked) blockIn.setAttribute("checked", "checked");
+  blockIn.addEventListener("change", () => (o.batch_blocked = blockIn.checked));
+  const adjIn = el("input", { type: "checkbox" });
+  if (o.batch_adjust_sensitivity) adjIn.setAttribute("checked", "checked");
+  adjIn.addEventListener("change", () => (o.batch_adjust_sensitivity = adjIn.checked));
+  const normSel = el("select");
+  [["none", "Keep IDs verbatim (safest; non-human / case-sensitive)"],
+   ["tcga", "TCGA mode: uppercase + collapse aliquot barcodes to patient"]].forEach(([v, t]) => {
+    const opt = el("option", { value: v }, t);
+    if (o.normalization === v) opt.setAttribute("selected", "selected");
+    normSel.append(opt);
+  });
+  normSel.addEventListener("change", () => (o.normalization = normSel.value));
   box.append(
     field("Audit name", nameIn),
     field("Cross-validation folds", splitsIn),
-    field("Neural fusion model (slower, adds a deep-learning benchmark)", neuralIn));
+    field("Neural fusion model (slower, adds a deep-learning benchmark)", neuralIn),
+    field("Sample-ID matching", normSel),
+    field("Cross-site stress test (batch-blocked CV; needs a batch column, 3+ batches)", blockIn),
+    field("Batch-adjustment sensitivity probe (in-fold; auto-skipped if batch is confounded)", adjIn));
   wrap.append(box);
+  wrap.append(el("p", { class: "consequence", style: "margin-top:10px" },
+    "The stress test and batch-adjustment probe are optional robustness checks and need a mapped batch column. The probe never corrects your data — it reports alongside the standard result, and omicau refuses to run it when batch is confounded with the outcome."));
   wrap.append(footer({ back: true, next: advance }));
   return wrap;
 

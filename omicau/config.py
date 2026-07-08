@@ -75,6 +75,15 @@ class CVSpec:
     #: folds blocked on the batch column (leave-one-batch-out), giving an honest
     #: new-batch generalization estimate alongside the standard CV.
     batch_blocked: bool = False
+    #: Opt-in SENSITIVITY probe (not a correction you keep): also cross-validate the
+    #: reference fusion with per-batch location centering fit INSIDE each train fold
+    #: and applied to that fold's validation rows. Answers "does the signal survive
+    #: batch adjustment?". Hard-gated OFF when batch is confounded with the outcome
+    #: (correcting a confounded batch inflates -- Nygaard et al. 2016). Emits no
+    #: corrected dataset. Mutually exclusive with the batch-blocked stress test.
+    batch_adjust_sensitivity: bool = False
+    #: Minimum per-batch training rows required in every fold for the probe to run.
+    batch_adjust_min_per_batch: int = 10
 
 
 @dataclass

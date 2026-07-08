@@ -452,6 +452,25 @@ def test_single_modality_is_first_class_and_honest():
     assert "overlapping" not in util["modality_ledger"][0]["recommendation"]  # no phantom layer
 
 
+def test_batch_adjust_probe_is_optional_gated_and_exclusive():
+    from omicau.models.classical import run_classical_benchmarks
+    b = make_mock_dataset(task="classification", n_samples=150, seed=4)
+    cfg = mock_config(); cfg.classical.models = ["linear"]; cfg.cv.n_splits = 3
+    cfg.cv.n_bootstrap = 60; cfg.classical.max_features = None
+    ad = align_modalities(b.modalities, b.clinical, cfg)
+    batch = batch_effect_diagnostics(ad)
+    def names(out):
+        return {r.name for r in out["results"]}
+    probe = "sensitivity::batch-adjusted-FUSION"
+    assert probe not in names(run_classical_benchmarks(ad, cfg, batch))          # off by default
+    cfg.cv.batch_adjust_sensitivity = True
+    assert probe in names(run_classical_benchmarks(ad, cfg, batch))              # opt-in runs
+    assert probe not in names(run_classical_benchmarks(ad, cfg, {"confounding": {"flag": True}}))  # gated
+    cfg.cv.batch_blocked = True                                                  # mutually exclusive
+    out = run_classical_benchmarks(ad, cfg, batch)
+    assert "stress::batch-blocked-FUSION" in names(out) and probe not in names(out)
+
+
 def test_survival_benchmark_runs_and_controls_at_chance():
     # dependency-light Cox + Harrell C-index: signal detected, shuffled outcome ~ chance.
     from omicau.models.survival import run_survival_benchmark, harrell_cindex

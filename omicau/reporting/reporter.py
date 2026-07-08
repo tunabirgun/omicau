@@ -282,6 +282,8 @@ def _classify_model(name: str) -> tuple[str, str]:
         return "control", VERMILLION
     if name.startswith("stress::"):
         return "stress test", AMBER
+    if name.startswith("sensitivity::"):
+        return "sensitivity probe", OKABE_ITO["purple"]
     if name.startswith("stacking::") or name.endswith("::FUSION") or name == "neural::FUSION":
         return "fusion", COBALT
     if "FUSION-minus-" in name:
@@ -876,6 +878,17 @@ _TEMPLATE = r"""<!doctype html>
       generalization estimate) scores {{ '%.3f'|format(util.batch_blocked.primary) }} vs
       {{ '%.3f'|format(util.batch_blocked.standard) }} under standard CV — an optimism gap {{ tip('Optimism gap') }} of
       {{ '%+.3f'|format(util.batch_blocked.optimism_gap) }}{% if util.batch_blocked.optimism_gap and util.batch_blocked.optimism_gap > 0.05 %}; the standard CV likely overstates performance on an unseen site (part of the gap can also reflect the smaller per-fold training sets under batch blocking){% endif %}.</div>
+    {% endif %}
+    {% if util.batch_adjusted %}
+    <div class="consequence"><strong>Batch-adjustment sensitivity {{ tip('Batch-adjustment sensitivity') }}.</strong>
+      With per-batch centering fit inside each training fold, the fusion scores
+      {{ '%.3f'|format(util.batch_adjusted.primary) }} vs {{ '%.3f'|format(util.batch_adjusted.standard) }}
+      under standard CV (change {{ '%+.3f'|format(util.batch_adjusted.delta) }}). A score that holds up
+      means the signal is not merely batch structure; a large drop means much of it was. This is an
+      exploratory probe — omicau applies no correction to your data and produces no corrected matrix.
+      It ran only because batch is not confounded with the outcome here; correcting a confounded batch
+      would inflate this estimate (Nygaard et al., <em>Nat. Rev. Genet.</em> 2016). Complementary to,
+      not a replacement for, the cross-site stress test.</div>
     {% endif %}
   </section>
 
