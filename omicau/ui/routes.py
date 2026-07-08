@@ -14,7 +14,7 @@ import threading
 import traceback
 from pathlib import Path
 
-_KEYISH = re.compile(r"\b(sk|xai|gsk|or|key)[-_][A-Za-z0-9\-_]{16,}\b")
+_KEYISH = re.compile(r"\b(sk|xai|gsk|or|key)[-_][A-Za-z0-9\-_]{16,}\b|\bAIza[A-Za-z0-9\-_]{16,}\b")
 
 
 def _redact(text: str, secret: str | None) -> str:
@@ -106,10 +106,13 @@ def register(app) -> None:  # noqa: C901 - a flat set of small handlers
                                "role": role, "orientation": "samples_as_rows"})
             files_out.append(info)
 
-        for m in cfg.get("modalities", []):
-            _add(m["path"], m["name"])
         clin = cfg.get("clinical", {})
-        _add(clin["path"], "clinical")
+        try:
+            for m in cfg.get("modalities", []):
+                _add(m["path"], m["name"])
+            _add(clin["path"], "clinical")
+        except KeyError as exc:               # a connector that omits a required field
+            raise HTTPException(400, f"Assembled dataset config is missing field {exc}")
 
         s["clinical_map"] = {k: clin.get(k) for k in
                              ("target", "sample_id", "group", "batch", "task", "time", "event")}

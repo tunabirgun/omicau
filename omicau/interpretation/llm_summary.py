@@ -73,8 +73,9 @@ def _retry_backoff(fn, *, retries: int = 4, base: float = 1.0, cap: float = 20.0
         except Exception as exc:  # noqa: BLE001 - resilience: any failure -> fallback
             last = exc
             name = type(exc).__name__
-            # Do not retry auth / bad-request style errors.
-            if any(k in name for k in ("Authentication", "PermissionDenied", "BadRequest", "NotFound")):
+            # Do not retry auth / bad-request / missing-SDK errors (no point waiting).
+            if any(k in name for k in ("Authentication", "PermissionDenied", "BadRequest",
+                                       "NotFound", "ImportError", "ModuleNotFound")):
                 break
             sleep = min(cap, base * (2 ** attempt)) + random.uniform(0, base)
             time.sleep(sleep)
@@ -83,6 +84,17 @@ def _retry_backoff(fn, *, retries: int = 4, base: float = 1.0, cap: float = 20.0
 
 def _try_llm(context: dict[str, Any], llm, api_key: str) -> dict[str, Any] | None:
     from omicau.interpretation import llm_client
+
+    # Fail fast (no 15s of retries) when the provider SDK is not installed: the
+    # docs promise a *silent, immediate* fallback to the rule-based summary.
+    # import_module consults sys.modules first, so a test-injected fake still works.
+    import importlib
+    sdk = "anthropic" if (llm.provider or "anthropic").lower() == "anthropic" else "openai"
+    try:
+        importlib.import_module(sdk)
+    except ImportError:
+        return None
+
     payload = json.dumps(_sanitize_context(context), sort_keys=True)
 
     def _call():
@@ -93,10 +105,7 @@ def _try_llm(context: dict[str, Any], llm, api_key: str) -> dict[str, Any] | Non
             max_tokens=llm.max_tokens, timeout=getattr(llm, "timeout", 60.0),
             openai_api=getattr(llm, "openai_api", "chat"))
 
-    try:
-        text = _retry_backoff(_call)
-    except ImportError:            # provider SDK absent -> degrade to rule_based
-        return None
+    text = _retry_backoff(_call)
     if not text:
         return None
     parsed = _parse_json(text)

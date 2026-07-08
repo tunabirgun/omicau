@@ -637,6 +637,27 @@ def test_local_provider_needs_no_key_and_reaches_llm(aligned, pipeline, monkeypa
     assert "One layer suffices" in summary["clinical_verdict"]
 
 
+def test_missing_provider_sdk_falls_back_without_retries(aligned, pipeline, monkeypatch):
+    # A ticked verdict with the SDK not installed must fall back to rule_based
+    # immediately (docs promise a silent, fast fallback) -- not after ~15s of retries.
+    import importlib
+    real_import = importlib.import_module
+
+    def _no_sdk(name, *a, **k):
+        if name in ("anthropic", "openai"):
+            raise ImportError(f"{name} not installed")
+        return real_import(name, *a, **k)
+
+    monkeypatch.setattr(importlib, "import_module", _no_sdk)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-present-but-sdk-missing")
+
+    cfg = _small_config()
+    cfg.llm.enabled = True; cfg.llm.provider = "anthropic"
+    ctx = build_context(aligned, pipeline["util"], pipeline["missing"], pipeline["batch"])
+    summary = summarize(ctx, cfg)
+    assert summary["source"] == "rule_based"
+
+
 def test_ui_error_redaction_scrubs_api_key():
     from omicau.ui.routes import _redact
     secret = "sk-ant-verysecretkey1234567890"
