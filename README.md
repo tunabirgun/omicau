@@ -313,7 +313,14 @@ keep all of a group's samples on one side, prohibiting identity leakage:
 and, for classification, contains both classes. Metrics are computed on pooled
 out-of-fold predictions.
 
-### 7. Classical fusion benchmarks
+### 7. Fusion benchmarks across the integration axis
+
+omicau benchmarks three integration regimes so you can see which one a dataset
+actually wants: **early** (feature concatenation, this section), **intermediate**
+(the masked global-pooling neural network, §8), and **late** (stacking — a
+meta-learner cross-validated over the single-modality out-of-fold predictions,
+reported as `stacking::FUSION`; leakage-safe because the base predictions are
+out-of-fold and the meta-learner is itself cross-validated).
 
 Early fusion concatenates the (namespaced) modality matrices. For each estimator
 — L2-regularized logistic regression / ridge, random forest, or histogram
@@ -353,11 +360,14 @@ size, clears the device cache, and retries, then falls back to CPU.
 ### 9. Leakage-safe feature attribution (XAI)
 
 Primary attribution is **permutation importance** computed on each held-out
-validation fold with the model trained only on that fold's training data, then
-averaged across folds. For a fitted model, feature *j*'s importance is the drop
-in the fold metric when column *j* is permuted. The neural fuser additionally
-exposes a native score from its per-feature embedding norms weighted by observed
-feature variance.
+validation fold with the model trained only on that fold's training data. The
+across-fold **mean and ±SD** are reported, so an unstable (high-SD) attribution
+is visible rather than hidden. This is *unconditional* permutation importance,
+which over-credits correlated predictors and can split or inflate importance
+among collinear features (Hooker et al. 2021; Strobl et al. 2008) — omic layers
+are highly collinear, so the report flags this and the ranking should be read as
+indicative, not causal. The neural fuser additionally exposes a native score from
+its per-feature embedding norms weighted by observed feature variance.
 
 ### 10. Modality-utility ledger and redundancy
 
@@ -375,10 +385,12 @@ flagged (Nygaard et al. 2016).
 
 The identical pipeline is run on three corrupted inputs to prove it does not
 leak: **shuffled target**, **column-shuffled features**, and **random Gaussian
-noise**. A well-behaved harness scores at chance on all three; if a control beats
-chance by more than a **task-aware margin** (chance + 0.12, where chance is 0.5
-AUROC for classification and 0.0 R² for regression), a leakage warning gates the
-whole ledger.
+noise**. A well-behaved harness scores at chance on all three. The leakage alarm
+gates the whole ledger and is **CI-aware**: it fires when a control's bootstrap
+95% CI **lower bound** clears chance (i.e. the control is *significantly* above
+chance), falling back to a task-aware margin (chance + 0.12) when no CI is
+available. AUPRC is reported against its prevalence baseline so lift over chance
+is visible.
 
 ### 12. Metrics
 
@@ -396,7 +408,23 @@ reliability curve, Brier score, and expected calibration error — flagging that
 `class_weight="balanced"` miscalibrates the predicted probabilities by
 construction.
 
-### 13. Pre-flight cost estimation
+### 13. Fairness, generalization, and governance
+
+- **Subgroup performance** — the best model's pooled out-of-fold predictions are
+  re-scored within each level of the batch/site column, and the max-minus-min
+  metric gap is surfaced, since a global metric can hide subgroup disparities
+  (Obermeyer et al., *Science* 2019). Pure re-aggregation, no retraining.
+- **Cross-site stress test** (opt-in `cv.batch_blocked`) — the reference fusion is
+  additionally cross-validated with folds **blocked on batch** (leave-one-batch-out),
+  giving an honest new-batch generalization estimate and an optimism gap against
+  the standard CV.
+- **Governance** — a **DOME** methods block (Data / Optimization / Model /
+  Evaluation, with explicit limitations; Walsh et al., *Nat Methods* 2021) is
+  written into `audit.json`, and a **`MODEL_CARD.md`** (intended use = RUO audit,
+  data, metrics with CIs, caveats; Mitchell et al., FAccT 2019) is emitted
+  alongside the report.
+
+### 14. Pre-flight cost estimation
 
 Before heavy loops, wall-time is estimated from `N × P_m` per modality, the fold
 count `K`, neural epochs `E`, the device (MPS/CUDA/CPU), and the core count `C`.
@@ -416,8 +444,9 @@ HPC allocations are safe.
   executive tab for PIs/clinicians and a research tab for computational
   biologists, five interactive figures, and tables that are sortable,
   text-filterable, and CSV/TSV-exportable via dependency-free vanilla JavaScript.
-- **Machine-readable**: `audit.json` (full state), `model_metrics.csv`,
-  `modality_ledger.csv`, `missingness_tests.csv`.
+- **Machine-readable**: `audit.json` (full state, including a DOME methods block),
+  `model_metrics.csv`, `modality_ledger.csv`, `missingness_tests.csv`, and
+  `MODEL_CARD.md` (a research-use-only model card).
 
 ---
 
