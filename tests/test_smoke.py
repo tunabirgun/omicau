@@ -434,6 +434,29 @@ def test_calibration_and_ci_present_for_classification():
     assert util["calibration"] is not None
 
 
+def test_organism_field_does_not_change_provenance_hash():
+    # organism is metadata, never in the hash -> omicau verify stays valid.
+    b = make_mock_dataset(task="classification", n_samples=60, seed=1)
+    c1 = mock_config(); c1.organism = "unspecified"
+    c2 = mock_config(); c2.organism = "Mus musculus"
+    h1 = align_modalities(b.modalities, b.clinical, c1).provenance_hash
+    h2 = align_modalities(b.modalities, b.clinical, c2).provenance_hash
+    assert h1 == h2
+
+
+def test_normalization_neutral_default_and_tcga_preset():
+    from omicau.config import NormalizationSpec, OmicauConfig
+    from omicau.data.alignment import normalize_names
+    d = NormalizationSpec()
+    assert d.uppercase is False and d.strip_suffix_regex == []       # neutral by default
+    assert normalize_names(["Sample-01a"], d)[0] == "Sample-01a"     # id preserved verbatim
+    tc = OmicauConfig.from_dict({"normalization": {"preset": "tcga"}}).normalization
+    assert tc.uppercase is True
+    assert normalize_names(["TCGA-AB-2802-03A"], tc)[0] == "TCGA-AB-2802"   # aliquot collapsed
+    ov = OmicauConfig.from_dict({"normalization": {"preset": "tcga", "uppercase": False}}).normalization
+    assert ov.uppercase is False                                     # explicit key overrides preset
+
+
 def test_subgroup_metric_skips_multiclass_stratum_missing_a_class():
     # a stratum lacking a class must be skipped, not scored as a wrong binary AUROC.
     import types
