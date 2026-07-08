@@ -118,14 +118,14 @@ def build_utility_ledger(
     present = [c for c in controls if c["primary"] is not None]
 
     def _sig_above_chance(c):
-        # A control leaks when it is *significantly* above chance: its 95% CI lower
-        # bound clears chance. Falls back to a fixed margin when no CI is available.
-        # (Gating on the CI *upper* bound would fire on any wide small-sample CI.)
-        if c.get("ci_low") is not None:
-            return c["ci_low"] > chance
-        return c["primary"] > alarm
+        # A control leaks if EITHER its 95% CI lower bound clears chance (a
+        # significant control) OR its point estimate clears the margin. An audit
+        # tool should err toward warning, so a leaking control with a wide CI is
+        # not silently cleared; gating on the CI *upper* bound is avoided (it would
+        # false-fire on any wide small-sample CI).
+        by_ci = c.get("ci_low") is not None and c["ci_low"] > chance
+        return by_ci or (c["primary"] > alarm)
 
-    worst_control = max((c["primary"] for c in present), default=chance)
     leaking = [c for c in present if _sig_above_chance(c)]
     leakage = bool(leaking)
     leakage_text = (

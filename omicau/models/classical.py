@@ -64,9 +64,12 @@ def _reference_key(keys: list[str]) -> str:
 
 def _run_stacking(aligned, results, ref_key, config, groups, n_jobs, seed):
     """Late-integration stacking: cross-validate a meta-learner over the
-    single-modality out-of-fold predictions. Leakage-safe because the base
-    predictions are out-of-fold and the meta-learner is itself cross-validated,
-    so the reported metric is honest (not in-sample on the OOF matrix)."""
+    single-modality out-of-fold predictions. The reported metric is honestly
+    out-of-fold -- base and meta CV share the same partition, so a meta-test
+    sample's meta-features are base predictions from models that excluded that
+    fold. It is not fully nested (base OOF is reused across meta-folds), so the
+    estimate is honest, if anything slightly conservative; treat a stacking win
+    as indicative."""
     mods = aligned.modality_names
     if len(mods) < 2:
         return None

@@ -254,7 +254,6 @@ def cross_validate_estimator(
             oof_score[np.ix_(val_idx, classes)] = proba
             preds = classes[proba.argmax(axis=1)]
             oof_pred[val_idx] = preds
-            s_arg = oof_score if n_classes > 2 else oof_score[:, 1]
             fold_metrics = score_predictions(
                 y[val_idx],
                 proba if n_classes > 2 else proba[:, 1] if proba.shape[1] > 1 else proba[:, 0],
@@ -336,6 +335,7 @@ def bootstrap_ci(result: CVResult, n_boot: int = 1000, seed: int = 42,
     task = result.task
     key = PRIMARY_METRIC[task]
     n = len(y)
+    n_classes = len(np.unique(y)) if task == "classification" else 0
     groups = None if result.oof_groups is None else np.asarray(result.oof_groups)
     rng = np.random.default_rng(seed)
     if groups is not None:
@@ -349,7 +349,9 @@ def bootstrap_ci(result: CVResult, n_boot: int = 1000, seed: int = 42,
         else:
             idx = rng.integers(0, n, size=n)
         yb = y[idx]
-        if task == "classification" and len(np.unique(yb)) < 2:
+        # require all classes present, so multiclass resamples don't silently
+        # fall to the binary metric branch in score_predictions.
+        if task == "classification" and len(np.unique(yb)) < n_classes:
             continue
         try:
             hard = pred[idx].astype(int) if task == "classification" else pred[idx]
