@@ -51,6 +51,12 @@ class CVResult:
     n_features: int = 0
     modalities: list[str] = field(default_factory=list)
     extra: dict[str, Any] = field(default_factory=dict)
+    # Pooled out-of-fold predictions (kept in-memory so uncertainty, calibration,
+    # and subgroup analyses can resample them; not serialized into audit.json).
+    oof_true: Any = None      # true labels/values, aligned to the sample order
+    oof_score: Any = None     # score feeding the primary metric (binary: P(class1); mc: proba; reg: pred)
+    oof_pred: Any = None      # hard predictions
+    oof_groups: Any = None    # patient/group ids for group-level resampling (or None)
 
     @property
     def primary(self) -> float:
@@ -78,6 +84,11 @@ class CVResult:
             "feature_importance": {k: _f(v) for k, v in self.feature_importance.items()},
             "n_splits": int(self.extra.get("n_splits", 0)),
             "device": self.extra.get("device"),
+            # per-fold spread of the primary metric -- fold dispersion, NOT a
+            # standard error (correlated folds bias it low; use the CI instead).
+            "fold_dispersion": _f(self.primary_std),
+            "ci_low": self.extra.get("ci_low"),
+            "ci_high": self.extra.get("ci_high"),
         }
 
 
@@ -277,6 +288,7 @@ def cross_validate_estimator(
         pooled_score = oof_score if n_classes > 2 else oof_score[:, 1]
         metrics = score_predictions(y, pooled_score, oof_pred.astype(int), task)
     else:
+        pooled_score = oof_pred
         metrics = score_predictions(y, oof_pred, oof_pred, task)
 
     importance: dict[str, float] = {}
@@ -294,4 +306,63 @@ def cross_validate_estimator(
         n_features=int(X.shape[1]),
         modalities=list(modalities),
         extra={"n_splits": int(k)},
+        oof_true=y,
+        oof_score=pooled_score,
+        oof_pred=oof_pred,
+        oof_groups=(np.asarray(groups) if groups is not None else None),
     )
+
+
+def bootstrap_ci(result: CVResult, n_boot: int = 1000, seed: int = 42,
+                 alpha: float = 0.05) -> tuple[float | None, float | None]:
+    """Percentile CI for a result's primary metric from its pooled OOF predictions.
+
+    Resamples whole patient/groups with replacement (falling back to samples when
+    no group column) and recomputes the primary metric each time. Group-level
+    resampling is the only bootstrap consistent with omicau's group-aware CV; the
+    per-fold std understates the true variance because folds are correlated
+    (Nadeau & Bengio, Machine Learning 52:239-281, 2003).
+    """
+    if result.oof_true is None or result.oof_score is None:
+        return None, None
+    y = np.asarray(result.oof_true)
+    score = np.asarray(result.oof_score)
+    pred = np.asarray(result.oof_pred)
+    task = result.task
+    key = PRIMARY_METRIC[task]
+    n = len(y)
+    groups = None if result.oof_groups is None else np.asarray(result.oof_groups)
+    rng = np.random.default_rng(seed)
+    if groups is not None:
+        uniq = np.unique(groups)
+        idx_by = {g: np.where(groups == g)[0] for g in uniq}
+    vals: list[float] = []
+    for _ in range(n_boot):
+        if groups is not None:
+            chosen = rng.choice(len(uniq), size=len(uniq), replace=True)
+            idx = np.concatenate([idx_by[uniq[c]] for c in chosen])
+        else:
+            idx = rng.integers(0, n, size=n)
+        yb = y[idx]
+        if task == "classification" and len(np.unique(yb)) < 2:
+            continue
+        try:
+            hard = pred[idx].astype(int) if task == "classification" else pred[idx]
+            v = score_predictions(yb, score[idx], hard, task).get(key, np.nan)
+            if np.isfinite(v):
+                vals.append(float(v))
+        except (ValueError, FloatingPointError):
+            continue
+    if len(vals) < 20:
+        return None, None
+    return (float(np.percentile(vals, 100 * alpha / 2)),
+            float(np.percentile(vals, 100 * (1 - alpha / 2))))
+
+
+def attach_cis(results: list[CVResult], n_boot: int = 1000, seed: int = 42) -> list[CVResult]:
+    """Compute and cache a bootstrap CI on each result's primary metric."""
+    for r in results:
+        lo, hi = bootstrap_ci(r, n_boot=n_boot, seed=seed)
+        r.extra["ci_low"] = lo
+        r.extra["ci_high"] = hi
+    return results

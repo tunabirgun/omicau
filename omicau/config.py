@@ -59,6 +59,8 @@ class CVSpec:
     n_splits: int = 5
     seed: int = 42
     shuffle: bool = True
+    #: Group-level bootstrap resamples for the primary-metric confidence interval.
+    n_bootstrap: int = 1000
 
 
 @dataclass

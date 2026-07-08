@@ -22,7 +22,7 @@ from sklearn.ensemble import (
 )
 from sklearn.linear_model import LogisticRegression, Ridge
 
-from omicau.models.base import CVResult, PRIMARY_METRIC, cross_validate_estimator
+from omicau.models.base import CVResult, PRIMARY_METRIC, attach_cis, cross_validate_estimator
 
 
 def resolve_cores(config) -> int:
@@ -121,6 +121,8 @@ def run_classical_benchmarks(aligned, config) -> dict[str, Any]:
         if config.controls.random_noise:
             Xn = rng.normal(size=X_all.shape)
             controls.append(run("control::random_noise", Xn, feats_all, mods))
+
+    attach_cis(results + controls, n_boot=config.cv.n_bootstrap, seed=seed)
 
     return {
         "task": task,

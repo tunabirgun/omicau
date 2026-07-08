@@ -282,14 +282,24 @@ def fig_performance(models: dict, include_js: bool) -> str:
     groups: dict[str, dict[str, list]] = {}
     for r in rows:
         label, color = _classify_model(r["name"])
-        groups.setdefault(label, {"x": [], "y": [], "e": [], "c": color})
+        groups.setdefault(label, {"x": [], "y": [], "eplus": [], "eminus": [], "c": color})
         groups[label]["x"].append(r["name"])
-        groups[label]["y"].append(r["primary"])
-        groups[label]["e"].append(r.get("primary_std") or 0.0)
+        p = r["primary"]
+        groups[label]["y"].append(p)
+        # 95% bootstrap CI (asymmetric) where available; fall back to fold dispersion.
+        lo, hi = r.get("ci_low"), r.get("ci_high")
+        if lo is not None and hi is not None:
+            groups[label]["eplus"].append(max(0.0, hi - p))
+            groups[label]["eminus"].append(max(0.0, p - lo))
+        else:
+            disp = r.get("fold_dispersion") or r.get("primary_std") or 0.0
+            groups[label]["eplus"].append(disp)
+            groups[label]["eminus"].append(disp)
     fig = go.Figure()
     for label, g in groups.items():
         fig.add_bar(name=label, x=g["x"], y=g["y"], marker_color=g["c"],
-                    error_y=dict(type="data", array=g["e"], visible=True, color="#64748B"))
+                    error_y=dict(type="data", symmetric=False, array=g["eplus"],
+                                 arrayminus=g["eminus"], visible=True, color="#64748B"))
     chance = 0.5 if models.get("task") == "classification" else 0.0
     fig.add_hline(y=chance, line_dash="dot", line_color="#94A3B8",
                   annotation_text="chance", annotation_position="top left")
@@ -427,13 +437,15 @@ def _write_csv(path: Path, header: list[str], rows: list[list[Any]]) -> None:
 
 def _model_rows(models: dict) -> tuple[list[str], list[list[Any]]]:
     metric = models.get("primary_metric", "score")
-    header = ["model", "type", metric, f"{metric}_std", "n_features", "modalities", "folds"]
+    header = ["model", "type", metric, "95% CI", "n_features", "modalities", "folds"]
     rows = []
     allr = list(models.get("classical", [])) + list(models.get("neural", {}).get("results", []))
     allr += list(models.get("controls", []))
     for r in allr:
         label, _ = _classify_model(r["name"])
-        rows.append([r["name"], label, r.get("primary"), r.get("primary_std"),
+        lo, hi = r.get("ci_low"), r.get("ci_high")
+        ci = f"{lo:.3f}–{hi:.3f}" if (lo is not None and hi is not None) else "—"
+        rows.append([r["name"], label, r.get("primary"), ci,
                      r.get("n_features"), "+".join(r.get("modalities", [])), r.get("n_splits")])
     return header, rows
 
@@ -481,7 +493,7 @@ def build_report(audit: dict, out_dir: str | Path, config=None) -> dict[str, Pat
     attr_html = fig_attribution(models, include_js=False)
 
     # -- tables ------------------------------------------------------------ #
-    model_table = render_table("tbl-models", mheader, mrows, numeric_cols={2, 3, 4, 6})
+    model_table = render_table("tbl-models", mheader, mrows, numeric_cols={2, 4, 6})
     ledger_table = render_table("tbl-ledger", led_header, led_rows, numeric_cols={1, 2, 3, 4, 5})
     diag_table = render_table("tbl-diag", diag_header, diag_rows, numeric_cols={3, 4, 5})
     attr_rows, attr_header = _attr_rows(models)

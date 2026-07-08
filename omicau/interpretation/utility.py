@@ -61,22 +61,31 @@ def _prep_cka(X: np.ndarray) -> np.ndarray | None:
 
 
 def _paired_gain(fusion_folds: list[float], loo_folds: list[float]) -> tuple[float, float]:
-    """Mean per-fold (fusion - leave_one_out) delta and paired-test p-value."""
+    """Mean per-fold (fusion - leave_one_out) delta and its p-value.
+
+    Uses the Nadeau-Bengio corrected resampled t-test rather than a plain paired
+    t-test: k-fold train sets overlap, so the naive fold-difference variance is
+    biased low and the uncorrected test has badly inflated Type-I error (Nadeau &
+    Bengio, Machine Learning 52:239-281, 2003). The variance is inflated by
+    (1/k + n_test/n_train); for k-fold, n_test/n_train = 1/(k-1).
+    """
     a = np.asarray(fusion_folds, float)
     b = np.asarray(loo_folds, float)
     n = min(len(a), len(b))
     a, b = a[:n], b[:n]
     mask = np.isfinite(a) & np.isfinite(b)
-    if mask.sum() < 2:
+    k = int(mask.sum())
+    if k < 2:
         return float("nan"), float("nan")
     d = a[mask] - b[mask]
     mean_d = float(d.mean())
-    if np.ptp(d) == 0:
+    var_d = float(d.var(ddof=1))
+    if var_d <= 0:
         return mean_d, float("nan")
-    try:
-        p = float(stats.ttest_rel(a[mask], b[mask]).pvalue)
-    except (ValueError, FloatingPointError):
-        p = float("nan")
+    corr = 1.0 / k + 1.0 / (k - 1)            # Nadeau-Bengio variance inflation
+    se = float(np.sqrt(corr * var_d))
+    t = mean_d / se
+    p = float(2 * stats.t.sf(abs(t), df=k - 1))
     return mean_d, p
 
 
@@ -142,10 +151,10 @@ def build_utility_ledger(
             _paired_gain(fusion_ref.fold_primary, loo.fold_primary)
             if fusion_ref and loo else (float("nan"), float("nan"))
         )
-        gain_n = float("nan")
+        gain_n, gain_n_p = float("nan"), float("nan")
         nn_loo = nn.get(f"neural::FUSION-minus-{m}")
         if nn_fusion and nn_loo:
-            gain_n = nn_fusion.primary - nn_loo.primary
+            gain_n, gain_n_p = _paired_gain(nn_fusion.fold_primary, nn_loo.fold_primary)
 
         # redundancy: highest CKA with a modality that is individually stronger.
         red_partner, red_cka = None, float("nan")
@@ -176,6 +185,7 @@ def build_utility_ledger(
             "marginal_gain_classical": _r(gain_c),
             "marginal_gain_p": _r(gain_c_p),
             "marginal_gain_neural": _r(gain_n),
+            "marginal_gain_neural_p": _r(gain_n_p),
             "redundancy_max_cka": _r(red_cka),
             "redundant_with": red_partner,
             "batch_structured": batch_structured,

@@ -25,6 +25,7 @@ import torch.nn as nn
 from omicau.models.base import (
     CVResult,
     PRIMARY_METRIC,
+    attach_cis,
     make_cv_splitter,
     safe_n_splits,
     score_predictions,
@@ -323,6 +324,7 @@ def _neural_cv(
         pooled = oof_score[:, 1] if n_classes == 2 else oof_score
         metrics = score_predictions(y, pooled, oof_pred.astype(int), task)
     else:
+        pooled = oof_pred
         metrics = score_predictions(y, oof_pred, oof_pred, task)
 
     importance: dict[str, float] = {}
@@ -338,6 +340,8 @@ def _neural_cv(
         fold_primary=[float(v) for v in fold_primary], feature_importance=importance,
         n_features=int(sum(feature_dims.values())), modalities=list(modalities),
         extra={"n_splits": int(k), "device": device.type},
+        oof_true=y, oof_score=pooled, oof_pred=oof_pred,
+        oof_groups=(np.asarray(groups) if groups is not None else None),
     )
 
 
@@ -367,6 +371,7 @@ def run_neural_benchmark(aligned, config) -> dict[str, Any]:
                 _neural_cv(f"neural::FUSION-minus-{m}", aligned, subset, config, device, compute_importance=False)
             )
 
+    attach_cis(results, n_boot=config.cv.n_bootstrap, seed=config.seed)
     return {
         "enabled": True,
         "device": device.type,
