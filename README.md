@@ -161,11 +161,18 @@ Field notes:
   table's first column / index). The same ids must appear (after normalization) in
   each modality matrix; samples are intersected across all files.
 - **`target`** — the clinical column to predict. `task: "auto"` infers
-  classification vs regression; set `"classification"` / `"regression"` to force it.
+  classification vs regression; set `"classification"`, `"regression"`, or
+  `"survival"` to force it.
+- **`time`** / **`event`** (survival only) — for `task: "survival"`, the numeric
+  time-to-event column and the event indicator (1 = event, 0 = right-censored);
+  `target` is ignored. Scored by Harrell's concordance index.
 - **`group`** (optional, recommended) — a column such as patient id, so multiple
   samples from one patient never split across train and test (leakage-safe CV).
+  Accepts a **list** of columns (e.g. `["animal", "run"]`) that combine into the
+  coarsest independent unit for nested / repeated-measure designs.
 - **`batch`** (optional) — a column such as sequencing batch or site; drives the
-  batch-effect diagnostics.
+  batch-effect diagnostics (and the opt-in `cv.batch_blocked` cross-site stress
+  test and `cv.batch_adjust_sensitivity` in-fold sensitivity probe).
 - Only rows with a non-missing target are kept. Paths are resolved **relative to the
   config file**, so keep the config next to your matrices.
 
@@ -397,10 +404,29 @@ is visible.
 ### 12. Metrics
 
 Classification: AUROC, AUPRC (average precision), accuracy, balanced accuracy,
-F1, Matthews correlation. Regression: R², RMSE, MAE, Spearman ρ, Pearson r. All
-guard against degenerate folds (single-class, zero-variance) and return `NaN`
-rather than raising. The primary metric is AUROC (classification) or R²
-(regression).
+F1, Matthews correlation. Regression: R², RMSE, MAE, Spearman ρ, Pearson r.
+Survival: Harrell's concordance index (a ridge-penalised Cox model with in-fold
+PCA reduction; dependency-light — no scikit-survival/lifelines, so it ships in the
+base install). All guard against degenerate folds and return `NaN` rather than
+raising. The primary metric is AUROC (classification), R² (regression), or the
+C-index (survival).
+
+### 12b. Task types and optional capabilities
+
+- **Survival / time-to-event** (`task: "survival"`) — Cox + C-index under the same
+  leakage-safe group-aware CV, controls, and bootstrap CIs.
+- **Single-modality runs** are a first-class *honesty check*: with one layer there
+  is no fusion to benchmark, so the report drops the inert fusion/redundancy panels
+  and verifies the single layer's signal is real and leakage-free.
+- **Composite grouping** (`group: [ ... ]`) for nested / repeated-measure designs.
+- **Cross-organism data** and the **Expression Atlas** hub, with an opt-in
+  `--normalization tmm|median_of_ratios` (whole-matrix, caveated; `log2cpm` default).
+- **Batch-adjustment sensitivity probe** (`cv.batch_adjust_sensitivity`) — an opt-in,
+  in-fold "does the signal survive batch removal?" check, hard-gated off when batch
+  is confounded with the outcome. It never corrects your data ("diagnose, don't
+  correct").
+
+All of the above are exposed in both the CLI/config and the no-code web UI.
 
 Every model's primary metric carries a **group-level bootstrap 95% confidence
 interval** (resampling whole patient groups, consistent with the group-aware CV);
