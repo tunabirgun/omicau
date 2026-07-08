@@ -405,12 +405,19 @@ the managed `WORKSPACE_CDR` / `WORKSPACE_BUCKET` / `GOOGLE_PROJECT` variables;
 data cannot be exported and off-platform sessions raise a clear error. No
 participant-level data is ever transmitted off-platform.
 
-`omicau` was also validated on external datasets that are **not** hubs: the
-MOGONET benchmark (Wang et al., *Nat Commun* 2021) — ROSMAP (Alzheimer's, three
-omics, fusion AUROC ≈ 0.80) and BRCA (PAM50 subtype, three omics, fusion AUROC
-≈ 0.95, with methylation and miRNA correctly flagged redundant with RNA) — and a
-GEO microarray series (GSE19804 lung tumor-vs-normal, 120 samples × ~54k probes,
-AUROC ≈ 0.99). All controls scored at chance with no leakage flagged.
+`omicau` was also validated on four external datasets that are **not** hubs,
+spanning binary, multi-class, and regression tasks:
+
+- **ROSMAP** (MOGONET; Alzheimer's, three omics) — fusion AUROC ≈ 0.80.
+- **BRCA** (MOGONET; PAM50 subtype, three omics, 5-class) — fusion AUROC ≈ 0.95,
+  with methylation and miRNA correctly flagged redundant with RNA.
+- **GSE19804** (GEO microarray; lung tumor-vs-normal, 120 samples × ~54k probes) —
+  AUROC ≈ 0.99.
+- **GSE41037** (GEO; an epigenetic clock — whole-blood DNA methylation → age,
+  720 samples × ~27.6k CpGs, **regression**) — R² ≈ 0.88, MAE ≈ 3.6 years.
+
+Across all four, the shuffled-target / shuffled-feature / random-noise controls
+scored at chance (negative R² for the regression), and no leakage was flagged.
 
 ---
 
