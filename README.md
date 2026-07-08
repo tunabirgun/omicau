@@ -12,6 +12,8 @@ The core runs fully offline with no LLM connection and no orchestration
 framework. Optional tiers (an LLM interpretation plugin, remote data hubs)
 degrade gracefully when their dependencies or network are absent.
 
+📖 **Documentation:** https://tunabirgun.github.io/omicau/
+
 ---
 
 ## What it answers
