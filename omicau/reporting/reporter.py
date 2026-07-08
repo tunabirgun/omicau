@@ -2,7 +2,7 @@
 
 Produces a single self-contained ``.html`` file (Plotly bundled inline, so it
 works offline after the one-time Google Fonts load), styled with an editorial
-serif aesthetic (EB Garamond + JetBrains Mono) and a color-blind-safe Okabe-Ito
+sans-serif aesthetic (IBM Plex Sans + IBM Plex Mono) and a color-blind-safe Okabe-Ito
 palette. Every data grid is sortable, text-filterable, and CSV/TSV-exportable via
 dependency-free vanilla JavaScript. The workflow flowchart is embedded as a
 scaling inline SVG. Alongside the dashboard it writes a raw JSON metadata object
@@ -45,7 +45,7 @@ AMBER = OKABE_ITO["orange"]
 INK = "#1A202C"
 BORDER = "#E2E8F0"
 
-PLOTLY_FONT = "EB Garamond, Georgia, serif"
+PLOTLY_FONT = "IBM Plex Sans, -apple-system, system-ui, sans-serif"
 PLOTLY_CONFIG = {"responsive": True, "displaylogo": False,
                  "toImageButtonOptions": {"format": "svg", "scale": 2}}
 
@@ -163,7 +163,7 @@ def flowchart_svg(width: int = 900) -> str:
         )
         parts.append(
             f'<text x="{cx}" y="{y + 46}" text-anchor="middle" font-size="12.5" '
-            f'font-family="JetBrains Mono, monospace" fill="#4A5568">{html.escape(sub)}</text>'
+            f'font-family="IBM Plex Mono, monospace" fill="#4A5568">{html.escape(sub)}</text>'
         )
         if i < n - 1:
             ay = y + box_h
@@ -260,7 +260,7 @@ def fig_cka(util: dict, include_js: bool) -> str:
         colorscale=[[0, "#F7FAFC"], [0.5, SLATE], [1, COBALT]],
         colorbar=dict(title="CKA"),
         text=[[f"{v:.2f}" for v in row] for row in z], texttemplate="%{text}",
-        textfont=dict(family="JetBrains Mono, monospace", size=12),
+        textfont=dict(family="IBM Plex Mono, monospace", size=12),
     ))
     _base_layout(fig)
     fig.update_layout(margin=dict(l=90, r=30, t=20, b=90), showlegend=False)

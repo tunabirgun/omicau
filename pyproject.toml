@@ -36,6 +36,8 @@ dependencies = [
 llm = ["anthropic>=0.39"]
 data = ["requests>=2.31", "google-cloud-storage>=2.10", "cptac>=1.5"]
 yaml = ["pyyaml>=6.0"]
+# Opt-in local web UI (localhost only). The core stays a CLI tool without it.
+ui = ["fastapi>=0.110", "uvicorn>=0.27", "python-multipart>=0.0.9"]
 dev = ["pytest>=7.4", "pytest-cov>=4.1"]
 all = [
     "anthropic>=0.39",
@@ -43,6 +45,9 @@ all = [
     "google-cloud-storage>=2.10",
     "cptac>=1.5",
     "pyyaml>=6.0",
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+    "python-multipart>=0.0.9",
     "pytest>=7.4",
 ]
 
@@ -54,6 +59,9 @@ Homepage = "https://github.com/tunabirgun/omicau"
 
 [tool.setuptools.packages.find]
 include = ["omicau*"]
+
+[tool.setuptools.package-data]
+"omicau.ui" = ["static/*"]
 
 [tool.pytest.ini_options]
 addopts = "-q"

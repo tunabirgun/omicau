@@ -368,7 +368,7 @@ HPC allocations are safe.
 
 - **Dashboard** (`report.html`): a single self-contained file (Plotly bundled
   inline, so it works offline after the one-time Google Fonts load). Editorial
-  serif typography (EB Garamond + JetBrains Mono), a color-blind-safe Okabe-Ito
+  humanist sans typography (IBM Plex Sans + IBM Plex Mono), a color-blind-safe Okabe-Ito
   palette (cobalt `#0072B2` = standard, vermillion `#D55E00` = warning), an
   executive tab for PIs/clinicians and a research tab for computational
   biologists, five interactive figures, and tables that are sortable,
