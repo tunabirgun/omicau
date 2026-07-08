@@ -25,6 +25,7 @@
     <a class="nav" href="#inputs">Your data</a>
     <a class="nav" href="#organisms">Any organism</a>
     <a class="nav" href="#ui">No-code UI</a>
+    <a class="nav" href="#llm">AI plain-language verdict</a>
   </div>
   <div class="nav-group">
     <div class="h">Reading the report</div>
@@ -220,6 +221,50 @@ omicau ui        # opens a browser wizard on 127.0.0.1</code></pre>
     <img src="assets/ui-clinical.png" alt="omicau UI — clinical column mapping with live consequences" onclick="lb(this)">
     <figcaption>Figure 2 — the wizard's clinical-mapping step: each column choice shows its live consequence (class balance, the leakage meaning of the patient group).</figcaption>
   </figure>
+</section>
+
+<section id="llm">
+  <h2>AI plain-language verdict <span class="pill">optional</span></h2>
+  <p>omicau always writes a deterministic, rule-based summary of the audit. On top of that you can ask an AI model to turn the numbers into a short plain-English verdict — naming the best fusion model, whether combining layers helped, which layers to trust, and what to do next. This is <strong>optional and additive</strong>: skip it and nothing changes; the built-in summary and every figure are still produced.</p>
+
+  <div class="callout repro"><span class="lbl">✓ Only summary statistics leave the machine</span>The model receives the audit's numeric diagnostics (scores, confidence intervals, batch/missingness flags) — <strong>never your raw matrices, sample IDs, or clinical values</strong>. Choose a <em>local</em> model and even those summary numbers stay on your computer. Your API key is held in memory for the single run only: it is never written to the config, the report, the provenance hash, any log, or disk, and it is scrubbed from any error message.</div>
+
+  <h3>Pick a provider</h3>
+  <p>The same audit; you choose who writes the prose. Cloud models need an API key you paste once; a local model needs nothing but the server address.</p>
+  <div class="tablewrap"><table>
+    <tr><th>Choice</th><th>Provider</th><th>Default model</th><th>Get a key</th></tr>
+    <tr><td><strong>Claude</strong></td><td>Anthropic</td><td><code>claude-sonnet-5</code></td><td>console.anthropic.com → API Keys</td></tr>
+    <tr><td><strong>ChatGPT</strong></td><td>OpenAI</td><td><code>gpt-5.5</code></td><td>platform.openai.com → API keys</td></tr>
+    <tr><td><strong>Gemini</strong></td><td>Google</td><td><code>gemini-3.5-flash</code></td><td>aistudio.google.com → Get API key</td></tr>
+    <tr><td><strong>Local</strong></td><td>Ollama / LM&nbsp;Studio / vLLM</td><td>your choice (e.g. <code>llama3.1</code>)</td><td>none — runs offline</td></tr>
+  </table></div>
+  <p>The model id is a free-text field prefilled with a sensible default — paste any model your account or local server supports.</p>
+
+  <h3>In the no-code UI</h3>
+  <p>On the <strong>Options</strong> step, tick <em>“Add an AI plain-English verdict”</em>, pick a service, and either paste your key (cloud) or confirm the server address (local). Run the audit as usual; the verdict appears in the report next to the rule-based summary.</p>
+
+  <h3 id="local-llm">Easiest path: a local model, no key, fully offline</h3>
+  <div class="callout plain"><span class="lbl">ℹ For non-coders</span>You do not need an account or a credit card. Install one small app, download one model, and omicau will write the verdict on your own machine — nothing leaves your computer.</div>
+  <ol>
+    <li>Install <a href="https://ollama.com">Ollama</a> (Windows / macOS / Linux) and open it.</li>
+    <li>In a terminal, download a model once: <code>ollama pull llama3.1</code></li>
+    <li>In omicau's Options step, choose <strong>“Local model on this computer”</strong>. The server address <code>http://localhost:11434/v1</code> is prefilled. Leave the model as <code>llama3.1</code> (or whatever you pulled).</li>
+    <li>Run the audit. The verdict is generated locally.</li>
+  </ol>
+
+  <h3>From the CLI / config</h3>
+  <p>The UI and CLI produce identical results. In <code>config.json</code>, add an <code>llm</code> block; the key is read from a named environment variable (never stored in the file):</p>
+  <pre><code>"llm": {
+  "enabled": true,
+  "provider": "anthropic",              // anthropic | openai | gemini | local
+  "model": "claude-sonnet-5",
+  "api_key_env": "ANTHROPIC_API_KEY",   // env-var NAME — never the key itself
+  "base_url": null                       // set for local, e.g. http://localhost:11434/v1
+}</code></pre>
+  <pre><code>export ANTHROPIC_API_KEY=sk-...      # cloud providers read the named env var
+omicau run --config config.json      # local models need no key
+pip install ".[llm]"                  # installs the anthropic + openai SDKs</code></pre>
+  <div class="callout plain"><span class="lbl">ℹ Graceful fallback</span>If the provider SDK is not installed, the key is missing, or the model refuses or errors, omicau silently falls back to its deterministic rule-based summary — the audit never fails because of the optional verdict.</div>
 </section>
 
 <section id="report">

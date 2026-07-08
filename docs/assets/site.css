@@ -116,7 +116,7 @@ code,kbd,.mono{font-family:var(--mono);font-size:.9em}
   color:var(--ink-700);border-radius:var(--radius);padding:7px 12px;cursor:pointer}
 .theme-btn:hover{background:var(--sunken)}
 
-.content{padding:56px 64px;max-width:calc(var(--measure) + 128px)}
+.content{padding:56px 64px;max-width:calc(var(--measure) + 128px);min-width:0}
 .content section{scroll-margin-top:24px}
 
 /* ---- typography ---- */
