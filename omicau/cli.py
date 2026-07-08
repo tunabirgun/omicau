@@ -161,6 +161,18 @@ def estimate_runtime(aligned, config, device_type: str, cores: int) -> dict[str,
 # --------------------------------------------------------------------------- #
 # Orchestration
 # --------------------------------------------------------------------------- #
+_STEP_LABEL = {
+    "ingest_align": "Reading and aligning data layers",
+    "diagnostics_missingness": "Checking missing-value patterns",
+    "diagnostics_batch": "Checking for batch effects",
+    "classical_benchmarks": "Benchmarking standard models",
+    "neural_benchmark": "Benchmarking the neural fusion model",
+    "utility_ledger": "Scoring each layer's usefulness",
+    "interpretation": "Writing the plain-language verdict",
+    "report": "Building the dashboard and files",
+}
+
+
 def _log_runtime(log_path: Path, step: str, elapsed: float, device_tag: str) -> None:
     stamp = time.strftime("%Y-%m-%d %H:%M:%S")
     line = f"{stamp}\t{step}\t{elapsed:.2f}s\t{device_tag}\n"
@@ -201,12 +213,12 @@ def run_audit(config, *, cores: int, device: str, llm: bool | None,
         result = fn()
         dt = time.perf_counter() - t
         _log_runtime(log_path, step, dt, device_tag)
-        echo(f"  · {step}: {dt:.1f}s")
+        echo(f"  · {_STEP_LABEL.get(step, step)}: {dt:.1f}s")
         return result
 
     echo("Ingesting and aligning modalities…")
     aligned = timed("ingest_align", lambda: load_and_align(config))
-    echo(f"  provenance SHA-256: {aligned.provenance_hash}")
+    echo(f"  provenance SHA-256 (a fingerprint of these exact inputs): {aligned.provenance_hash}")
     echo(f"  {aligned.n_samples} samples · {aligned.task} · modalities {aligned.feature_counts()}")
 
     cost = estimate_runtime(aligned, config, dev.type, resolved_cores)

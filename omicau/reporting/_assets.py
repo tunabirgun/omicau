@@ -18,9 +18,30 @@ GLOSSARY = {
     "Batch effect": "A technical signature from when or where samples were processed that a model can mistake for real biology.",
     "Missingness bias (MNAR)": "When which values are missing is itself informative, so gaps in the data can fake a real signal.",
     "Control baseline (shuffled target)": "The same model trained on scrambled labels. It should score near chance; if it beats chance, the pipeline is leaking.",
-    "Group-aware cross-validation / leakage": "Keeping each patient's samples entirely in training or entirely in testing, never split across both, so scores are not secretly inflated.",
+    "Group-aware cross-validation / leakage": "Keeping each subject's samples (e.g. all samples from one patient, animal, or plant) entirely in training or entirely in testing, never split across both, so scores are not secretly inflated.",
     "Provenance hash": "A SHA-256 fingerprint of the exact inputs and settings. If a byte changes, the hash changes, proving the report matches the data.",
-    "Layer verdicts": "One word per data type: predictive (adds real signal), redundant (repeats another), batch-confounded (technical artifact), or control-like (no better than noise)."
+    "Layer verdicts": "One word per data type: predictive (adds real signal), redundant (repeats another), batch-confounded (technical artifact), or control-like (no better than noise).",
+    "AUPRC": "A 0-to-1 score for finding the rare positive cases. Its no-skill baseline is not 0.5 but the fraction of cases that are positive, so judge it against that prevalence line.",
+    "Prevalence": "The share of samples that are positive (have the outcome). It sets the no-skill baseline for AUPRC.",
+    "Balanced accuracy": "Accuracy averaged so each class counts equally, so a model cannot look good just by always guessing the common class.",
+    "Chance level": "The score a model gets from guessing with no real information — about 0.5 for a two-group AUROC, and the prevalence for AUPRC.",
+    "Discrimination": "Whether the model ranks a true positive above a true negative (what AUROC measures). It says nothing about whether the predicted probabilities are numerically right.",
+    "Calibration": "Whether a predicted probability matches reality: among cases given 70%, about 70% should actually be positive. A model can rank well yet still report wrong probabilities.",
+    "Brier score": "The average squared error of the predicted probabilities. Lower is better; it rewards being both correct and honestly confident.",
+    "Expected calibration error (ECE)": "The average gap between predicted probability and observed event rate across probability bins. Lower is better; 0 is perfect calibration.",
+    "Cross-validation": "Rotating which samples are held out for testing so every sample is scored by a model that never saw it during training.",
+    "Held-out (out-of-fold)": "Scored on samples the model was not trained on. Only held-out scores are trustworthy; scoring on training data flatters the model.",
+    "Leakage": "When information from the test samples sneaks into training, so scores look great in-house but collapse on new data.",
+    "Bootstrap 95% confidence interval": "A range for the score obtained by re-drawing the samples many times with replacement; it shows how much the score would wobble on a similar dataset.",
+    "Optimism gap": "How much the standard estimate overstates performance versus a harder test on an unseen batch. A large gap warns the headline score will not hold on new data.",
+    "Cross-site stress test (batch-blocked)": "Testing on a batch the model never trained on, which estimates how it will do at a new site or run — usually harder than standard cross-validation.",
+    "Marginal gain": "What one layer adds on top of all the others: the combined score minus the score with that layer removed. Near zero means the layer is redundant.",
+    "Confounding": "A third factor (often processing batch) that drives both a data layer and the outcome, so the layer's apparent signal is really the artifact.",
+    "Permutation importance": "How much the score drops when one feature's values are shuffled. A bigger drop means the model relied on that feature more.",
+    "Collinearity (unconditional importance)": "When features move together, importance gets shared or double-counted, so a shuffled-one-at-a-time ranking can mislead. Read it as indicative, not causal.",
+    "Stacking (late fusion)": "Combining layers by letting a small model learn how to weigh each layer's separate prediction, rather than merging their raw features.",
+    "Reference estimator": "The single algorithm (e.g. random forest) used consistently across layers so comparisons reflect the data, not a change of method.",
+    "DOME": "A standard checklist (Data, Optimization, Model, Evaluation) for reporting machine learning in biology so a run can be judged and reproduced.",
 }
 
 SECTION_COPY = {
@@ -36,7 +57,7 @@ SECTION_COPY = {
     },
     "redundancy": {
         "what": "Whether the data types carry overlapping information rather than each contributing something new.",
-        "how_to_read": "High similarity (CKA near 1) between two layers means they largely repeat each other; low values mean each adds a distinct view.",
+        "how_to_read": "High overlap (a similarity score, CKA, near 1) between two layers means they largely repeat each other; low values mean each adds a distinct view.",
         "what_to_do": "Drop or deprioritize layers that mostly duplicate another to cut cost and simplify the model."
     },
     "missingness": {
@@ -63,6 +84,11 @@ SECTION_COPY = {
         "what": "A per-layer scorecard rating each data type as predictive, redundant, batch-confounded, or control-like.",
         "how_to_read": "Each row shows a layer's standalone score, what it adds on top of the others, and its overlap with them.",
         "what_to_do": "Keep the predictive layers, prune the redundant ones, and fix or discard batch-confounded and control-like ones."
+    },
+    "calibration": {
+        "what": "Whether the model's predicted probabilities are numerically honest, not just correctly ranked.",
+        "how_to_read": "Points on the diagonal mean a predicted 70% really happens ~70% of the time; below the line means over-confident.",
+        "what_to_do": "Recalibrate before treating any probability as a subject-level risk."
     }
 }
 

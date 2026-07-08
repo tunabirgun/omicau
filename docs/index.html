@@ -18,10 +18,12 @@
   <div class="tagline">multi-omics audit &amp; fusion benchmarking</div>
   <div class="nav-group">
     <div class="h">Start here</div>
+    <a class="nav" href="#start-here">Not a statistician?</a>
     <a class="nav" href="#overview">Overview</a>
     <a class="nav" href="#install">Installation</a>
     <a class="nav" href="#quickstart">Quick start</a>
     <a class="nav" href="#inputs">Your data</a>
+    <a class="nav" href="#organisms">Any organism</a>
     <a class="nav" href="#ui">No-code UI</a>
   </div>
   <div class="nav-group">
@@ -50,6 +52,33 @@
 </nav>
 
 <main class="content">
+
+<section id="start-here">
+  <div class="eyebrow">New to this · No stats background needed</div>
+  <h2>Not a statistician? Start here</h2>
+
+  <div class="callout plain" style="margin-top:4px">
+    <span class="lbl">ℹ omicau in three sentences</span>
+    You give omicau one table of numbers per data type (say RNA and protein) plus a column saying what each sample <em>is</em> (tumor vs. normal, responder vs. non-responder, a measured value). It checks whether <strong>combining</strong> those data types predicts that outcome better than the single best one alone, and whether the apparent signal is real or an artifact of how the data was collected. It hands back a one-page verdict in plain words, colour-coded from <span class="pill pass">✓ trust</span> to <span class="pill warn">▲ don't</span>.
+  </div>
+
+  <h3>The one figure to read</h3>
+  <p>Open <code>report.html</code> and read the <strong>executive summary</strong> tab first — nothing else. It has three parts, top to bottom:</p>
+  <ul>
+    <li><strong>The answer strip</strong> — three questions, one plain answer each: <em>Does combining layers help? · Is the data trustworthy? · What should you do next?</em></li>
+    <li><strong>The verdict</strong> — one paragraph naming the best model, its score, and whether combining actually beat using one data type alone.</li>
+    <li><strong>The run report card</strong> — a <span class="pill pass">pass</span> / <span class="pill caution">caution</span> / <span class="pill warn">fail</span> checklist telling you how far to trust the run <em>before</em> you trust any number in it.</li>
+  </ul>
+  <p>If the report card shows a <span class="pill warn">fail</span>, stop and read why — a number sitting above a failed check is not a result. Every term on the page has an <strong>ⓘ</strong> you can hover for a plain definition.</p>
+
+  <h3>What this does <em>not</em> tell you</h3>
+  <div class="callout warn">
+    <span class="lbl">⚠ Do not conclude</span>
+    A good score means the <em>data</em> carries predictive signal for this outcome under cross-validation — nothing more. It is <strong>not</strong> a prediction about any individual, <strong>not</strong> a diagnosis, and <strong>not</strong> a clinical decision. It does not say which genes or proteins <em>cause</em> the outcome (the feature ranking is indicative, not causal). And a result is only as trustworthy as the report card allows — a wide confidence interval or a flagged batch effect means "not proven," not "proven."
+  </div>
+
+  <p style="margin-top:18px">Ready for more? <a href="#report">Reading the report</a> walks through every panel; <a href="#trust">Is my result trustworthy?</a> is the full trust checklist.</p>
+</section>
 
 <section id="overview" class="hero">
   <div class="eyebrow">Multi-omics audit · Fusion benchmarking</div>
@@ -115,7 +144,7 @@ omicau verify --config demo/config.json          # recompute the provenance hash
     <tr><td>miRNA</td><td>log-normalized expression</td><td>miRBase (hsa-miR-…)</td><td>same shape as RNA-seq</td></tr>
     <tr><td>Somatic mutation</td><td>binary 0/1 or count</td><td>gene</td><td>near-constant columns dropped</td></tr>
   </table></div>
-  <p>The clinical table is one row per sample: a sample-id column, the target, and optional <code>group</code> (e.g. patient id, for leakage-safe splitting) and <code>batch</code> columns. A single modality is allowed — cross-modality comparisons are simply skipped.</p>
+  <p>The clinical table is one row per sample: a sample-id column, the target, and optional <code>group</code> (e.g. patient id, for leakage-safe splitting) and <code>batch</code> columns. A single modality is allowed — cross-modality comparisons are simply skipped. <strong>The feature-id examples above are human, but any organism's identifiers work unchanged — see <a href="#organisms">Model &amp; non-model organisms</a>.</strong></p>
   <pre><code>{
   "run_name": "my_study", "output_dir": "run",
   "modalities": [
@@ -127,6 +156,57 @@ omicau verify --config demo/config.json          # recompute the provenance hash
                "batch": "batch", "task": "auto"},
   "cv": {"n_splits": 5, "seed": 42, "n_bootstrap": 1000}
 }</code></pre>
+</section>
+
+<section id="organisms">
+  <h2>Model &amp; non-model organisms</h2>
+  <div class="callout plain"><span class="lbl">ℹ In plain terms</span>omicau makes no assumptions about biology. It reads your tables as numbers with row and column labels — it never looks up a gene, a probe, or a species. Mouse, zebrafish, yeast, <em>Arabidopsis</em>, a crop, livestock, or a non-model organism with no reference at all: if you can write a <code>samples × features</code> matrix and a column saying what each sample is, omicau runs on it unchanged.</div>
+
+  <h3>Feature IDs are yours to name</h3>
+  <p>Feature identifiers are treated as opaque strings — <code>Zm00001d027230</code>, <code>FBgn0000490</code>, <code>AT1G01010</code>, an OTU id, a peak <code>m/z</code>, or a de-novo transcript name all work identically to a human gene symbol. Nothing is mapped, matched to a reference, or validated against a species. Only <em>sample</em> names are matched across your files (to line the tables up); feature names are carried through verbatim.</p>
+
+  <h3>Sample-name normalization is off by default</h3>
+  <div class="callout plain"><span class="lbl">ℹ Your ids are kept verbatim</span>By default omicau does not alter your sample names beyond trimming stray whitespace — case is preserved and no suffix is stripped, so ids like <code>WT_rep3</code>, <code>Mouse-12</code>, <code>KO-3</code>, <code>Col0-rep1</code>, <code>Sample-01A</code>, or <code>at1g01010</code> all pass through unchanged and match across your files exactly as written.</div>
+  <div class="callout warn"><span class="lbl">⚠ Human TCGA barcodes</span>If your samples are raw TCGA aliquot barcodes and you want several aliquots of one patient collapsed to that patient (e.g. <code>TCGA-AB-2802-03A-...</code> → <code>TCGA-AB-2802</code>), opt into the TCGA preset — it uppercases and trims the aliquot suffix:
+  <pre style="margin-top:10px"><code>"normalization": {"preset": "tcga"}</code></pre>
+  The <code>tcga</code> data hub sets this automatically; you only need it for hand-built configs on raw barcodes.</div>
+
+  <h3>Grouping and batch: the pseudoreplication guard</h3>
+  <p>The most important columns for animal and plant work are <code>group</code> and <code>batch</code> in the clinical table. They stop the same thing that patient-id grouping stops in a clinical cohort: samples that aren't independent leaking optimistic scores.</p>
+  <ul>
+    <li><strong><code>group</code></strong> — the unit that must never be split across training and testing. Set it to whatever your replicates share: the <em>animal id</em> when you have several tissues or timepoints per animal, or the <em>litter</em> / <em>cage</em> / <em>plant</em> / <em>plot</em> when that is the unit you actually randomized. omicau keeps every sample from one group entirely in train or entirely in test.</li>
+    <li><strong><code>batch</code></strong> — the nuisance structure to watch for: sequencing run, extraction day, plate, growth chamber. omicau flags a data type only when its variance tracks the batch <em>and</em> the batch tracks the outcome.</li>
+  </ul>
+  <p>Cage can be either: use it as <code>group</code> if you treated whole cages, as <code>batch</code> if cages are just where animals were housed.</p>
+
+  <div class="tablewrap"><table>
+    <tr><th>Setting</th><th>group =</th><th>batch =</th><th>Typical target</th></tr>
+    <tr><td>Mouse, tissues per animal</td><td>animal id</td><td>sequencing run</td><td>genotype / treatment</td></tr>
+    <tr><td>Mouse, cage-randomized</td><td>cage / litter</td><td>processing day</td><td>diet / exposure</td></tr>
+    <tr><td>Zebrafish clutch</td><td>clutch</td><td>plate / run</td><td>morphant vs. control</td></tr>
+    <tr><td>Yeast strains</td><td>strain / colony</td><td>growth batch</td><td>condition / phenotype</td></tr>
+    <tr><td><em>Arabidopsis</em></td><td>plant / accession</td><td>growth chamber</td><td>ecotype / stress</td></tr>
+    <tr><td>Crop field trial</td><td>plot</td><td>field block / harvest day</td><td>yield class / line</td></tr>
+    <tr><td>Livestock</td><td>animal id</td><td>farm / batch</td><td>breed / trait</td></tr>
+  </table></div>
+
+  <p>A minimal mouse config differs from the human one only in the column names it points at:</p>
+  <pre><code>{
+  "run_name": "mouse_liver", "output_dir": "run",
+  "organism": "Mus musculus",
+  "modalities": [
+    {"name": "rna",     "path": "rna.csv"},
+    {"name": "protein", "path": "protein.csv"}
+  ],
+  "clinical": {"path": "clinical.csv", "target": "genotype",
+               "sample_id": "sample", "group": "animal_id",
+               "batch": "seq_run", "task": "classification"},
+  "cv": {"n_splits": 5, "seed": 42, "n_bootstrap": 1000}
+}</code></pre>
+
+  <div class="callout repro"><span class="lbl">✓ Small-n honesty</span>Animal and plant studies are often small. omicau resamples whole <em>groups</em> to build its confidence intervals and its default cross-validation needs at least five groups, so with only a handful of animals the intervals come out wide and the audit will honestly certify little. That is the correct answer for a small cohort, not a limitation to work around — read the confidence interval, not the point score, and treat a wide one as "not yet enough data."</div>
+
+  <p style="margin-top:16px">To try a real non-human dataset in one command, use the cross-organism data hub: <code>omicau bootstrap --dataset expression_atlas --out-dir d</code> (defaults to a mouse experiment from EMBL-EBI Expression Atlas).</p>
 </section>
 
 <section id="ui">
@@ -176,6 +256,7 @@ omicau ui        # opens a browser wizard on 127.0.0.1</code></pre>
 
 <section id="methods">
   <h2>How it works</h2>
+  <div class="callout plain"><span class="lbl">ℹ In plain terms</span>omicau tries three ways of combining your data types — glue the columns together, let a neural network blend them, or train a small model on each type and combine the answers — and reports which one your dataset actually prefers. Every scaling and feature-picking step happens <strong>inside</strong> the training data only, so the test scores can't be secretly inflated. It also asks, for each data type, "how much does this one <em>add</em> once we already have the others?" and "do any two mostly repeat each other?"</div>
   <p>The whole pipeline is designed to not fool you. Preprocessing (median-impute → variance-filter → standardize → feature selection) is fitted <strong>inside each training fold only</strong>; cross-validation is <strong>group-aware</strong> (multiple samples from one patient never split across train and test).</p>
   <h3>Fusion across the integration axis</h3>
   <p>omicau benchmarks three integration regimes so you can see which a dataset wants:</p>
@@ -189,6 +270,7 @@ omicau ui        # opens a browser wizard on 127.0.0.1</code></pre>
 
 <section id="uncertainty">
   <h2>Uncertainty &amp; calibration</h2>
+  <div class="callout plain"><span class="lbl">ℹ In plain terms</span>A single score is never the whole story. The <strong>confidence interval</strong> is the range the score would plausibly fall in on new samples — a narrow band that clears chance means a solid result; a wide band overlapping chance means "not proven." <strong>Calibration</strong> asks whether a predicted 70% risk really happens about 70% of the time. <strong>Feature attribution</strong> ranks which inputs mattered most, but it is a hint, not proof of cause — correlated inputs can trade places in the ranking.</div>
   <ul>
     <li><strong>Confidence intervals</strong> — every model's primary metric carries a group-level bootstrap 95% CI (resampling whole patient groups). The per-fold spread is shown only as "fold dispersion," since correlated folds bias it low — often several-fold narrower than the true CI.</li>
     <li><strong>Calibration</strong> (binary classification) — a reliability curve, Brier score, and ECE, flagging that <code>class_weight="balanced"</code> miscalibrates probabilities by construction.</li>
@@ -198,6 +280,7 @@ omicau ui        # opens a browser wizard on 127.0.0.1</code></pre>
 
 <section id="hygiene">
   <h2>Data hygiene &amp; generalization</h2>
+  <div class="callout plain"><span class="lbl">ℹ In plain terms</span>These checks look for ways the data could fool a model. A <strong>batch effect</strong> is a technical signature of when or where samples were run that a model can mistake for real biology — only flagged when it also tracks the outcome. <strong>Missingness bias</strong> is when <em>which</em> values are missing is itself a clue to the outcome, faking a signal. The <strong>control baselines</strong> are the same models trained on scrambled labels: they should score no better than a coin-flip, and an alarm fires if they don't. <strong>Subgroups</strong> checks the score isn't propped up by one site while failing another.</div>
   <ul>
     <li><strong>Missingness bias</strong> — Kruskal-Wallis / Spearman / chi-square tests (BH-corrected) for missingness associated with the outcome (possible MNAR).</li>
     <li><strong>Batch &amp; confounding</strong> — PCA silhouette + ANOVA η² for batch structure, plus a chi-square/Cramér's V (categorical) or ANOVA/η² (continuous) test for batch–outcome confounding. A layer is called <em>batch-confounded</em> only when its variance is batch-structured <em>and</em> batch is confounded with the outcome (an orthogonal batch effect is harmless).</li>

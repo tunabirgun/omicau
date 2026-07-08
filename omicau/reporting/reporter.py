@@ -101,9 +101,9 @@ def _answer_strip(util: dict, rating_status: str) -> list[dict]:
         q2 = ("Yes — clean", "✓", "answer--ok")
 
     if leak:
-        q3 = ("Re-check CV splits for leakage", "▲", "answer--warn")
+        q3 = ("Re-check that no subject or group is split across train and test (leakage)", "▲", "answer--warn")
     elif confounded:
-        q3 = (f"Distrust the batch-confounded layer: {confounded[0]}", "▲", "answer--warn")
+        q3 = (f"Distrust {confounded[0]}: its signal tracks the processing batch, not biology", "▲", "answer--warn")
     elif dead:
         q3 = (f"Consider dropping {dead[0]}", "△", "answer--mid")
     elif useful and isinstance(gain, (int, float)) and gain > 0.005:
@@ -140,7 +140,7 @@ def _trust_checklist(audit: dict, util: dict, missing: dict, batch: dict,
         ss = "pass" if n >= 40 else "caution"
         checks.append({"label": "Adequate sample size", "status": ss,
                        "note": (f"{n} aligned samples." if ss == "pass"
-                                else f"only {n} samples — estimates are unstable and easily over-fit.")})
+                                else f"only {n} samples — scores are unstable and can look better here than they will on new data.")})
 
     if task == "classification":
         bal = ds.get("class_balance") or {}
@@ -150,18 +150,18 @@ def _trust_checklist(audit: dict, util: dict, missing: dict, batch: dict,
             checks.append({"label": "Balanced outcome classes",
                            "status": "pass" if ok else "caution",
                            "note": (f"classes are reasonably balanced ({min(vals)}–{max(vals)})." if ok
-                                    else f"imbalanced (smallest {min(vals)}, largest {max(vals)}); read AUPRC / balanced accuracy, not raw accuracy.")})
+                                    else f"imbalanced (smallest {min(vals)}, largest {max(vals)}); classes are uneven, so judge the rare class with AUPRC and balanced accuracy (both defined in the glossary), not overall accuracy.")})
 
     conf = [m["modality"] for m in util.get("modality_ledger", []) if m.get("batch_confounded")]
     checks.append({"label": "No batch confounding",
                    "status": "caution" if conf else "pass",
-                   "note": (f"batch is confounded with the outcome in: {', '.join(conf)} — treat their apparent signal as untrustworthy."
+                   "note": (f"in {', '.join(conf)}, processing batch lines up with the outcome, so their apparent signal may be a technical artifact, not biology — treat it as untrustworthy."
                             if conf else "no layer's signal is dominated by batch structure.")})
 
     flagged = [t for t in missing.get("tests", []) if t.get("flag")]
     checks.append({"label": "No target-linked missingness",
                    "status": "caution" if flagged else "pass",
-                   "note": (f"{len(flagged)} test(s) show missingness associated with the outcome (possible MNAR bias)."
+                   "note": (f"{len(flagged)} test(s) show that where a value is missing lines up with the outcome, which can fake a signal (missing-not-at-random bias)."
                             if flagged else "missing values look unrelated to the outcome.")})
 
     for c in checks:
@@ -550,13 +550,13 @@ def _model_card_md(audit: dict) -> str:
         "## Intended use",
         "Research-use-only multi-omics **audit and fusion benchmarking**. This is NOT a "
         "deployed clinical predictor and NOT a diagnostic device; it does not diagnose disease, "
-        "recommend treatment, or assess individual patient risk. Use it to judge data hygiene and "
+        "recommend treatment, or assess individual-subject risk. Use it to judge data hygiene and "
         "the predictive value of each omic layer.",
         "",
         "## Data",
         f"- Samples: {ds.get('n_samples')} ({ds.get('n_dropped', 0)} dropped for a missing outcome)",
         f"- Organism: {meta.get('organism', 'unspecified')}",
-        f"- Task: {ds.get('task')}; target defined by the clinical table",
+        f"- Task: {ds.get('task')}; target defined by the phenotype/clinical table",
         f"- Modalities (features): {mods}",
         f"- Provenance SHA-256: `{meta.get('provenance_hash')}`",
         "",
@@ -748,7 +748,7 @@ _TEMPLATE = r"""<!doctype html>
   </div>
 
   <div class="verdict verdict--hero">
-    <span class="verdict__eyebrow">Clinical verdict</span>
+    <span class="verdict__eyebrow">Verdict</span>
     <span class="badge {{ rating_badge.css_class }}">{{ rating_badge.icon }} {{ rating_badge.label }}</span>
     <p class="verdict__lead">{{ summary.get('clinical_verdict','No verdict available.') }}</p>
     <div class="verdict__meta">{{ dataset.n_samples }} samples · {{ dataset.task }} · interpretation source: {{ summary.get('source','rule_based') }}</div>
@@ -791,7 +791,7 @@ _TEMPLATE = r"""<!doctype html>
         <span class="ledger-name">{{ m.modality }}</span>
         <span class="badge {{ m.badge.css_class }}">{{ m.badge.icon }} {{ m.badge.label }}</span>
       </div>
-      <div class="ledger-stats">{{ m.n_features }} features · standalone {{ '%.3f'|format(m.standalone_primary) if m.standalone_primary is not none else '—' }} · marginal gain {{ '%+.3f'|format(m.marginal_gain_classical) if m.marginal_gain_classical is not none else '—' }}{% if m.redundant_with %} · overlaps {{ m.redundant_with }} (CKA {{ '%.2f'|format(m.redundancy_max_cka) }}){% endif %}</div>
+      <div class="ledger-stats">{{ m.n_features }} features · standalone {{ '%.3f'|format(m.standalone_primary) if m.standalone_primary is not none else '—' }} · marginal gain {{ tip('Marginal gain') }} {{ '%+.3f'|format(m.marginal_gain_classical) if m.marginal_gain_classical is not none else '—' }}{% if m.redundant_with %} · overlaps {{ m.redundant_with }} (CKA {{ tip('Redundancy (CKA)') }} {{ '%.2f'|format(m.redundancy_max_cka) }}){% endif %}</div>
       <div class="ledger-rec">{{ m.recommendation }}</div>
     </div>
     {% endfor %}
@@ -826,6 +826,7 @@ _TEMPLATE = r"""<!doctype html>
   <section>
     <h2>Cross-modal performance</h2>
     {{ means('cross_modal_performance') }}
+    <p class="rc-sub">Error bars are a bootstrap 95% confidence interval {{ tip('Bootstrap 95% confidence interval') }}.</p>
     <div class="reading-guide">
       <span class="legend-row"><span class="swatch" style="background:#0072B2"></span>fusion</span>
       <span class="legend-row"><span class="swatch" style="background:#4477AA"></span>single modality</span>
@@ -837,24 +838,25 @@ _TEMPLATE = r"""<!doctype html>
     <div class="figure">{{ figs.performance|safe }}</div>
     {{ tables.models|safe }}
     {% if util.auprc_baseline is not none %}
-    <p class="rc-sub">AUPRC baseline (positive-class prevalence) = {{ '%.3f'|format(util.auprc_baseline) }}; read each model's AUPRC as lift over this, not against 0.5.</p>
+    <p class="rc-sub">AUPRC {{ tip('AUPRC') }} baseline (positive-class prevalence) = {{ '%.3f'|format(util.auprc_baseline) }}; read each model's AUPRC as lift over this, not against 0.5.</p>
     {% endif %}
     {% if util.batch_blocked %}
-    <div class="consequence"><strong>Cross-site stress test.</strong> Blocking folds on batch (a new-batch
+    <div class="consequence"><strong>Cross-site stress test {{ tip('Cross-site stress test (batch-blocked)') }}.</strong> Blocking folds on batch (a new-batch
       generalization estimate) scores {{ '%.3f'|format(util.batch_blocked.primary) }} vs
-      {{ '%.3f'|format(util.batch_blocked.standard) }} under standard CV — an optimism gap of
+      {{ '%.3f'|format(util.batch_blocked.standard) }} under standard CV — an optimism gap {{ tip('Optimism gap') }} of
       {{ '%+.3f'|format(util.batch_blocked.optimism_gap) }}{% if util.batch_blocked.optimism_gap and util.batch_blocked.optimism_gap > 0.05 %}; the standard CV likely overstates performance on an unseen site (part of the gap can also reflect the smaller per-fold training sets under batch blocking){% endif %}.</div>
     {% endif %}
   </section>
 
   {% if util.calibration %}
   <section>
-    <h2>Probability calibration</h2>
-    <p class="rc-sub">Whether predicted probabilities match observed event rates — discrimination (the AUROC above) does not measure this.</p>
+    <h2>Probability calibration {{ tip('Calibration') }}</h2>
+    {{ means('calibration') }}
+    <p class="rc-sub">Whether predicted probabilities match observed event rates — discrimination {{ tip('Discrimination') }} (the AUROC above) does not measure this.</p>
     <div class="figure">{{ figs.calibration|safe }}</div>
     <div class="consequence">
-      Brier score {{ '%.3f'|format(util.calibration.brier) }} (lower is better) ·
-      expected calibration error {{ '%.3f'|format(util.calibration.ece) }}.
+      Brier score {{ tip('Brier score') }} {{ '%.3f'|format(util.calibration.brier) }} (lower is better) ·
+      expected calibration error {{ tip('Expected calibration error (ECE)') }} {{ '%.3f'|format(util.calibration.ece) }}.
       These probabilities are research-use-only and may be miscalibrated by construction — balanced
       class weights (logistic/forest), overconfident boosted-tree scores (gradient boosting), or an
       over-confident softmax (neural) shift predicted probabilities away from the true event risk.
@@ -894,10 +896,10 @@ _TEMPLATE = r"""<!doctype html>
   </section>
 
   <section>
-    <h2>Feature attribution</h2>
+    <h2>Feature attribution {{ tip('Permutation importance') }}</h2>
     {{ means('feature_attribution') }}
     <div class="consequence">
-      Importances are <strong>unconditional permutation importance</strong>, which over-credits
+      Importances are <strong>unconditional permutation importance {{ tip('Collinearity (unconditional importance)') }}</strong>, which over-credits
       correlated predictors and can split or inflate importance among collinear features (Hooker
       et al. 2021; Strobl et al. 2008). Omic layers are highly collinear, so read the ranking as
       indicative, not causal, and weigh the across-fold ±SD column — a large SD means an unstable,
@@ -920,7 +922,7 @@ _TEMPLATE = r"""<!doctype html>
     <pre class="config">{{ config_json }}</pre>
     {% if audit.dome %}
     <details class="glossary">
-      <summary>DOME methods summary (Data · Optimization · Model · Evaluation)</summary>
+      <summary>DOME {{ tip('DOME') }} methods summary (Data · Optimization · Model · Evaluation)</summary>
       <div class="gloss-body">
         {% for area, fields in audit.dome.items() %}
         <p><strong style="text-transform:capitalize">{{ area }}</strong></p>
