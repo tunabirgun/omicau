@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>omicau — leakage-safe multi-omics audit &amp; fusion benchmarking</title>
+<meta name="description" content="omicau audits multi-omic datasets and benchmarks how well omic layers combine to predict a clinical endpoint — leakage-safe, with confidence intervals, calibration, and a research-use-only clinical dashboard.">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<div class="mobile-top">
+  <button class="menu" aria-label="Menu" onclick="document.querySelector('.sidebar').classList.toggle('open')">☰</button>
+  <span class="brand" style="color:var(--accent);font-family:var(--mono);font-weight:700;letter-spacing:.1em">omicau</span>
+</div>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+  <div class="brand">omicau</div>
+  <div class="tagline">multi-omics audit &amp; fusion benchmarking</div>
+  <div class="nav-group">
+    <div class="h">Start here</div>
+    <a class="nav" href="#overview">Overview</a>
+    <a class="nav" href="#install">Installation</a>
+    <a class="nav" href="#quickstart">Quick start</a>
+    <a class="nav" href="#inputs">Your data</a>
+    <a class="nav" href="#ui">No-code UI</a>
+  </div>
+  <div class="nav-group">
+    <div class="h">Reading the report</div>
+    <a class="nav" href="#report">The dashboard</a>
+    <a class="nav" href="#trust">Is my result trustworthy?</a>
+  </div>
+  <div class="nav-group">
+    <div class="h">Methods &amp; validity</div>
+    <a class="nav" href="#methods">How it works</a>
+    <a class="nav" href="#uncertainty">Uncertainty &amp; calibration</a>
+    <a class="nav" href="#hygiene">Data hygiene</a>
+    <a class="nav" href="#repro">Reproducibility</a>
+  </div>
+  <div class="nav-group">
+    <div class="h">Reference</div>
+    <a class="nav" href="#hubs">Data hubs</a>
+    <a class="nav" href="#cli">CLI &amp; config</a>
+    <a class="nav" href="#ruo">Research-use-only</a>
+  </div>
+  <div class="side-foot">
+    <span class="ruo-chip">△ Research use only</span>
+    <button class="theme-btn" id="themeBtn" onclick="toggleTheme()">◐ Toggle theme</button>
+    <a class="nav" href="https://github.com/tunabirgun/omicau" style="padding-left:0">GitHub ↗</a>
+  </div>
+</nav>
+
+<main class="content">
+
+<section id="overview" class="hero">
+  <div class="eyebrow">Multi-omics audit · Fusion benchmarking</div>
+  <h1>Leakage-safe multi-omics audit and fusion benchmarking</h1>
+  <p class="lead">omicau ingests one numeric matrix per omic layer plus a clinical endpoint, then <strong>audits the data</strong> and <strong>benchmarks how well those layers combine</strong> to predict the endpoint. It emits a self-contained interactive HTML dashboard alongside machine-readable JSON and CSV, and runs fully offline.</p>
+  <div class="btns">
+    <a class="btn btn-primary" href="#quickstart">Quick start</a>
+    <a class="btn btn-ghost" href="https://github.com/tunabirgun/omicau">View on GitHub</a>
+  </div>
+  <div class="callout plain" style="margin-top:24px">
+    <span class="lbl">ℹ Who is this for</span>
+    <strong>Clinicians / PIs:</strong> start at <a href="#report">Reading the report</a> — omicau answers three questions in plain language and tells you how far to trust the result. <strong>Bioinformaticians:</strong> start at <a href="#methods">How it works</a> or <a href="#quickstart">Quick start</a>.
+  </div>
+  <figure>
+    <img src="assets/report-executive.png" alt="omicau executive-summary dashboard" onclick="lb(this)">
+    <figcaption>Figure 1 — the executive summary: the three-question answer strip, the clinical verdict, and the run report card.</figcaption>
+  </figure>
+</section>
+
+<section id="what">
+  <h2>What omicau answers</h2>
+  <p>Before anyone builds a model on a multi-omic dataset, omicau answers three questions about the data itself:</p>
+  <ol>
+    <li><strong>Does combining omic layers actually help,</strong> or does one layer already carry the signal?</li>
+    <li><strong>Is the apparent signal trustworthy,</strong> or an artifact of batch effects, outcome-linked missing data, or information leakage in the cross-validation?</li>
+    <li><strong>What should you do next</strong> — adopt the fusion model, prefer a single layer, distrust a confounded layer, or re-check the splits?</li>
+  </ol>
+  <p>It makes <strong>no patient predictions and issues no diagnosis.</strong> Under leakage-safe, group-aware cross-validation it benchmarks classical and neural fusion with group-level bootstrap 95% confidence intervals, tests each layer's marginal contribution with a corrected resampled <em>t</em>-test, measures cross-layer redundancy, benchmarks negative controls to prove the pipeline does not leak, and locks provenance with a value-level SHA-256 hash.</p>
+</section>
+
+<section id="install">
+  <h2>Installation</h2>
+  <pre><code>pip install .                 # core, fully offline
+pip install ".[ui]"           # + optional local no-code web UI
+pip install ".[data]"         # + remote data hubs
+pip install ".[llm]"          # + optional LLM interpretation plugin
+pip install ".[all,dev]"      # everything + tests</code></pre>
+  <p>Python ≥ 3.10. Core dependencies: <code>numpy</code>, <code>pandas</code>, <code>scipy</code>, <code>scikit-learn</code>, <code>torch</code>, <code>plotly</code>, <code>click</code>, <code>jinja2</code>, <code>tqdm</code>.</p>
+</section>
+
+<section id="quickstart">
+  <h2>Quick start</h2>
+  <div class="callout plain"><span class="lbl">ℹ In plain terms</span>Four commands take you from a built-in synthetic dataset to a verified dashboard. Nothing leaves your machine.</div>
+  <pre><code>omicau check-env                                 # CPU/GPU + dependency status
+omicau bootstrap --dataset mock --out-dir demo   # write a synthetic dataset + config
+omicau run --config demo/config.json --cores 8   # full audit -> demo/run/report.html
+omicau verify --config demo/config.json          # recompute the provenance hash</code></pre>
+  <p>Open <code>demo/run/report.html</code> for the dashboard. <code>demo/run/audit.json</code> is the full machine-readable state; <code>model_metrics.csv</code>, <code>modality_ledger.csv</code>, and <code>missingness_tests.csv</code> are flat exports; <code>MODEL_CARD.md</code> is a research-use-only model card.</p>
+  <p>The <code>mock</code> dataset is offline and the recommended starting template — it writes a runnable <code>config.json</code> and example CSVs with deliberately redundant, batch-confounded, and pure-noise layers, so the diagnostics have something to flag. Add <code>--task regression</code> for a regression mock.</p>
+</section>
+
+<section id="inputs">
+  <h2>Bring your own data</h2>
+  <div class="callout plain"><span class="lbl">ℹ In plain terms</span>Every omic layer is one table: sample identifiers in the header row and first column, numbers in the body, blanks (or <code>NA</code>) for missing. You do not need to normalize, scale, or impute first — omicau aligns the files and does all scaling inside cross-validation so nothing leaks.</div>
+  <p>Provide one file per modality, one clinical table, and a small config that names them (paths resolve relative to the config). Ingestion is forgiving: delimiter and orientation are auto-detected (<code>samples × features</code> or <code>features × samples</code>), sample names are fuzzily matched across files, and common NA tokens, European decimals, and <code>±inf</code> are healed. Missing values stay masked — never imputed at ingest.</p>
+  <div class="tablewrap"><table>
+    <tr><th>Omics layer</th><th>Value type</th><th>Feature id</th><th>Note</th></tr>
+    <tr><td>RNA-seq / expression</td><td>log2 TPM/FPKM/CPM (prefer log)</td><td>gene / Ensembl / Entrez</td><td>log-transform heavy-tailed counts first</td></tr>
+    <tr><td>Proteomics</td><td>normalized abundance (log2)</td><td>UniProt / gene</td><td>missing is MNAR-informative; do <strong>not</strong> impute</td></tr>
+    <tr><td>DNA methylation</td><td>beta [0,1] <strong>or</strong> M-values</td><td>probe (cg…) / gene</td><td>one convention per matrix</td></tr>
+    <tr><td>Metabolomics</td><td>peak area / concentration (often log)</td><td>RefMet / HMDB / name</td><td>below-detection stays blank</td></tr>
+    <tr><td>Copy number</td><td>log2 ratio <strong>or</strong> GISTIC −2…2</td><td>gene</td><td>one convention per matrix</td></tr>
+    <tr><td>miRNA</td><td>log-normalized expression</td><td>miRBase (hsa-miR-…)</td><td>same shape as RNA-seq</td></tr>
+    <tr><td>Somatic mutation</td><td>binary 0/1 or count</td><td>gene</td><td>near-constant columns dropped</td></tr>
+  </table></div>
+  <p>The clinical table is one row per sample: a sample-id column, the target, and optional <code>group</code> (e.g. patient id, for leakage-safe splitting) and <code>batch</code> columns. A single modality is allowed — cross-modality comparisons are simply skipped.</p>
+  <pre><code>{
+  "run_name": "my_study", "output_dir": "run",
+  "modalities": [
+    {"name": "rna",     "path": "rna.csv"},
+    {"name": "protein", "path": "protein.csv"}
+  ],
+  "clinical": {"path": "clinical.csv", "target": "outcome",
+               "sample_id": "sample_id", "group": "patient_id",
+               "batch": "batch", "task": "auto"},
+  "cv": {"n_splits": 5, "seed": 42, "n_bootstrap": 1000}
+}</code></pre>
+</section>
+
+<section id="ui">
+  <h2>The optional no-code UI</h2>
+  <p>omicau is a CLI tool first. For non-coders there is an opt-in local web UI — a wizard to upload files, map columns, and run the audit without a config file:</p>
+  <pre><code>pip install ".[ui]"
+omicau ui        # opens a browser wizard on 127.0.0.1</code></pre>
+  <p>It binds <code>127.0.0.1</code> behind a one-time token, opens a browser, and walks through: drop files → confirm the auto-guessed omic role and orientation → map the clinical columns (each dropdown shows its <em>live consequence</em>, e.g. class balance or the leakage implication of the grouping) → check cross-file alignment → run the identical pipeline → read the report in-page.</p>
+  <div class="callout repro"><span class="lbl">✓ On device</span>All data stays on the machine — nothing is uploaded. The UI only builds the config and shows the result; it never re-implements the science, so the CLI and UI always agree.</div>
+  <figure>
+    <img src="assets/ui-clinical.png" alt="omicau UI — clinical column mapping with live consequences" onclick="lb(this)">
+    <figcaption>Figure 2 — the wizard's clinical-mapping step: each column choice shows its live consequence (class balance, the leakage meaning of the patient group).</figcaption>
+  </figure>
+</section>
+
+<section id="report">
+  <h2>Reading the report</h2>
+  <p>The dashboard has two tabs, both driven by the same <code>audit.json</code>. <strong>Executive summary</strong> answers the three questions in plain language and states a verdict and a trust checklist — read this first. <strong>Research detail</strong> holds the numbers behind those answers.</p>
+  <h3>The answer strip</h3>
+  <p>Three questions, one answer each: <em>Does combining layers help?</em> · <em>Is the data trustworthy?</em> · <em>What should you do next?</em> Under it, the <strong>clinical verdict</strong> is one plain paragraph naming the best fusion model, its headline score, whether fusion beat the best single layer, which layers carry independent signal, and which to treat with caution.</p>
+  <h3>The run report card</h3>
+  <p>A short pass / caution / fail checklist telling you how far to trust the run itself, <em>before</em> you trust any score in it:</p>
+  <ul>
+    <li><span class="pill pass">✓ pass</span> <strong>Control baselines at chance</strong> — a shuffled target is not predictable, so no leakage.</li>
+    <li><span class="pill caution">△ caution</span> <strong>Batch confounding / missingness</strong> — a layer whose batch is confounded with the outcome, or missingness linked to the outcome.</li>
+    <li><span class="pill warn">▲ fail</span> <strong>Leakage flagged</strong> — a control beat chance; investigate the splits before trusting any score.</li>
+  </ul>
+  <figure>
+    <img src="assets/report-research.png" alt="omicau research-detail dashboard with confidence intervals and calibration" onclick="lb(this)">
+    <figcaption>Figure 3 — research detail: cross-modal performance with 95% CI error bars, probability calibration, subgroup performance, redundancy, and feature attribution.</figcaption>
+  </figure>
+</section>
+
+<section id="trust">
+  <h2>Is my result trustworthy?</h2>
+  <p>Read the result only as far as these allow:</p>
+  <div class="tablewrap"><table>
+    <tr><th>Check</th><th>Trust when</th><th>Discount when</th></tr>
+    <tr><td>Control baselines</td><td>all near chance (no leakage flag)</td><td>a control is significantly above chance</td></tr>
+    <tr><td>Confidence interval</td><td>the 95% CI is narrow and clears chance</td><td>the CI is wide or overlaps chance</td></tr>
+    <tr><td>Calibration</td><td>the reliability curve tracks the diagonal</td><td>large Brier/ECE — probabilities ≠ risks</td></tr>
+    <tr><td>Batch confounding</td><td>no layer flagged batch-confounded</td><td>a layer is confounded with the outcome</td></tr>
+    <tr><td>Subgroups</td><td>a small gap across sites/subgroups</td><td>a wide gap — the global metric hides it</td></tr>
+  </table></div>
+  <div class="callout warn"><span class="lbl">⚠ Not a diagnosis</span>A good score is evidence that the <em>data</em> carries predictive signal for the endpoint under cross-validation — not that any individual can be classified, and never a clinical decision.</div>
+</section>
+
+<section id="methods">
+  <h2>How it works</h2>
+  <p>The whole pipeline is designed to not fool you. Preprocessing (median-impute → variance-filter → standardize → feature selection) is fitted <strong>inside each training fold only</strong>; cross-validation is <strong>group-aware</strong> (multiple samples from one patient never split across train and test).</p>
+  <h3>Fusion across the integration axis</h3>
+  <p>omicau benchmarks three integration regimes so you can see which a dataset wants:</p>
+  <ul>
+    <li><strong>Early</strong> — feature concatenation, per estimator (logistic/ridge, random forest, gradient boosting).</li>
+    <li><strong>Intermediate</strong> — a masked global-pooling neural network that ignores missing features per sample (no artificial variance injected).</li>
+    <li><strong>Late</strong> — stacking: a meta-learner cross-validated over the single-modality out-of-fold predictions (leakage-safe by construction).</li>
+  </ul>
+  <p>Each layer's <strong>marginal gain</strong> — how much it adds beyond the others — is tested with the Nadeau–Bengio corrected resampled <em>t</em>-test (k-fold train sets overlap, so a naive paired <em>t</em>-test has inflated Type-I error). Cross-layer <strong>redundancy</strong> is the linear CKA; a layer highly aligned with a stronger one is flagged redundant.</p>
+</section>
+
+<section id="uncertainty">
+  <h2>Uncertainty &amp; calibration</h2>
+  <ul>
+    <li><strong>Confidence intervals</strong> — every model's primary metric carries a group-level bootstrap 95% CI (resampling whole patient groups). The per-fold spread is shown only as "fold dispersion," since correlated folds bias it low — often several-fold narrower than the true CI.</li>
+    <li><strong>Calibration</strong> (binary classification) — a reliability curve, Brier score, and ECE, flagging that <code>class_weight="balanced"</code> miscalibrates probabilities by construction.</li>
+    <li><strong>Feature attribution</strong> — leakage-safe permutation importance on held-out folds, reported as mean ±SD across folds. It is <em>unconditional</em> and biased under feature collinearity (Hooker 2021; Strobl 2008), so the ranking is indicative, not causal.</li>
+  </ul>
+</section>
+
+<section id="hygiene">
+  <h2>Data hygiene &amp; generalization</h2>
+  <ul>
+    <li><strong>Missingness bias</strong> — Kruskal-Wallis / Spearman / chi-square tests (BH-corrected) for missingness associated with the outcome (possible MNAR).</li>
+    <li><strong>Batch &amp; confounding</strong> — PCA silhouette + ANOVA η² for batch structure, plus a chi-square/Cramér's V (categorical) or ANOVA/η² (continuous) test for batch–outcome confounding. A layer is called <em>batch-confounded</em> only when its variance is batch-structured <em>and</em> batch is confounded with the outcome (an orthogonal batch effect is harmless).</li>
+    <li><strong>Control baselines</strong> — shuffled-target / shuffled-feature / random-noise runs; the leakage alarm fires when a control's CI lower bound clears chance.</li>
+    <li><strong>Subgroup performance</strong> — the best model re-scored within each site/subgroup, with the max-minus-min gap surfaced.</li>
+    <li><strong>Cross-site stress test</strong> (opt-in) — folds blocked on batch (leave-one-batch-out) for an honest new-batch estimate + optimism gap.</li>
+  </ul>
+</section>
+
+<section id="repro">
+  <h2>Reproducibility &amp; provenance</h2>
+  <div class="callout repro"><span class="lbl">✓ Reproducible by design</span>Every stochastic step is seeded; a value-level SHA-256 hash of the aligned matrices, sample index, and target is written to <code>audit.json</code> and re-checkable with <code>omicau verify</code> (exit 1 on any drift). A <strong>DOME</strong> methods block and a <strong>MODEL_CARD.md</strong> are emitted for governance.</div>
+  <pre><code>omicau verify --config config.json --expected &lt;hash&gt;   # exit 1 on mismatch
+omicau verify --config config.json --audit run/audit.json</code></pre>
+</section>
+
+<section id="hubs">
+  <h2>Data hubs</h2>
+  <p>Optional clients pull public cohorts (verified live). The primary workflow remains your own data.</p>
+  <div class="tablewrap"><table>
+    <tr><th>Client</th><th>Source</th><th>Modalities → target</th></tr>
+    <tr><td><code>tcga</code></td><td>cBioPortal (no auth)</td><td>mRNA + copy-number + clinical</td></tr>
+    <tr><td><code>ccle</code></td><td>DepMap 24Q4 (figshare)</td><td>expression → CRISPR dependency</td></tr>
+    <tr><td><code>xena</code></td><td>UCSC Xena</td><td>multi-omics + phenotype</td></tr>
+    <tr><td><code>openpbta</code></td><td>public S3</td><td>fusion matrix + histologies</td></tr>
+    <tr><td><code>metabolomics</code></td><td>Metabolomics Workbench</td><td>metabolites + study factors</td></tr>
+  </table></div>
+  <pre><code>omicau bootstrap --dataset xena --out-dir d --preset brca --target PAM50Call_RNAseq</code></pre>
+</section>
+
+<section id="cli">
+  <h2>CLI &amp; configuration</h2>
+  <div class="tablewrap"><table>
+    <tr><th>Command</th><th>Purpose</th></tr>
+    <tr><td><code>omicau check-env</code></td><td>report CPU/GPU + dependency status</td></tr>
+    <tr><td><code>omicau bootstrap --dataset … --out-dir …</code></td><td>assemble a dataset + runnable config</td></tr>
+    <tr><td><code>omicau run --config … [--cores N] [--deterministic]</code></td><td>run the full audit → dashboard + assets</td></tr>
+    <tr><td><code>omicau verify --config … [--expected H] [--audit …]</code></td><td>recompute / check the provenance hash</td></tr>
+    <tr><td><code>omicau ui</code></td><td>launch the optional local web UI</td></tr>
+  </table></div>
+  <p>Key config knobs: <code>cv.n_splits</code>, <code>cv.n_bootstrap</code>, <code>cv.batch_blocked</code>, <code>compute.deterministic</code>, <code>neural.enabled</code>, <code>llm.enabled</code>. Configs may be JSON, TOML, or YAML.</p>
+</section>
+
+<section id="ruo">
+  <h2>Research use only</h2>
+  <div class="callout warn"><span class="lbl">⚠ Not a diagnostic device</span>omicau audits data for predictive signal and data hygiene. It is <strong>not a diagnostic device</strong>: it does not diagnose disease, recommend treatment, or assess an individual patient's risk. Use its output to judge data quality and the value of each omic layer for research — not for clinical decisions.</div>
+  <p style="color:var(--ink-500);font-size:14px;margin-top:32px">omicau · <a href="https://github.com/tunabirgun/omicau">github.com/tunabirgun/omicau</a> · part of the Build with Claude: Life Sciences hackathon (Anthropic × Gladstone Institutes).</p>
+</section>
+
+</main>
+</div>
+
+<div class="lb" id="lightbox" onclick="this.classList.remove('open')"><img id="lbimg" alt=""></div>
+<script>
+function toggleTheme(){
+  const el=document.documentElement, next=el.getAttribute('data-theme')==='dark'?'light':'dark';
+  el.setAttribute('data-theme',next); try{localStorage.setItem('omicau-docs-theme',next)}catch(e){}
+}
+(function(){
+  let t; try{t=localStorage.getItem('omicau-docs-theme')}catch(e){}
+  if(!t) t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';
+  document.documentElement.setAttribute('data-theme',t);
+})();
+function lb(img){const l=document.getElementById('lightbox');document.getElementById('lbimg').src=img.src;l.classList.add('open')}
+// active-nav on scroll
+const links=[...document.querySelectorAll('.sidebar a.nav[href^="#"]')];
+const map=Object.fromEntries(links.map(a=>[a.getAttribute('href').slice(1),a]));
+const obs=new IntersectionObserver((es)=>{es.forEach(e=>{if(e.isIntersecting){
+  links.forEach(a=>a.classList.remove('active')); const a=map[e.target.id]; if(a)a.classList.add('active');}})},
+  {rootMargin:'-10% 0px -80% 0px'});
+document.querySelectorAll('main section[id]').forEach(s=>obs.observe(s));
+document.querySelectorAll('.sidebar a.nav').forEach(a=>a.addEventListener('click',()=>document.querySelector('.sidebar').classList.remove('open')));
+</script>
+</body>
+</html>
