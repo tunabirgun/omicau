@@ -69,8 +69,16 @@ def make_mock_dataset(
     elif task == "regression":
         y = 2.5 * z + rng.normal(0.0, 0.8, size=n_samples)
         y_values = y.astype(float)
+    elif task == "survival":
+        risk = 1.6 * z + rng.normal(0.0, 0.5, size=n_samples)   # z drives the hazard
+        base = rng.exponential(np.exp(-risk))                    # higher risk -> shorter time
+        cens = rng.exponential(float(np.median(base)) * 2.0, size=n_samples)
+        surv_time = np.minimum(base, cens) + 0.05
+        surv_event = (base <= cens).astype(int)                  # 1 = event, 0 = censored
+        y_values = surv_time.astype(float)
     else:
-        raise ValueError(f"Unknown task '{task}' (use 'classification' or 'regression').")
+        raise ValueError(f"Unknown task '{task}' (use 'classification', 'regression', or 'survival').")
+    surv_event = surv_event if task == "survival" else None
 
     sample_ids = [f"S{ i+1 :04d}" for i in range(n_samples)]
 
@@ -129,6 +137,9 @@ def make_mock_dataset(
             "batch": [f"batch{b+1}" for b in batch],
         }
     )
+    if task == "survival":
+        clinical["time"] = y_values
+        clinical["event"] = surv_event
 
     return MockBundle(modalities=modalities, clinical=clinical, truth=truth, task=task)
 
@@ -140,7 +151,7 @@ def mock_config(
     seed: int = 42,
 ) -> OmicauConfig:
     """Build an :class:`OmicauConfig` matching an in-memory mock bundle."""
-    target = "label"
+    survival = task == "survival"
     cfg = OmicauConfig.from_dict(
         {
             "run_name": "mock_audit",
@@ -153,11 +164,14 @@ def mock_config(
                 {"name": "noise", "description": "Pure-noise negative control"},
             ],
             "clinical": {
-                "target": target,
+                "target": "time" if survival else "label",
                 "sample_id": "sample_id",
                 "group": "patient_id",
                 "batch": "batch",
                 "task": task,
+                "time": "time" if survival else None,
+                "event": "event" if survival else None,
+                "time_unit": "months" if survival else "",
                 "positive_label": "responder" if task == "classification" else None,
             },
             "cv": {"n_splits": 3, "seed": seed},

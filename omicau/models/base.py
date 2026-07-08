@@ -35,7 +35,7 @@ from sklearn.metrics import (
 )
 
 
-PRIMARY_METRIC = {"classification": "auroc", "regression": "r2"}
+PRIMARY_METRIC = {"classification": "auroc", "regression": "r2", "survival": "c_index"}
 
 
 @dataclass

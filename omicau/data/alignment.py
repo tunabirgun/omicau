@@ -67,13 +67,15 @@ class AlignedDataset:
     """The frozen, aligned multi-omic study state consumed by every stage."""
 
     modalities: dict[str, ModalityMatrix]
-    y: pd.Series  # numeric-encoded target, index = sample ids
-    task: str  # "classification" | "regression"
+    y: pd.Series  # numeric-encoded target (survival: the time-to-event), index = sample ids
+    task: str  # "classification" | "regression" | "survival"
     sample_ids: list[str]
     y_raw: pd.Series | None = None
     class_names: list[str] | None = None
     groups: pd.Series | None = None
     batch: pd.Series | None = None
+    event: pd.Series | None = None      # survival only: 1 = event, 0 = right-censored
+    time_unit: str = ""                 # survival only: free-text label for the report
     provenance_hash: str = ""
     report: dict[str, Any] = field(default_factory=dict)
 
@@ -290,7 +292,7 @@ def _collapse_duplicates(frame: pd.DataFrame) -> pd.DataFrame:
 # Target encoding and task inference
 # --------------------------------------------------------------------------- #
 def _infer_task(y: pd.Series, declared: str) -> str:
-    if declared in {"classification", "regression"}:
+    if declared in {"classification", "regression", "survival"}:
         return declared
     numeric = pd.to_numeric(y, errors="coerce")
     n_unique = int(y.nunique(dropna=True))
@@ -533,8 +535,19 @@ def align_modalities(
 
     # -- target / groups / batch ------------------------------------------- #
     clinical = clinical.loc[sample_ids]
-    task = _infer_task(clinical[clin_spec.target], clin_spec.task)
-    y_enc, class_names = _encode_target(clinical[clin_spec.target], task, clin_spec.positive_label)
+    is_survival = clin_spec.task == "survival"
+    if is_survival:
+        if not clin_spec.time or clin_spec.time not in clinical.columns:
+            raise ValueError("task='survival' requires clinical.time (a numeric time-to-event column).")
+        if not clin_spec.event or clin_spec.event not in clinical.columns:
+            raise ValueError("task='survival' requires clinical.event (1 = event, 0 = right-censored).")
+        target_col = clin_spec.time
+        task = "survival"
+        y_enc, class_names = pd.to_numeric(clinical[clin_spec.time], errors="coerce").astype("float64"), None
+    else:
+        target_col = clin_spec.target
+        task = _infer_task(clinical[clin_spec.target], clin_spec.task)
+        y_enc, class_names = _encode_target(clinical[clin_spec.target], task, clin_spec.positive_label)
     y_enc.index = pd.Index(sample_ids)
 
     # Drop samples whose encoded target is NaN (regression coercion failures).
@@ -563,15 +576,26 @@ def align_modalities(
         batch = clinical[clin_spec.batch].astype("string").fillna("NA")
         batch.index = pd.Index(sample_ids)
 
-    y_raw = clinical[clin_spec.target].copy()
+    event = None
+    if is_survival:
+        event = pd.to_numeric(clinical[clin_spec.event], errors="coerce").fillna(0.0).astype("float64")
+        event.index = pd.Index(sample_ids)
+        event = event.loc[sample_ids]
+
+    y_raw = clinical[target_col].copy()
     y_raw.index = pd.Index(sample_ids)
 
-    prov = compute_provenance_hash(sample_ids, aligned_mods, clin_spec.target, task,
-                                   target_values=y_enc.reindex(sample_ids).to_numpy())
+    tv = y_enc.reindex(sample_ids).to_numpy()
+    if is_survival and event is not None:                 # event is part of the target -> hash it too
+        tv = np.concatenate([tv, event.reindex(sample_ids).to_numpy()])
+    prov = compute_provenance_hash(sample_ids, aligned_mods, target_col, task, target_values=tv)
 
     if task == "classification":
         counts = y_enc.astype("int64").value_counts().to_dict()
         report["class_balance"] = {str(k): int(v) for k, v in counts.items()}
+    if is_survival:
+        report["survival"] = {"n_events": int(event.sum()), "n_censored": int((event == 0).sum()),
+                              "time_unit": clin_spec.time_unit}
 
     return AlignedDataset(
         modalities=aligned_mods,
@@ -582,6 +606,8 @@ def align_modalities(
         class_names=class_names,
         groups=groups,
         batch=batch,
+        event=event,
+        time_unit=clin_spec.time_unit,
         provenance_hash=prov,
         report=report,
     )

@@ -234,8 +234,13 @@ def run_audit(config, *, cores: int, device: str, llm: bool | None,
 
     missing = timed("diagnostics_missingness", lambda: missingness_diagnostics(aligned))
     batch = timed("diagnostics_batch", lambda: batch_effect_diagnostics(aligned, seed=config.seed))
-    classical = timed("classical_benchmarks", lambda: run_classical_benchmarks(aligned, config))
-    neural = timed("neural_benchmark", lambda: run_neural_benchmark(aligned, config))
+    if aligned.task == "survival":
+        from omicau.models.survival import run_survival_benchmark
+        classical = timed("classical_benchmarks", lambda: run_survival_benchmark(aligned, config))
+        neural = {"enabled": False, "results": []}      # neural survival deferred
+    else:
+        classical = timed("classical_benchmarks", lambda: run_classical_benchmarks(aligned, config))
+        neural = timed("neural_benchmark", lambda: run_neural_benchmark(aligned, config))
     util = timed("utility_ledger",
                  lambda: build_utility_ledger(aligned, classical, neural, batch, missing))
     summary = timed("interpretation",
@@ -367,7 +372,7 @@ Omit --target to let the client pick a sensible default. Remote clients need
 @click.option("--cancer", default=None, help="CPTAC cohort abbreviation (default: Ucec).")
 @click.option("--preset", default=None, help="Xena preset cohort (default: brca).")
 @click.option("--task", default="classification",
-              help="Mock dataset task: classification or regression.")
+              help="Mock dataset task: classification, regression, or survival.")
 @click.option("--seed", default=42, type=int, help="Seed for the mock dataset.")
 @click.option("--normalization",
               type=click.Choice(["log2cpm", "tmm", "median_of_ratios"]),

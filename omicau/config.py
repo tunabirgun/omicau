@@ -53,8 +53,14 @@ class ClinicalSpec:
     batch: str | None = None
     #: For binary classification, the label treated as the positive class.
     positive_label: str | None = None
-    #: "auto" | "classification" | "regression".
+    #: "auto" | "classification" | "regression" | "survival".
     task: str = "auto"
+    #: Survival only: numeric time-to-event / follow-up column.
+    time: str | None = None
+    #: Survival only: event indicator column (1/True = event, 0/False = right-censored).
+    event: str | None = None
+    #: Survival only: free-text time unit for the report axis, e.g. "months".
+    time_unit: str = ""
     drop_missing_target: bool = True
 
 

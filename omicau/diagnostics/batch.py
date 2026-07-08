@@ -175,8 +175,10 @@ def batch_effect_diagnostics(aligned, seed: int = 42, n_components: int = 10) ->
                 )
         except (ValueError, ZeroDivisionError):
             confounding = {"tested": False}
-    elif batch is not None and task == "regression":
+    elif batch is not None and task in ("regression", "survival"):
         # One-way ANOVA of the continuous outcome across batch levels + eta^2.
+        # For survival the outcome is the time-to-event, so this tests whether
+        # batch tracks survival time (keeps the confounding gate lit, not dark).
         try:
             y_cont = np.asarray(y, dtype=float)
             F, p, eta2 = _anova_pc1(y_cont, batch_codes)

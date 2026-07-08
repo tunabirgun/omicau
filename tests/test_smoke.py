@@ -452,6 +452,24 @@ def test_single_modality_is_first_class_and_honest():
     assert "overlapping" not in util["modality_ledger"][0]["recommendation"]  # no phantom layer
 
 
+def test_survival_benchmark_runs_and_controls_at_chance():
+    # dependency-light Cox + Harrell C-index: signal detected, shuffled outcome ~ chance.
+    from omicau.models.survival import run_survival_benchmark, harrell_cindex
+    b = make_mock_dataset(task="survival", n_samples=120, seed=3)
+    cfg = mock_config(task="survival")
+    cfg.cv.n_splits = 3; cfg.cv.n_bootstrap = 80; cfg.classical.max_features = None
+    ad = align_modalities(b.modalities, b.clinical, cfg)
+    assert ad.task == "survival" and ad.event is not None
+    sv = run_survival_benchmark(ad, cfg)
+    assert sv["primary_metric"] == "c_index"
+    byname = {r.name: r for r in sv["results"]}
+    assert byname["cox::signal"].primary > 0.6                       # real signal detected
+    ctrl = {c.name.split("::")[-1]: c.primary for c in sv["controls"]}
+    assert 0.35 <= ctrl["shuffled_target"] <= 0.65                   # shuffled outcome ~ chance
+    # C-index sanity: perfect risk ordering scores 1.0
+    assert harrell_cindex([1, 2, 3], [1, 1, 0], [3.0, 2.0, 1.0]) == 1.0
+
+
 def test_composite_grouping_coarsens_folds():
     import pandas as pd
     from omicau.data.alignment import _resolve_group_series

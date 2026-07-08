@@ -17,7 +17,7 @@ from typing import Any
 import numpy as np
 from scipy import stats
 
-CHANCE = {"classification": 0.5, "regression": 0.0}
+CHANCE = {"classification": 0.5, "regression": 0.0, "survival": 0.5}
 USEFUL_MARGIN = 0.05
 GAIN_EPS = 0.01
 CKA_REDUNDANT = 0.5
@@ -327,6 +327,8 @@ def _subgroup_metrics(best, aligned, metric_key):
     — a fairness/generalization check. Pure re-aggregation, no retraining."""
     if best is None or getattr(best, "oof_true", None) is None or aligned.batch is None:
         return None
+    if aligned.task == "survival":
+        return None                       # per-stratum C-index deferred (score_predictions is not survival-aware)
     from omicau.models.base import score_predictions
     y = np.asarray(best.oof_true)
     score = np.asarray(best.oof_score)
