@@ -40,6 +40,7 @@ masked missing-value handling, control baselines).
 pip install .                 # core, fully offline
 pip install ".[llm]"          # + Anthropic LLM interpretation plugin
 pip install ".[data]"         # + remote data hubs (requests, google-cloud-storage, cptac)
+pip install ".[ui]"           # + optional local no-code web UI (FastAPI + uvicorn)
 pip install ".[all,dev]"      # everything + pytest
 ```
 
@@ -57,6 +58,25 @@ omicau verify --config demo/config.json            # recompute the provenance ha
 
 Open `demo/run/report.html` for the dashboard; `demo/run/audit.json` and the
 `*.csv` files are the machine-readable assets.
+
+### Optional no-code web UI
+
+omicau is a CLI tool first. For non-coders there is an opt-in local UI:
+
+```bash
+pip install ".[ui]"
+omicau ui                     # opens a browser wizard on 127.0.0.1
+```
+
+`omicau ui` starts a local, single-user server (auto-selected free port, bound to
+`127.0.0.1` behind a one-time token), opens a browser, and walks you through a
+wizard: drop your files, confirm the auto-guessed omic role and orientation of
+each, map the clinical columns (target / patient-group / batch — each shows its
+live consequence, e.g. class balance or the leakage implication of the grouping),
+check cross-file alignment, then run the identical `run_audit` pipeline and read
+the report in-page. **All data stays on the machine — nothing is uploaded.** The
+UI only builds the config and shows the result; it never re-implements the
+science, so the CLI and UI always give the same answer.
 
 ### Verifying a run's provenance hash
 
