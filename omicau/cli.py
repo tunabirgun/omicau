@@ -427,6 +427,25 @@ def verify(config_path: Path | None, audit_path: Path | None, expected: str | No
         click.secho(f"provenance SHA-256: {got}", fg="cyan", bold=True)
 
 
+@main.command()
+@click.option("--port", type=int, default=None, help="Port to bind (default: an auto-selected free port).")
+@click.option("--no-browser", is_flag=True, default=False, help="Do not open a browser automatically.")
+@click.option("--host", default="127.0.0.1", show_default=True,
+              help="Bind address. Keep it localhost — the UI is single-user and local-first.")
+def ui(port: int | None, no_browser: bool, host: str) -> None:
+    """Launch the optional local web UI (no-code, localhost only).
+
+    Opens a browser-based wizard to upload data, map columns, and run the audit
+    without touching a config file. Requires `pip install omicau[ui]`. Data never
+    leaves the machine; the server binds localhost with a one-time token.
+    """
+    try:
+        from omicau.ui.server import launch
+    except ImportError as exc:
+        raise click.ClickException(str(exc)) from exc
+    launch(host=host, port=port, open_browser=not no_browser, echo=click.echo)
+
+
 @main.command(name="check-env")
 def check_env() -> None:
     """Print compute status, folder access, and dependency / API readiness."""

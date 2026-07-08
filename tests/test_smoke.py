@@ -252,6 +252,31 @@ def test_run_audit_in_process_contract(tmp_path):
     assert "json" in assets and Path(assets["json"]).exists()
 
 
+def test_ui_server_optional(tmp_path):
+    # The opt-in local UI: server builds, gates /api behind the one-time token,
+    # serves the design-system CSS + fonts, and mints a session. Skipped when the
+    # [ui] extra (FastAPI) or its test client (httpx) is absent.
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+    from fastapi.testclient import TestClient
+    from omicau.ui.server import create_app
+
+    app = create_app(token="secret", workspace=tmp_path)
+    client = TestClient(app)
+
+    assert client.get("/api/health").status_code == 403                      # no token
+    assert client.get("/api/health", headers={"X-Omicau-Token": "wrong"}).status_code == 403
+    ok = client.get("/api/health", headers={"X-Omicau-Token": "secret"})     # correct token
+    assert ok.status_code == 200 and ok.json()["ok"] is True
+
+    assert "<title>" in client.get("/?token=secret").text
+    css = client.get("/assets/app.css").text
+    assert "@font-face" in css and "IBM Plex Sans" in css and "data:font/woff2" in css
+
+    s = client.post("/api/session", headers={"X-Omicau-Token": "secret"})
+    assert s.status_code == 200 and s.json()["session"]
+
+
 def test_dashboard_offline_no_external_fonts():
     from omicau.reporting._assets import FONT_FACES
     assert FONT_FACES.count("@font-face") >= 6

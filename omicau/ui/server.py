@@ -71,12 +71,11 @@ def create_app(token: str, workspace: Path):
         return await call_next(request)
 
     @app.get("/", response_class=HTMLResponse)
-    async def index(request: Request):
+    async def index(token: str | None = None):
         html = (STATIC / "index.html").read_text(encoding="utf-8")
         resp = HTMLResponse(html)
-        supplied = request.query_params.get("token")
-        if supplied:  # persist the launch token so the SPA can call /api
-            resp.set_cookie("omicau_token", supplied, httponly=False, samesite="strict")
+        if token:  # persist the launch token so the SPA can call /api
+            resp.set_cookie("omicau_token", token, httponly=False, samesite="strict")
         return resp
 
     @app.get("/assets/app.css")
