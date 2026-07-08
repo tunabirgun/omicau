@@ -393,9 +393,9 @@ HPC allocations are safe.
 
 ## Reporting
 
-- **Dashboard** (`report.html`): a single self-contained file (Plotly bundled
-  inline, so it works offline after the one-time Google Fonts load). Editorial
-  humanist sans typography (IBM Plex Sans + IBM Plex Mono), a color-blind-safe Okabe-Ito
+- **Dashboard** (`report.html`): a single, fully offline self-contained file
+  (Plotly bundled inline; fonts embedded as data URIs — zero network calls).
+  Humanist sans typography (IBM Plex Sans + IBM Plex Mono), a color-blind-safe Okabe-Ito
   palette (cobalt `#0072B2` = standard, vermillion `#D55E00` = warning), an
   executive tab for PIs/clinicians and a research tab for computational
   biologists, five interactive figures, and tables that are sortable,
