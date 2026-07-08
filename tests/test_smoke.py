@@ -607,6 +607,36 @@ def test_llm_client_routes_providers_and_defaults(monkeypatch):
     assert seen["base_url"] is None and seen["api_key"] == "k2"
 
 
+def test_local_provider_needs_no_key_and_reaches_llm(aligned, pipeline, monkeypatch):
+    # A local model (Ollama/LM Studio) has no API key; the summarize() gate must
+    # still route to the LLM instead of silently falling back to rule_based.
+    canned = json.dumps({
+        "clinical_verdict": "One layer suffices; hygiene acceptable.",
+        "data_hygiene_rating": "ok", "modality_utility_ledger": [],
+        "actionable_recommendations": ["Keep the signal layer."],
+    })
+
+    class _Msg: content = canned
+    class _Choice: message = _Msg()
+    class _Completions:
+        def create(self, **kw): return types.SimpleNamespace(choices=[_Choice()])
+    class _Chat: completions = _Completions()
+    class _OpenAI:
+        def __init__(self, **kw): pass
+        chat = _Chat()
+
+    fake = types.ModuleType("openai"); fake.OpenAI = _OpenAI
+    monkeypatch.setitem(sys.modules, "openai", fake)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    cfg = _small_config()
+    cfg.llm.enabled = True; cfg.llm.provider = "local"; cfg.llm.model = "llama3.1"
+    ctx = build_context(aligned, pipeline["util"], pipeline["missing"], pipeline["batch"])
+    summary = summarize(ctx, cfg)                       # no api_key, no env var
+    assert summary["source"] == "llm:local:llama3.1"
+    assert "One layer suffices" in summary["clinical_verdict"]
+
+
 def test_ui_error_redaction_scrubs_api_key():
     from omicau.ui.routes import _redact
     secret = "sk-ant-verysecretkey1234567890"

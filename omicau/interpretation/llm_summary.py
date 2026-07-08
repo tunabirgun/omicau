@@ -48,8 +48,11 @@ def summarize(context: dict[str, Any], config, *, api_key: str | None = None) ->
     llm = config.llm
     if llm.enabled:
         key = (api_key or os.environ.get(llm.api_key_env, "")).strip()
-        if key:
-            result = _try_llm(context, llm, key)
+        # Local / OpenAI-compatible servers (Ollama, LM Studio, vLLM) need no key,
+        # so the presence of a key must not gate them -- only cloud providers require it.
+        needs_key = (llm.provider or "anthropic").lower() not in ("local", "openai_compatible")
+        if key or not needs_key:
+            result = _try_llm(context, llm, key)      # key may be "" -> call_llm injects a placeholder
             if result is not None:
                 result["source"] = f"llm:{llm.provider}:{llm.model}"
                 return result
