@@ -28,6 +28,18 @@ async function api(path, opts = {}) {
 const ROLE_OPTIONS = ["rna", "protein", "methylation", "mirna", "cnv", "metabolomics",
                       "mutation", "clinical", "other"];
 
+// Public data hubs surfaced in the wizard (same connectors the CLI `bootstrap` uses).
+const HUBS = [
+  { id: "mock", label: "Synthetic demo — offline, instant", param: null },
+  { id: "tcga", label: "TCGA / cBioPortal (human)", param: "study", hint: "study id, e.g. laml_tcga" },
+  { id: "ccle", label: "CCLE / DepMap cell lines", param: "target", hint: "gene, e.g. SOX10" },
+  { id: "cptac", label: "CPTAC proteogenomics (human)", param: "cancer", hint: "cohort, e.g. Ucec" },
+  { id: "openpbta", label: "OpenPBTA pediatric brain (human)", param: "target", hint: "e.g. broad_histology" },
+  { id: "xena", label: "UCSC Xena (human)", param: "preset", hint: "preset, e.g. brca" },
+  { id: "metabolomics", label: "Metabolomics Workbench", param: "study", hint: "e.g. ST000009" },
+  { id: "expression_atlas", label: "EMBL-EBI Expression Atlas — any organism", param: "study", hint: "accession, e.g. E-GEOD-100100" },
+];
+
 const STEPS = [
   { key: "files", label: "Add data files" },
   { key: "roles", label: "Assign omic roles" },
@@ -222,6 +234,7 @@ RENDERERS.files = async () => {
   const list = el("div", { class: "file-list", id: "filelist" });
   state.files.forEach((f) => list.append(fileRow(f)));
   wrap.append(list);
+  wrap.append(hubPanel());
   wrap.append(footer({ back: true, nextOk: state.files.length > 0 }));
   return wrap;
 
@@ -248,6 +261,62 @@ function fileRow(f) {
       f.role + (f.confidence === "high" ? "" : "?")));
 }
 
+// Load a ready-made public cohort instead of uploading files. Uses the identical
+// connectors the CLI `bootstrap` command uses, so the two paths never diverge.
+function hubPanel() {
+  const card = el("div", { class: "hero-card", style: "margin-top:20px" });
+  card.append(el("span", { class: "eyebrow" }, "No files handy? Load a public dataset"));
+  card.append(el("p", { class: "consequence", style: "margin:8px 0 4px" },
+    "Pull a ready-to-audit cohort from a public data hub — same data the command-line " +
+    "tool uses. The synthetic demo is offline and instant; the others download on first use."));
+  let hub = HUBS[0];
+  const sel = el("select", { style: "min-width:340px" });
+  HUBS.forEach((h) => sel.append(el("option", { value: h.id }, h.label)));
+  const paramIn = el("input", { type: "text", style: "min-width:220px" });
+  const paramWrap = el("span", {}, paramIn);
+  const status = el("div", { class: "consequence", id: "hubstatus" });
+  const btn = el("button", { class: "btn-primary" }, "Load dataset");
+
+  const refresh = () => {
+    hub = HUBS.find((h) => h.id === sel.value) || HUBS[0];
+    paramWrap.style.display = hub.param ? "" : "none";
+    paramIn.placeholder = hub.hint || "";
+    paramIn.value = "";
+  };
+  sel.addEventListener("change", refresh);
+  refresh();
+
+  btn.addEventListener("click", async () => {
+    const payload = { dataset: hub.id };
+    if (hub.param && paramIn.value.trim()) payload[hub.param] = paramIn.value.trim();
+    btn.disabled = true;
+    status.className = "consequence";
+    status.textContent = hub.id === "mock" ? "Assembling…" : "Downloading and assembling… (large hubs may take a minute)";
+    try {
+      const res = await api(`/api/session/${state.session}/hub`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload) });
+      state.files = res.files.map((f) => Object.assign({ orientation: "samples_as_rows" }, f));
+      const c = res.clinical || {};
+      state.clinical = { target: c.target || "", sample_id: c.sample_id || "",
+        group: c.group || "", batch: c.batch || "", task: c.task || "auto",
+        time: c.time || "", event: c.event || "" };
+      state.clinicalCols = null;
+      state.options.run_name = res.run_name || state.options.run_name;
+      goStep(1);                                   // review roles/orientation, then continue
+    } catch (e) {
+      btn.disabled = false;
+      status.className = "consequence msg-error";
+      status.textContent = "Could not load: " + e.message;
+    }
+  });
+
+  card.append(el("div", { style: "display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:10px" },
+    sel, paramWrap, btn));
+  card.append(status);
+  return card;
+}
+
 // --------------------------------------------------------------------------- //
 // Step 2 — roles
 // --------------------------------------------------------------------------- //
@@ -258,7 +327,10 @@ RENDERERS.roles = async () => {
   const list = el("div", { class: "file-list" });
   state.files.forEach((f) => {
     const sel = el("select");
-    ROLE_OPTIONS.forEach((r) => sel.append(el("option", { value: r, selected: r === f.role }, r)));
+    // Include the file's current role even if it's a hub layer name not in the preset
+    // list, so the dropdown reflects reality instead of silently showing the first option.
+    const opts = ROLE_OPTIONS.includes(f.role) ? ROLE_OPTIONS : [f.role, ...ROLE_OPTIONS];
+    opts.forEach((r) => sel.append(el("option", { value: r, selected: r === f.role }, r)));
     sel.addEventListener("change", () => {
       f.role = sel.value;
       state.clinicalCols = null;                        // the clinical file may have changed

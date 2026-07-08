@@ -72,6 +72,51 @@ def register(app) -> None:  # noqa: C901 - a flat set of small handlers
             out.append(info)
         return {"files": out}
 
+    @app.post("/api/session/{sid}/hub")
+    async def hub(sid: str, payload: dict):
+        # Load a public cohort through the SAME assemble() the CLI uses, then seed
+        # the wizard from the produced config.json so the rest of the flow (roles,
+        # orientation, clinical mapping, run) is identical to a local upload.
+        s = _sess(sid)
+        from omicau.data.bootstrap import assemble, DATASETS
+        dataset = (payload or {}).get("dataset")
+        if dataset not in DATASETS:
+            raise HTTPException(400, f"unknown dataset '{dataset}'")
+        out = Path(s["dir"]) / f"hub_{dataset}"
+        try:
+            cfg_path = assemble(dataset, out,
+                                study=(payload.get("study") or None),
+                                target=(payload.get("target") or None),
+                                cancer=(payload.get("cancer") or None),
+                                preset=(payload.get("preset") or None))
+        except Exception as exc:  # noqa: BLE001 - network / parameter errors
+            raise HTTPException(400, f"Could not load '{dataset}': {exc}")
+
+        import json as _json
+        cfg = _json.loads(Path(cfg_path).read_text(encoding="utf-8"))
+        base = Path(cfg_path).parent
+        s["files"] = []
+        files_out = []
+
+        def _add(rel_path: str, role: str):
+            p = (base / rel_path).resolve()
+            info = _parse(I.inspect_matrix, p, Path(rel_path).name)
+            info["role"] = role                       # connector's layer name wins over the guess
+            s["files"].append({"filename": info["filename"], "path": str(p),
+                               "role": role, "orientation": "samples_as_rows"})
+            files_out.append(info)
+
+        for m in cfg.get("modalities", []):
+            _add(m["path"], m["name"])
+        clin = cfg.get("clinical", {})
+        _add(clin["path"], "clinical")
+
+        s["clinical_map"] = {k: clin.get(k) for k in
+                             ("target", "sample_id", "group", "batch", "task", "time", "event")}
+        s["run_name"] = cfg.get("run_name") or f"{dataset}_audit"
+        return {"ok": True, "files": files_out, "clinical": s["clinical_map"],
+                "run_name": s["run_name"]}
+
     @app.post("/api/session/{sid}/roles")
     async def set_roles(sid: str, payload: dict):
         s = _sess(sid)

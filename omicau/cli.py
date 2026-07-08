@@ -393,41 +393,11 @@ def bootstrap(dataset: str, out_dir: Path, study: str | None, target: str | None
     Produces an omicau-ready dataset (modality CSVs + clinical.csv + config.json)
     so that `omicau run --config <out-dir>/config.json` works immediately.
     """
-    out_dir.mkdir(parents=True, exist_ok=True)
-    if normalization != "log2cpm" and dataset != "expression_atlas":
-        raise click.ClickException(
-            "--normalization applies only to the expression_atlas dataset. "
-            "ccle/xena/tcga ship pre-normalized (e.g. log2 TPM); do not re-normalize them.")
     click.secho(f"Bootstrapping '{dataset}' into {out_dir}...", fg="cyan")
     try:
-        if dataset == "mock":
-            from omicau.data.benchmark_data import write_mock_dataset
-            write_mock_dataset(out_dir, task=task, seed=seed)
-            cfg = out_dir / "config.json"
-        elif dataset == "tcga":
-            from omicau.data import tcga
-            cfg = tcga.prepare(out_dir, study=study or "laml_tcga", target=target)
-        elif dataset == "ccle":
-            from omicau.data import ccle
-            cfg = ccle.prepare(out_dir, target_gene=target or "SOX10")
-        elif dataset == "cptac":
-            from omicau.data import cptac
-            cfg = cptac.prepare(out_dir, cancer=cancer or "Ucec", target=target)
-        elif dataset == "openpbta":
-            from omicau.data import openpbta
-            cfg = openpbta.prepare(out_dir, target_column=target or "broad_histology")
-        elif dataset == "xena":
-            from omicau.data import xena
-            cfg = xena.prepare(out_dir, preset=preset or "brca", target=target)
-        elif dataset == "metabolomics":
-            from omicau.data import metabolomics_workbench as mw
-            cfg = mw.prepare(out_dir, study_id=study or "ST000009", target=target)
-        elif dataset == "expression_atlas":
-            from omicau.data import expression_atlas as gxa
-            cfg = gxa.prepare(out_dir, accession=study or gxa.DEFAULT_ACCESSION, target=target,
-                              normalization=normalization)
-        else:  # pragma: no cover - click already constrains choices
-            raise click.ClickException(f"Unknown dataset '{dataset}'.")
+        from omicau.data.bootstrap import assemble
+        cfg = assemble(dataset, out_dir, study=study, target=target, cancer=cancer,
+                       preset=preset, task=task, seed=seed, normalization=normalization)
     except Exception as exc:  # noqa: BLE001
         raise click.ClickException(str(exc)) from exc
     click.secho(f"Ready. Run:\n  omicau run --config {cfg}", fg="green", bold=True)

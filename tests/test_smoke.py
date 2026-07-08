@@ -696,6 +696,35 @@ def test_ui_run_passes_key_to_worker_but_never_stores_it(tmp_path, monkeypatch):
     assert SECRET not in json.dumps(st)                        # ... nor in any client response
 
 
+def test_ui_hub_loads_offline_mock_dataset(tmp_path):
+    # "No backend outside the frontend": the UI hub route assembles a cohort through
+    # the SAME bootstrap.assemble() the CLI uses (offline mock here) and seeds the
+    # wizard so the rest of the flow matches a local upload. CLI/UI parity by design.
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+    from fastapi.testclient import TestClient
+    from omicau.ui.server import create_app
+
+    app = create_app(token="secret", workspace=tmp_path)
+    client = TestClient(app)
+    H = {"X-Omicau-Token": "secret"}
+    sid = client.post("/api/session", headers=H).json()["session"]
+
+    r = client.post(f"/api/session/{sid}/hub", headers=H, json={"dataset": "mock"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    roles = [f["role"] for f in body["files"]]
+    assert roles.count("clinical") == 1
+    assert len([x for x in roles if x != "clinical"]) == 4       # 4 synthetic omic layers
+    assert body["clinical"]["target"] and body["clinical"]["sample_id"]
+
+    sess = app.state.sessions[sid]                                # session is now runnable
+    assert len(sess["files"]) == 5 and sess["clinical_map"]["target"]
+
+    r2 = client.post(f"/api/session/{sid}/hub", headers=H, json={"dataset": "nope"})
+    assert r2.status_code == 400                                  # unknown dataset rejected
+
+
 def test_ui_run_without_key_is_unchanged(tmp_path, monkeypatch):
     # Regression guard: the common no-LLM run path still starts with no body.
     pytest.importorskip("fastapi")
