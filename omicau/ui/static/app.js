@@ -143,11 +143,33 @@ function renderLanding() {
 }
 
 async function startAudit() {
+  if (!localStorage.getItem("omicau_ack")) return renderAck();
   try {
     const s = await api("/api/session", { method: "POST" });
     state.session = s.session; state.started = true; state.step = 0;
     render();
   } catch (e) { alert("Could not start: " + e.message); }
+}
+
+function renderAck() {
+  const c = $("#content"); c.innerHTML = "";
+  const card = el("div", { class: "hero-card" });
+  card.append(el("span", { class: "eyebrow" }, "Before you begin"));
+  card.append(el("h1", { style: "margin:8px 0 0" }, "Research use only"));
+  card.append(el("p", { class: "lead" },
+    "omicau audits data for predictive signal and data hygiene. It is not a " +
+    "diagnostic device: it does not diagnose disease, recommend treatment, or " +
+    "assess an individual patient's risk. Use its output to judge data quality " +
+    "and the value of each omic layer for research — not for clinical decisions."));
+  const cb = el("input", { type: "checkbox" });
+  const btn = el("button", { class: "btn-primary", disabled: true, onclick: () => {
+    localStorage.setItem("omicau_ack", new Date().toISOString()); startAudit();
+  } }, "I understand — continue");
+  cb.addEventListener("change", () => (btn.disabled = !cb.checked));
+  const label = el("label", { style: "display:flex;gap:10px;align-items:center;margin:18px 0;font-size:15px" },
+    cb, "I understand this is a research tool, not a diagnostic device.");
+  card.append(label, el("div", { class: "btn-row" }, btn));
+  c.append(el("h1", {}, "Audit your multi-omic dataset"), card);
 }
 
 // --------------------------------------------------------------------------- //

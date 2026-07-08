@@ -119,6 +119,57 @@ def _answer_strip(util: dict, rating_status: str) -> list[dict]:
     ]
 
 
+def _trust_checklist(audit: dict, util: dict, missing: dict, batch: dict,
+                     control_max) -> list[dict]:
+    """A pass/caution/fail 'run report card' so non-experts trust the result
+    only as far as the data warrants."""
+    ds = audit.get("dataset", {})
+    task = ds.get("task")
+    n = ds.get("n_samples")
+    ic = {"pass": "✓", "caution": "△", "fail": "▲"}
+    checks: list[dict] = []
+
+    leak = util.get("leakage_warning")
+    ctrl = (f"shuffled-label control scored {control_max:.2f}"
+            if control_max is not None else "controls unavailable")
+    checks.append({"label": "Control baselines at chance (no leakage)",
+                   "status": "fail" if leak else "pass",
+                   "note": ctrl + (" — above chance; investigate leakage before trusting the model."
+                                   if leak else ", so a random target is not predictable — as it should be.")})
+
+    if n is not None:
+        ss = "pass" if n >= 40 else "caution"
+        checks.append({"label": "Adequate sample size", "status": ss,
+                       "note": (f"{n} aligned samples." if ss == "pass"
+                                else f"only {n} samples — estimates are unstable and easily over-fit.")})
+
+    if task == "classification":
+        bal = ds.get("class_balance") or {}
+        vals = [v for v in bal.values() if isinstance(v, (int, float))]
+        if vals:
+            ok = min(vals) >= 0.4 * max(vals)
+            checks.append({"label": "Balanced outcome classes",
+                           "status": "pass" if ok else "caution",
+                           "note": (f"classes are reasonably balanced ({min(vals)}–{max(vals)})." if ok
+                                    else f"imbalanced (smallest {min(vals)}, largest {max(vals)}); read AUPRC / balanced accuracy, not raw accuracy.")})
+
+    conf = [m["modality"] for m in util.get("modality_ledger", []) if m.get("batch_confounded")]
+    checks.append({"label": "No batch confounding",
+                   "status": "caution" if conf else "pass",
+                   "note": (f"batch structure dominates: {', '.join(conf)} — correct the batch effect before trusting it."
+                            if conf else "no layer's signal is dominated by batch structure.")})
+
+    flagged = [t for t in missing.get("tests", []) if t.get("flag")]
+    checks.append({"label": "No target-linked missingness",
+                   "status": "caution" if flagged else "pass",
+                   "note": (f"{len(flagged)} test(s) show missingness associated with the outcome (possible MNAR bias)."
+                            if flagged else "missing values look unrelated to the outcome.")})
+
+    for c in checks:
+        c["icon"] = ic[c["status"]]
+    return checks
+
+
 # --------------------------------------------------------------------------- #
 # Workflow flowchart (inline SVG + Mermaid source)
 # --------------------------------------------------------------------------- #
@@ -449,9 +500,11 @@ def build_report(audit: dict, out_dir: str | Path, config=None) -> dict[str, Pat
         for m in util.get("modality_ledger", [])
     ]
 
+    checklist = _trust_checklist(audit, util, missing, batch, control_max)
     ctx = {
         "audit": audit,
         "control_max": control_max,
+        "checklist": checklist,
         "dashboard_css": DASHBOARD_CSS,
         "font_faces": FONT_FACES,
         "tooltip_js": TOOLTIP_JS,
@@ -504,6 +557,20 @@ _TEMPLATE = r"""<!doctype html>
 <title>omicau audit — {{ meta.run_name }}</title>
 <style>{{ font_faces|safe }}</style>
 <style>{{ dashboard_css|safe }}</style>
+<style>
+.reportcard{background:var(--panel);border:1px solid var(--border);border-radius:var(--r2);box-shadow:var(--shadow-1);padding:var(--s6);margin:var(--s5) 0}
+.reportcard .eyebrow{margin-bottom:var(--s3)}
+.reportcard .rc-sub{color:var(--muted);font-size:14px;margin:0 0 var(--s4)}
+.check{display:flex;gap:var(--s4);align-items:flex-start;padding:12px 0;border-top:1px solid var(--hairline)}
+.check:first-of-type{border-top:0}
+.check-ic{width:26px;height:26px;flex:none;border-radius:50%;display:grid;place-items:center;font-size:13px;font-weight:700}
+.check--pass .check-ic{background:var(--teal-bg);color:var(--teal-ink)}
+.check--caution .check-ic{background:var(--amber-bg);color:var(--amber-ink)}
+.check--fail .check-ic{background:var(--vermillion-bg);color:var(--vermillion-ink)}
+.check-label{font-weight:600;color:var(--ink)}
+.check--fail .check-label{color:var(--vermillion-ink)}
+.check-note{font-size:14px;color:var(--ink-soft);margin-top:2px;line-height:1.5}
+</style>
 </head>
 <body>
 {% macro tip(term) %}{% if glossary.get(term) %}<button type="button" class="info" aria-label="Define {{ term }}">i<span class="info__bubble">{{ glossary[term] }}</span></button>{% endif %}{% endmacro %}
@@ -538,6 +605,17 @@ _TEMPLATE = r"""<!doctype html>
     <span class="badge {{ rating_badge.css_class }}">{{ rating_badge.icon }} {{ rating_badge.label }}</span>
     <p class="verdict__lead">{{ summary.get('clinical_verdict','No verdict available.') }}</p>
     <div class="verdict__meta">{{ dataset.n_samples }} samples · {{ dataset.task }} · interpretation source: {{ summary.get('source','rule_based') }}</div>
+  </div>
+
+  <div class="reportcard">
+    <span class="eyebrow">Run report card</span>
+    <p class="rc-sub">A quick trust check on the run itself — treat the result only as far as these allow.</p>
+    {% for c in checklist %}
+    <div class="check check--{{ c.status }}">
+      <span class="check-ic" aria-hidden="true">{{ c.icon }}</span>
+      <div><div class="check-label">{{ c.label }}</div><div class="check-note">{{ c.note }}</div></div>
+    </div>
+    {% endfor %}
   </div>
 
   <section>
