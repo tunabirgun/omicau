@@ -124,7 +124,7 @@ def make_cv_splitter(
 
 
 # --------------------------------------------------------------------------- #
-# Preprocessing (nested, leakage-safe)
+# Preprocessing (fitted in-fold, leakage-safe)
 # --------------------------------------------------------------------------- #
 def make_pipeline(
     estimator, task: str, n_features: int, max_features: int | None, seed: int

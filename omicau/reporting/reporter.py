@@ -486,6 +486,17 @@ def _build_dome(audit: dict) -> dict:
         regimes += ", intermediate (masked global-pooling neural network)"
     if has_stacking:
         regimes += ", late (stacking)"
+    # Derive the run description from what actually ran, not the requested config.
+    ctrl_names = [r.get("name", "").split("::")[-1] for r in models.get("controls", [])]
+    controls_desc = (" / ".join(n.replace("_", "-") for n in ctrl_names) + " leakage baselines"
+                     if ctrl_names else "none (controls disabled)")
+    max_feat = (cfg.get("classical") or {}).get("max_features")
+    fsel_desc = (f"SelectKBest (top {max_feat}) fitted inside each training fold, when the modality "
+                 "exceeds the cap" if max_feat else "none (all features retained)")
+    miss_desc = ("median-imputed inside training folds (classical)"
+                 + (" / masked (neural)" if neural_on else "") + "; never imputed at ingest")
+    actual_k = next((r.get("n_splits") for r in models.get("classical", [])
+                     if r.get("name", "").endswith("::FUSION") and r.get("n_splits")), cvc.get("n_splits"))
     return {
         "data": {
             "samples": ds.get("n_samples"),
@@ -493,13 +504,12 @@ def _build_dome(audit: dict) -> dict:
             "target": (cfg.get("clinical") or {}).get("target"),
             "task": ds.get("task"),
             "provenance_sha256": meta.get("provenance_hash"),
-            "missing_values": "masked (neural) / median-imputed inside training folds "
-                              "(classical); never imputed at ingest",
+            "missing_values": miss_desc,
             "samples_dropped": ds.get("n_dropped", 0),
         },
         "optimization": {
             "hyperparameter_tuning": "none (library defaults)",
-            "feature_selection": "SelectKBest fitted inside each training fold only",
+            "feature_selection": fsel_desc,
             "preprocessing": "median-impute -> variance-filter -> standardize, fitted inside "
                              "training folds only (leakage-safe)",
             "seed": meta.get("seed"),
@@ -510,11 +520,11 @@ def _build_dome(audit: dict) -> dict:
             "primary_metric": models.get("primary_metric"),
         },
         "evaluation": {
-            "cross_validation": f"group-aware {cvc.get('n_splits')}-fold cross-validation "
+            "cross_validation": f"group-aware {actual_k}-fold cross-validation "
                                 f"with leakage-safe in-fold preprocessing",
             "uncertainty": f"{resample} bootstrap 95% confidence interval on the primary metric "
                            f"({cvc.get('n_bootstrap')} resamples)",
-            "controls": "shuffled-target / shuffled-features / random-noise leakage baselines",
+            "controls": controls_desc,
             "calibration": "Brier + ECE + reliability curve (binary classification)"
                            if util.get("calibration") else "not applicable",
             "limitations": [
@@ -817,11 +827,16 @@ _TEMPLATE = r"""<!doctype html>
     <div class="reading-guide">
       <span class="legend-row"><span class="swatch" style="background:#0072B2"></span>fusion</span>
       <span class="legend-row"><span class="swatch" style="background:#4477AA"></span>single modality</span>
+      {% if audit.models.neural and audit.models.neural.enabled %}<span class="legend-row"><span class="swatch" style="background:#CC79A7"></span>neural single</span>{% endif %}
       <span class="legend-row"><span class="swatch" style="background:#009E73"></span>leave-one-out</span>
       <span class="legend-row"><span class="swatch" style="background:#D55E00"></span>control baseline</span>
+      {% if util.batch_blocked %}<span class="legend-row"><span class="swatch" style="background:#E69F00"></span>stress test</span>{% endif %}
     </div>
     <div class="figure">{{ figs.performance|safe }}</div>
     {{ tables.models|safe }}
+    {% if util.auprc_baseline is not none %}
+    <p class="rc-sub">AUPRC baseline (positive-class prevalence) = {{ '%.3f'|format(util.auprc_baseline) }}; read each model's AUPRC as lift over this, not against 0.5.</p>
+    {% endif %}
     {% if util.batch_blocked %}
     <div class="consequence"><strong>Cross-site stress test.</strong> Blocking folds on batch (a new-batch
       generalization estimate) scores {{ '%.3f'|format(util.batch_blocked.primary) }} vs
@@ -838,8 +853,8 @@ _TEMPLATE = r"""<!doctype html>
     <div class="consequence">
       Brier score {{ '%.3f'|format(util.calibration.brier) }} (lower is better) ·
       expected calibration error {{ '%.3f'|format(util.calibration.ece) }}.
-      These probabilities are research-use-only and may be miscalibrated by construction — models
-      trained with balanced class weights (the logistic/forest classifiers) shift predicted
+      These probabilities are research-use-only and may be miscalibrated by construction — balanced
+      class weights (logistic/forest) or an over-confident softmax (neural) shift predicted
       probabilities away from the true event risk. Recalibrate before interpreting them as risks.
     </div>
   </section>

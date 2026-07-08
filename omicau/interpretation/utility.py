@@ -215,11 +215,12 @@ def build_utility_ledger(
     fusion_candidates = [r for r in classical_out["results"] if r.name.endswith("::FUSION")]
     fusion_candidates += [r for r in neural_out.get("results", []) if r.name == "neural::FUSION"]
     best = max(fusion_candidates, key=lambda r: (r.primary if np.isfinite(r.primary) else -1), default=None)
-    best_single = max(
-        (r for r in classical_out["results"] if "::" in r.name and "FUSION" not in r.name
-         and not r.name.startswith(("control::", "stress::"))),
-        key=lambda r: (r.primary if np.isfinite(r.primary) else -1), default=None,
-    )
+    # best_single spans BOTH classical and neural single-modality models, so the
+    # fusion-gain baseline is symmetric with `best` (which includes neural::FUSION).
+    single_pool = [r for r in classical_out["results"] if "::" in r.name and "FUSION" not in r.name
+                   and not r.name.startswith(("control::", "stress::"))]
+    single_pool += [r for r in neural_out.get("results", []) if "::" in r.name and "FUSION" not in r.name]
+    best_single = max(single_pool, key=lambda r: (r.primary if np.isfinite(r.primary) else -1), default=None)
 
     fusion_gain = (
         best.primary - best_single.primary if (best and best_single and np.isfinite(best.primary) and np.isfinite(best_single.primary)) else float("nan")
@@ -301,13 +302,17 @@ def _subgroup_metrics(best, aligned, metric_key):
     score = np.asarray(best.oof_score)
     pred = np.asarray(best.oof_pred)
     task = aligned.task
+    n_classes = len(np.unique(y)) if task == "classification" else 0
     strata = aligned.batch.astype("string").to_numpy()
     rows = []
     for lvl in sorted(set(strata)):
         m = strata == lvl
         if m.sum() < 5:
             continue
-        if task == "classification" and len(np.unique(y[m])) < 2:
+        # require ALL classes present, else score_predictions would take the binary
+        # branch on P(class 1) regardless of which classes the stratum holds — a
+        # silently wrong multiclass AUROC (mirrors the bootstrap_ci guard).
+        if task == "classification" and len(np.unique(y[m])) < n_classes:
             rows.append({"stratum": str(lvl), "n": int(m.sum()), "primary": None})
             continue
         hard = pred[m].astype(int) if task == "classification" else pred[m]

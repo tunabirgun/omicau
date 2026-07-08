@@ -64,12 +64,13 @@ def _reference_key(keys: list[str]) -> str:
 
 def _run_stacking(aligned, results, ref_key, config, groups, n_jobs, seed):
     """Late-integration stacking: cross-validate a meta-learner over the
-    single-modality out-of-fold predictions. The reported metric is honestly
-    out-of-fold -- base and meta CV share the same partition, so a meta-test
-    sample's meta-features are base predictions from models that excluded that
-    fold. It is not fully nested (base OOF is reused across meta-folds), so the
-    estimate is honest, if anything slightly conservative; treat a stacking win
-    as indicative."""
+    single-modality out-of-fold predictions. A meta-test sample's meta-features
+    are base predictions from models that excluded its fold (base and meta CV
+    share the partition), so the evaluation is out-of-fold, not in-sample. It is
+    not fully nested -- the base models that produced the meta-TRAIN features were
+    trained on folds that include the meta-test fold, so as an estimate of the
+    stacking procedure's own generalization it can be mildly optimistic. Treat a
+    stacking win as indicative."""
     mods = aligned.modality_names
     if len(mods) < 2:
         return None

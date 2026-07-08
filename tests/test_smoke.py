@@ -434,6 +434,26 @@ def test_calibration_and_ci_present_for_classification():
     assert util["calibration"] is not None
 
 
+def test_subgroup_metric_skips_multiclass_stratum_missing_a_class():
+    # a stratum lacking a class must be skipped, not scored as a wrong binary AUROC.
+    import types
+    import pandas as pd
+    from omicau.interpretation.utility import _subgroup_metrics
+    n = 90
+    rng = np.random.default_rng(1)
+    y = np.array([0, 1, 2] * 30)
+    score = rng.random((n, 3)); score /= score.sum(1, keepdims=True)
+    pred = score.argmax(1)
+    batch = np.array(["A"] * 30 + ["B"] * 30 + ["C"] * 30)
+    y = y.copy(); y[batch == "B"] = np.tile([0, 1], 15)          # B holds only {0, 1}
+    best = types.SimpleNamespace(oof_true=y, oof_score=score, oof_pred=pred)
+    al = types.SimpleNamespace(task="classification", batch=pd.Series(batch, name="site"))
+    sg = _subgroup_metrics(best, al, "auroc")
+    by = {r["stratum"]: r["primary"] for r in sg["strata"]}
+    assert by["B"] is None                                       # skipped, not silently wrong
+    assert by["A"] is not None and by["C"] is not None
+
+
 def test_regression_batch_confounding_is_tested():
     b = make_mock_dataset(task="regression", n_samples=120, seed=3)
     cfg = mock_config(); cfg.clinical.task = "regression"
