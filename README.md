@@ -284,10 +284,12 @@ Each modality is projected onto principal components (standardized;
 mean-imputed for the projection only — never for modeling). Batch structure is
 quantified by (i) the **silhouette** of batch labels in PC space, (ii) one-way
 **ANOVA** and **Kruskal-Wallis** of PC1 across batches, and (iii) the fraction
-of PC1 variance explained by batch, `η² = SS_between / SS_total`. A **chi-squared**
-test with **Cramér's V** between batch and a categorical target flags
-batch/target confounding — the regime in which a batch effect masquerades as
-signal.
+of PC1 variance explained by batch, `η² = SS_between / SS_total`. Batch/outcome
+confounding — the regime in which a batch effect masquerades as signal — is
+tested with a **chi-squared** test + **Cramér's V** for a categorical target and
+a one-way **ANOVA** with **η²** for a continuous (regression) target. This
+confounding result, not the PC-variance structure alone, gates the
+*batch-confounded* verdict.
 
 ### 5. Leakage-safe preprocessing (nested)
 
@@ -321,9 +323,11 @@ gradient boosting — omicau cross-validates:
 - the **full fusion**,
 - each **leave-one-modality-out** subset.
 
-The **marginal gain** of modality *m* is `Δ_m = score(FUSION) − score(FUSION∖m)`,
-with a paired *t*-test across folds (fold splits are identical across runs given
-the shared seed, so the comparison is paired).
+The **marginal gain** of modality *m* is `Δ_m = score(FUSION) − score(FUSION∖m)`.
+Because k-fold training sets overlap, its significance uses the **Nadeau–Bengio
+corrected resampled *t*-test** (inflating the fold-difference variance by
+`1/k + 1/(k−1)`) rather than a naive paired *t*-test, whose Type-I error is badly
+inflated; the same corrected test is applied to the neural fuser's gain.
 
 ### 8. Masked Global Pooling Fusion network (PyTorch)
 
@@ -362,15 +366,19 @@ Representational redundancy between modalities *X* and *Y* is the linear
 `CKA(X, Y) = ‖YᵀX‖_F² / (‖XᵀX‖_F · ‖YᵀY‖_F) ∈ [0, 1]`
 on column-standardized matrices; high CKA with a stronger-alone modality marks a
 layer as redundant. Each modality receives a verdict — *predictive*, *redundant*,
-*batch-confounded*, or *control-like* — from its standalone score, marginal gain
-significance, redundancy, and diagnostic flags.
+*batch-confounded*, or *control-like*. A layer is called *batch-confounded* only
+when its variance is batch-structured **and** batch is genuinely confounded with
+the outcome; a batch effect orthogonal to the outcome is harmless and is not
+flagged (Nygaard et al. 2016).
 
 ### 11. Control baselines
 
 The identical pipeline is run on three corrupted inputs to prove it does not
 leak: **shuffled target**, **column-shuffled features**, and **random Gaussian
-noise**. A well-behaved harness scores at chance on all three; if a control rises
-above chance, a leakage warning gates the whole ledger.
+noise**. A well-behaved harness scores at chance on all three; if a control beats
+chance by more than a **task-aware margin** (chance + 0.12, where chance is 0.5
+AUROC for classification and 0.0 R² for regression), a leakage warning gates the
+whole ledger.
 
 ### 12. Metrics
 
@@ -379,6 +387,14 @@ F1, Matthews correlation. Regression: R², RMSE, MAE, Spearman ρ, Pearson r. Al
 guard against degenerate folds (single-class, zero-variance) and return `NaN`
 rather than raising. The primary metric is AUROC (classification) or R²
 (regression).
+
+Every model's primary metric carries a **group-level bootstrap 95% confidence
+interval** (resampling whole patient groups, consistent with the group-aware CV);
+the per-fold spread is reported only as "fold dispersion," since correlated folds
+bias it low. For binary classification the report adds **calibration** — a
+reliability curve, Brier score, and expected calibration error — flagging that
+`class_weight="balanced"` miscalibrates the predicted probabilities by
+construction.
 
 ### 13. Pre-flight cost estimation
 

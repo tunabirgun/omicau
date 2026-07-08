@@ -137,12 +137,13 @@ def test_api_full_flow_end_to_end(tmp_path):
     al = client.post(f"/api/session/{sid}/align", headers=hdr).json()
     assert al["ok"] and al["matched_all_layers"] == 48
 
-    client.post(f"/api/session/{sid}/options", json={"n_splits": 2, "neural": False}, headers=hdr)
+    client.post(f"/api/session/{sid}/options",
+                json={"n_splits": 2, "neural": False, "n_bootstrap": 50}, headers=hdr)
     pf = client.post(f"/api/session/{sid}/preflight", headers=hdr).json()
     assert pf["ok"] and pf["n_samples"] == 48 and pf["provenance_hash"]
 
     assert client.post(f"/api/session/{sid}/run", headers=hdr).json()["started"] is True
-    for _ in range(240):                                   # poll up to ~60s
+    for _ in range(600):                                   # poll up to ~150s (bootstrap adds compute)
         prog = client.get(f"/api/session/{sid}/progress", headers=hdr).json()
         if prog["status"] in ("done", "error"):
             break

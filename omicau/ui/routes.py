@@ -121,7 +121,7 @@ def register(app) -> None:  # noqa: C901 - a flat set of small handlers
     @app.post("/api/session/{sid}/options")
     async def options(sid: str, payload: dict):
         s = _sess(sid)
-        for k in ("n_splits", "neural", "run_name"):
+        for k in ("n_splits", "neural", "run_name", "n_bootstrap"):
             if k in payload:
                 s[k] = payload[k]
         return {"ok": True}

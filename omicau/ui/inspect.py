@@ -282,7 +282,8 @@ def build_config_dict(session: dict) -> dict[str, Any]:
             "batch": clin.get("batch"),
             "task": clin.get("task", "auto"),
         },
-        "cv": {"n_splits": session.get("n_splits", 5), "seed": session.get("seed", 42)},
+        "cv": {"n_splits": session.get("n_splits", 5), "seed": session.get("seed", 42),
+               "n_bootstrap": session.get("n_bootstrap", 1000)},
         "neural": {"enabled": session.get("neural", True)},
         "llm": {"enabled": False},
     }
