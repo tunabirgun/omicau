@@ -93,6 +93,28 @@ def test_read_matrix_delimiters_and_sanitize(tmp_path):
     assert df.dtypes.map(lambda d: d == np.float64).all()
 
 
+def test_expression_atlas_ragged_sdrf_parses(tmp_path, monkeypatch):
+    # Regression: Expression Atlas condensed-SDRF rows are ragged -- a factor row may
+    # carry an optional 7th ontology-URI column. A fixed-width csv parser set its
+    # column count from the first row and then raised "Expected 6 fields, saw 7",
+    # which broke every cross-organism Atlas run. Parsing must tolerate the raggedness.
+    from omicau.data import expression_atlas as gxa
+    sdrf = (
+        "E-TEST-1\t\ts1\tcharacteristic\torganism\tMus musculus\n"                 # 6 cols
+        "E-TEST-1\t\ts1\tfactor\tgenotype\twild_type\thttp://purl.obo/OBI_1\n"     # 7 cols (URI)
+        "E-TEST-1\t\ts2\tfactor\tgenotype\tknockout\n"                             # 6 cols (no URI)
+        "E-TEST-1\t\ts2\tcharacteristic\torganism\tMus musculus\thttp://x/NCBI\n"  # 7 cols
+    )
+    p = tmp_path / "E-TEST-1.condensed-sdrf.tsv"
+    p.write_text(sdrf, encoding="utf-8", newline="")
+    monkeypatch.setattr(gxa, "download_file", lambda *a, **k: p)
+    fac = gxa.fetch_factors("E-TEST-1", session=object())        # session truthy -> no network
+    assert list(fac.columns) == ["genotype"]                     # only the factor rows pivot
+    assert fac.loc["s1", "genotype"] == "wild_type"
+    assert fac.loc["s2", "genotype"] == "knockout"
+    assert set(fac.index) == {"s1", "s2"}
+
+
 def test_orientation_autodetect_and_dirty_headers(bundle):
     cfg = _small_config()
     # transpose the signal modality (genes as rows) and add whitespace to labels.
