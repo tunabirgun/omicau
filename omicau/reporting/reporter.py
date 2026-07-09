@@ -323,10 +323,17 @@ def fig_performance(models: dict, include_js: bool, single: bool = False) -> str
                     error_y=dict(type="data", symmetric=False, array=g["eplus"],
                                  arrayminus=g["eminus"], visible=True, color="#64748B"))
     chance = 0.5 if models.get("task") == "classification" else 0.0
-    fig.add_hline(y=chance, line_dash="dot", line_color="#94A3B8",
-                  annotation_text="chance", annotation_position="top left")
+    # Label the chance line just OUTSIDE the plot on the right, at the line height, so
+    # it never lands on a bar. The inline "top left" label used to collide with the
+    # tallest (left-most, best-scoring) bars.
+    fig.add_hline(y=chance, line_dash="dot", line_color="#94A3B8")
+    fig.add_annotation(xref="paper", x=1.0, xanchor="left", xshift=6,
+                       yref="y", y=chance, yanchor="middle",
+                       text="chance", showarrow=False,
+                       font=dict(size=12, color="#94A3B8"))
     _base_layout(fig, ytitle=metric.upper())
-    fig.update_layout(xaxis_tickangle=-40, barmode="group")
+    fig.update_layout(xaxis_tickangle=-40, barmode="group",
+                      margin=dict(l=60, r=72, t=20, b=90))   # room for the outside label
     return _fig_html(fig, include_js)
 
 
