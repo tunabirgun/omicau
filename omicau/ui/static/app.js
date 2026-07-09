@@ -467,8 +467,13 @@ RENDERERS.clinical = async () => {
     ? (state.clinical.time && state.clinical.event)
     : state.clinical.target);
   wrap.append(footer({ back: true, nextOk: nextOk(), next: advance }));
-  // fire initial consequences
-  ["target", "group", "batch"].forEach((k) => { if (state.clinical[k]) showConsequence(k); });
+  // Fire initial consequences AFTER this node is mounted — showConsequence looks the
+  // target divs up via document.querySelector, which is null until renderContent
+  // appends `wrap`. Deferring one tick lets pre-filled values (e.g. a hub-loaded
+  // cohort, or returning to this step) show their notes instead of staying blank.
+  setTimeout(() => {
+    ["target", "group", "batch"].forEach((k) => { if (state.clinical[k]) showConsequence(k); });
+  }, 0);
   return wrap;
 
   function colSelect(key, label, columns, required, conseqKind) {
