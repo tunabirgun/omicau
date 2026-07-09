@@ -27,7 +27,7 @@ def _require_cptac():
     except ImportError as exc:  # pragma: no cover - optional dep
         raise ImportError(
             "CPTAC access needs the optional 'cptac' package: pip install cptac "
-            "(or omicau[data]). It downloads cohort data on first use."
+            "(or omicau[cptac]). It downloads cohort data on first use."
         ) from exc
 
 

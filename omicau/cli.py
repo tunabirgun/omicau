@@ -357,8 +357,9 @@ Per-dataset usage (all write a runnable config.json + matrices):
                   omicau bootstrap --dataset expression_atlas --out-dir d --study E-GEOD-100100 --target "RNA interference"
                   [--normalization log2cpm|tmm|median_of_ratios]  (default log2cpm; tmm/mor are whole-matrix)
 
-Omit --target to let the client pick a sensible default. Remote clients need
-`pip install omicau[data]`; the mock is fully offline.
+Omit --target to let the client pick a sensible default. Remote clients need the
+'data' extra (pip install ".[data]" from a checkout, or omicau[data] once
+published); the mock is fully offline.
 """
 
 
@@ -460,9 +461,9 @@ def ui(port: int | None, no_browser: bool, host: str) -> None:
     """
     try:
         from omicau.ui.server import launch
-    except ImportError as exc:
+        launch(host=host, port=port, open_browser=not no_browser, echo=click.echo)
+    except ImportError as exc:  # missing [ui] extra -> clean message, not a traceback
         raise click.ClickException(str(exc)) from exc
-    launch(host=host, port=port, open_browser=not no_browser, echo=click.echo)
 
 
 @main.command(name="check-env")
@@ -489,11 +490,13 @@ def check_env() -> None:
     ok = os.access(Path.cwd(), os.W_OK)
     click.echo(f"  {'cwd_write':12s} {'yes' if ok else 'NO'} ({Path.cwd()})")
 
-    # optional dependencies
+    # optional dependencies (names mirror the pyproject extras)
     click.secho("Optional tiers:", bold=True)
-    for name, mod in [("plotly", "plotly"), ("python-docx", "docx"), ("requests", "requests"),
-                      ("anthropic (LLM)", "anthropic"), ("cptac", "cptac"),
-                      ("google-cloud-storage", "google.cloud.storage"), ("pyyaml", "yaml")]:
+    for name, mod in [("requests ([data])", "requests"),
+                      ("google-cloud-storage ([data])", "google.cloud.storage"),
+                      ("anthropic ([llm])", "anthropic"), ("openai ([llm])", "openai"),
+                      ("fastapi ([ui])", "fastapi"), ("cptac ([cptac])", "cptac"),
+                      ("pyyaml ([yaml])", "yaml")]:
         try:
             __import__(mod)
             status, color = "available", "green"

@@ -61,8 +61,8 @@ def register(app) -> None:  # noqa: C901 - a flat set of small handlers
         for f in files:
             safe = Path(f.filename or "file.csv").name
             dest = Path(s["dir"]) / safe
-            dest.write_bytes(await f.read())
             try:
+                dest.write_bytes(await f.read())      # OSError on a Windows-illegal name -> clean 400
                 info = I.inspect_matrix(dest, safe)
             except Exception as exc:  # noqa: BLE001 - user-supplied files
                 raise HTTPException(400, f"Could not read '{safe}': {exc}")

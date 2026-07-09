@@ -93,6 +93,27 @@ def test_read_matrix_delimiters_and_sanitize(tmp_path):
     assert df.dtypes.map(lambda d: d == np.float64).all()
 
 
+def test_mixed_locale_decimal_not_corrupted(tmp_path):
+    # Regression: the European-decimal healer used to flip a WHOLE column to the
+    # comma->dot interpretation when it recovered more values, silently rewriting a
+    # correctly-parsed US '1.5' to 15. Now it only rescues cells direct could not read.
+    p = tmp_path / "mix.csv"
+    p.write_text("id;mix\ns1;1.5\ns2;2,5\ns3;3.0\n", encoding="utf-8", newline="")
+    df = read_matrix(p)
+    assert df.loc["s1", "mix"] == pytest.approx(1.5)   # US decimal preserved, NOT 15
+    assert df.loc["s2", "mix"] == pytest.approx(2.5)   # EU decimal rescued
+    assert df.loc["s3", "mix"] == pytest.approx(3.0)
+
+
+def test_empty_modality_file_raises_clear_error(tmp_path):
+    # A whitespace/BOM-only modality file must give a clear ValueError naming the
+    # file, not a raw pandas EmptyDataError bubbling to the CLI.
+    p = tmp_path / "empty.csv"
+    p.write_text("   \n", encoding="utf-8", newline="")
+    with pytest.raises(ValueError, match="empty or has no readable rows"):
+        read_matrix(p)
+
+
 def test_expression_atlas_ragged_sdrf_parses(tmp_path, monkeypatch):
     # Regression: Expression Atlas condensed-SDRF rows are ragged -- a factor row may
     # carry an optional 7th ontology-URI column. A fixed-width csv parser set its

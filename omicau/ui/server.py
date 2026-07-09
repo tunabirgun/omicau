@@ -106,6 +106,7 @@ def launch(host: str = "127.0.0.1", port: int | None = None, open_browser: bool 
            token: str | None = None, workspace: str | Path | None = None,
            echo=print) -> None:
     """Start the local UI server (blocking) and open the browser."""
+    _require_ui()          # clean 'pip install omicau[ui]' message before touching uvicorn
     import uvicorn
 
     token = token or secrets.token_urlsafe(16)
