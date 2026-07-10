@@ -1,13 +1,6 @@
 {% set name = "omicau" %}
 {% set version = "0.1.1" %}
 
-# conda-forge recipe for omicau. PyPI 0.1.1 is published and the sdist sha256
-# below is filled in, so this is READY TO SUBMIT: open a pull request adding this
-# recipe to https://github.com/conda-forge/staged-recipes. A conda-forge
-# maintainer must review and merge it before `conda install -c conda-forge omicau`
-# works; after that, the conda-forge autotick bot keeps it in sync with each new
-# PyPI release. Until the feedstock exists, use environment.yml for a conda env.
-
 package:
   name: {{ name|lower }}
   version: {{ version }}
@@ -40,6 +33,7 @@ requirements:
     - click >=8.1
     - jinja2 >=3.1
     - tqdm >=4.65
+    - tomli >=2.0            # TOML-config backport used on Python <3.11 (noarch: kept unconditional)
 
 test:
   imports:
