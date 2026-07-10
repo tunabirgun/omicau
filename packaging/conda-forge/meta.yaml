@@ -1,12 +1,12 @@
 {% set name = "omicau" %}
 {% set version = "0.1.0" %}
 
-# conda-forge recipe for omicau. This is PREPARED BUT NOT YET SUBMITTED: a
-# conda-forge package only exists after a maintainer-reviewed pull request to
-# https://github.com/conda-forge/staged-recipes is merged, and the build pulls
-# the sdist from PyPI, so the PyPI release (see .github/workflows/publish-pypi.yml)
-# must happen first. After that release, fill in the sdist sha256 below and open
-# the staged-recipes PR. Until then, use environment.yml for a working conda env.
+# conda-forge recipe for omicau. PyPI 0.1.0 is published and the sdist sha256
+# below is filled in, so this is READY TO SUBMIT: open a pull request adding this
+# recipe to https://github.com/conda-forge/staged-recipes. A conda-forge
+# maintainer must review and merge it before `conda install -c conda-forge omicau`
+# works; after that, the conda-forge autotick bot keeps it in sync with each new
+# PyPI release. Until the feedstock exists, use environment.yml for a conda env.
 
 package:
   name: {{ name|lower }}
@@ -14,7 +14,7 @@ package:
 
 source:
   url: https://pypi.org/packages/source/{{ name[0] }}/{{ name }}/{{ name }}-{{ version }}.tar.gz
-  sha256: 0000000000000000000000000000000000000000000000000000000000000000  # <- sdist sha256 after PyPI release
+  sha256: 73b4aab21e964ed5285701fcb877234efc821ffef9f64d3387b41fae5a288031
 
 build:
   noarch: python

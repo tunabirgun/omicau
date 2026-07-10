@@ -63,17 +63,17 @@ pip install ".[all]"          # every cross-platform runtime feature
 pip install ".[all,dev]"      # + pytest
 ```
 
-**C. pip / pipx from PyPI — after the first release**
-
-Not yet on PyPI. Once a tagged release is published, the bundled
-[`publish-pypi.yml`](.github/workflows/publish-pypi.yml) workflow uploads the
-sdist + wheel automatically, and these resolve for everyone:
+**C. pip / pipx from PyPI (simplest — [omicau is on PyPI](https://pypi.org/project/omicau/))**
 
 ```bash
 pipx install omicau            # isolated CLI install (recommended for a tool)
 pip install omicau             # or into the current environment
-pip install "omicau[all]"
+pip install "omicau[all]"      # every cross-platform runtime feature
 ```
+
+Later releases publish automatically via the bundled
+[`publish-pypi.yml`](.github/workflows/publish-pypi.yml) workflow (OIDC trusted
+publishing) on each GitHub Release.
 
 Core dependencies: `numpy`, `pandas`, `scipy`, `scikit-learn`, `torch`, `plotly`,
 `click`, `jinja2`, `tqdm`. The core runs fully offline; the extras above are the
