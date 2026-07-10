@@ -61,6 +61,18 @@ and Linux — only the optional extras touch the network or a platform-specific 
 > Or a venv: `python3 -m venv ~/.venvs/omicau && ~/.venvs/omicau/bin/pip install omicau`.
 > (`apt install python3-omicau` does not exist — omicau ships via PyPI/conda, not apt.)
 
+> **Linux torch size:** on Linux, `pip`/`pipx` pull PyTorch's **default CUDA build
+> (~2.5 GB of NVIDIA libraries)**, which is slow and unnecessary on a CPU-only box
+> (e.g. WSL). For a small, fast CPU-only install, install torch from the CPU index
+> **first**, then omicau reuses it:
+> ```bash
+> python3 -m venv ~/.venvs/omicau && source ~/.venvs/omicau/bin/activate
+> pip install torch --index-url https://download.pytorch.org/whl/cpu   # ~200 MB, not ~2.5 GB
+> pip install omicau
+> ```
+> conda users get the CPU build automatically via `environment.yml`. Keep the
+> default CUDA wheel only if you have an NVIDIA GPU and want it.
+
 **With conda / mamba** (installs CPU PyTorch as a prebuilt binary — no compiler step):
 
 ```bash
