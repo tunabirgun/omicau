@@ -77,9 +77,10 @@ work directly.)*
 | `[dev]` | pytest + coverage |
 
 Core dependencies: `numpy`, `pandas`, `scipy`, `scikit-learn`, `torch`, `plotly`,
-`click`, `jinja2`, `tqdm`. Later releases publish to PyPI automatically on each
-GitHub Release ([`publish-pypi.yml`](.github/workflows/publish-pypi.yml), OIDC
-trusted publishing).
+`click`, `jinja2`, `tqdm`. Releases are automatic: bumping `version` in
+`pyproject.toml` and merging to `main` publishes to PyPI via OIDC
+([`publish-pypi.yml`](.github/workflows/publish-pypi.yml), no stored token), and
+conda-forge auto-follows PyPI. See [RELEASING.md](RELEASING.md).
 
 ## Quickstart
 

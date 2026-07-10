@@ -127,7 +127,7 @@ conda activate omicau</code></pre>
   <pre><code>git clone https://github.com/tunabirgun/omicau.git &amp;&amp; cd omicau
 pip install ".[all,dev]"</code></pre>
   <p><strong>Optional extras</strong> — combine freely; use <code>omicau[x]</code> from PyPI or <code>.[x]</code> from a checkout: <code>[llm]</code> (AI verdict: Claude / ChatGPT / Gemini / local), <code>[data]</code> (remote data hubs), <code>[ui]</code> (no-code web UI), <code>[cptac]</code> (CPTAC hub; needs a build toolchain), <code>[all]</code> (every cross-platform feature), <code>[dev]</code> (tests).</p>
-  <p>Core dependencies: <code>numpy</code>, <code>pandas</code>, <code>scipy</code>, <code>scikit-learn</code>, <code>torch</code>, <code>plotly</code>, <code>click</code>, <code>jinja2</code>, <code>tqdm</code>. Each new release publishes to PyPI automatically on a version tag (OIDC trusted publishing), and conda-forge auto-follows PyPI.</p>
+  <p>Core dependencies: <code>numpy</code>, <code>pandas</code>, <code>scipy</code>, <code>scikit-learn</code>, <code>torch</code>, <code>plotly</code>, <code>click</code>, <code>jinja2</code>, <code>tqdm</code>. Releases are automatic: bumping the version in <code>pyproject.toml</code> and merging to <code>main</code> publishes to PyPI via OIDC (no stored token), and conda-forge auto-follows PyPI.</p>
 </section>
 
 <section id="quickstart">

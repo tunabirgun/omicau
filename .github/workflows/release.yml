@@ -2,10 +2,13 @@
 # PyInstaller cannot cross-compile, so each artifact is built on its own runner.
 name: build-desktop
 
+# Desktop installers are a deliberate, separately-gated release: they run only on
+# a published GitHub Release (or manual dispatch), NOT on a plain version tag, so a
+# routine PyPI version bump never drags in the code-signing / notarization pipeline.
 on:
   workflow_dispatch:
-  push:
-    tags: ["v*"]
+  release:
+    types: [published]
 
 jobs:
   build:

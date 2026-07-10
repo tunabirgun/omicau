@@ -1,53 +1,63 @@
-# Automatically publish omicau to PyPI whenever you push a version tag (or cut a
-# GitHub Release). Uses trusted publishing (OIDC) -- no API token stored in the repo.
+# Automatically publish omicau to PyPI when the version in pyproject.toml changes
+# on `main`. Uses trusted publishing (OIDC) -- NO API token is stored anywhere.
 #
-# ONE-TIME SETUP (register this repo as a PyPI trusted publisher):
+# The whole release is then: bump `version` in pyproject.toml, open a PR, merge it.
+# On merge, this workflow sees the changed version and publishes to PyPI; conda-forge
+# auto-follows PyPI. PyPI rejects duplicate versions, so the version bump is the
+# single deliberate act -- there is no separate tag/upload step. See RELEASING.md.
+#
+# ONE-TIME SETUP: register this repo as a PyPI trusted publisher (keyed to this
+# filename + environment, so never rename this file or add a second publish file):
 #   https://pypi.org/manage/account/publishing/  ->  project: omicau,
 #   owner: tunabirgun, repo: omicau, workflow: publish-pypi.yml, environment: pypi
-#
-# THEN, to ship an update (see RELEASING.md):
-#   1. bump `version` in pyproject.toml (PyPI never accepts a duplicate version)
-#   2. git commit + push
-#   3. git tag vX.Y.Z && git push --tags   ->  this workflow builds + publishes to PyPI
-# conda-forge then auto-follows PyPI via its autotick bot.
 name: publish-pypi
 
 on:
   push:
-    tags: ["v*"]          # a version tag publishes automatically
-  release:
-    types: [published]    # a GitHub Release also publishes
-  workflow_dispatch:      # or run it by hand
+    branches: [main]
+    paths: ["pyproject.toml"]   # cheap pre-filter; the gate below confirms the version bumped
+  workflow_dispatch:            # manual override (always builds; skip-existing guards re-uploads)
 
 permissions:
   contents: read
 
 jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.check.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2        # need HEAD~1 to diff the version against the previous commit
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - id: check
+        run: |
+          NEW="$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")"
+          OLD="$(git show HEAD~1:pyproject.toml 2>/dev/null | python -c "import sys,tomllib; print(tomllib.load(sys.stdin.buffer)['project']['version'])" 2>/dev/null || echo none)"
+          if [ "$NEW" != "$OLD" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"; echo "version bump: $OLD -> $NEW (publishing)"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"; echo "version unchanged ($NEW); nothing to publish"
+          fi
+
   build:
+    needs: gate
+    if: needs.gate.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Verify the tag matches the package version
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: |
-          TAG="${GITHUB_REF_NAME#v}"
-          VER="$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")"
-          echo "tag=$TAG  pyproject=$VER"
-          if [ "$TAG" != "$VER" ]; then
-            echo "::error::tag v$TAG does not match pyproject version $VER -- bump pyproject.toml"
-            exit 1
-          fi
       - name: Build sdist + wheel
         run: |
-          python -m pip install --upgrade build
+          python -m pip install --upgrade build twine
           python -m build
       - name: Check metadata
-        run: |
-          python -m pip install --upgrade twine
-          python -m twine check dist/*
+        run: python -m twine check dist/*
       - uses: actions/upload-artifact@v4
         with:
           name: dist
@@ -58,7 +68,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
-      id-token: write   # required for OIDC trusted publishing
+      id-token: write   # required for OIDC trusted publishing (no token stored in the repo)
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -66,4 +76,4 @@ jobs:
           path: dist/
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          skip-existing: true   # don't hard-fail if this version is already on PyPI
+          skip-existing: true   # idempotent: a re-run of an already-published version is a no-op
