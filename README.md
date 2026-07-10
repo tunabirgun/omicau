@@ -38,47 +38,48 @@ masked missing-value handling, control baselines).
 
 ## Installation
 
-Pick one; all three give you the same `omicau` command. Python ≥ 3.10.
-
-**A. conda / mamba (recommended — installs CPU PyTorch for you, no compiler step)**
+**[omicau is on PyPI](https://pypi.org/project/omicau/) — one line installs it.**
+Python ≥ 3.10; every option below gives the same `omicau` command.
 
 ```bash
-git clone https://github.com/tunabirgun/omicau.git
-cd omicau
-conda env create -f environment.yml     # or: mamba env create -f environment.yml
-conda activate omicau
-omicau check-env
+pipx install omicau            # simplest: isolated CLI install (recommended for a tool)
+pip install omicau             # or into your current environment
+pip install "omicau[all]"      # + every cross-platform runtime feature
 ```
 
-**B. pip, from source**
+`pipx` keeps omicau in its own environment (nothing to conflict with your other
+packages); plain `pip` works too. The base install is flawless on Windows, macOS,
+and Linux — only the optional extras touch the network or a platform-specific dep.
+
+**With conda / mamba** (installs CPU PyTorch as a prebuilt binary — no compiler step):
 
 ```bash
 git clone https://github.com/tunabirgun/omicau.git && cd omicau
-pip install .                 # core, fully offline
-pip install ".[llm]"          # + AI verdict plugin (Claude / ChatGPT / Gemini / local)
-pip install ".[data]"         # + remote data hubs (requests, google-cloud-storage)
-pip install ".[ui]"           # + optional local no-code web UI (FastAPI + uvicorn)
-pip install ".[cptac]"        # + CPTAC hub only (needs a build toolchain; not on Windows/py3.12)
-pip install ".[all]"          # every cross-platform runtime feature
-pip install ".[all,dev]"      # + pytest
+conda env create -f environment.yml     # or: mamba env create -f environment.yml
+conda activate omicau
 ```
 
-**C. pip / pipx from PyPI (simplest — [omicau is on PyPI](https://pypi.org/project/omicau/))**
+*(Once the conda-forge feedstock lands, `conda install -c conda-forge omicau` will
+work directly.)*
 
-```bash
-pipx install omicau            # isolated CLI install (recommended for a tool)
-pip install omicau             # or into the current environment
-pip install "omicau[all]"      # every cross-platform runtime feature
-```
+**From source** (development / latest `main`):
+`git clone https://github.com/tunabirgun/omicau.git && cd omicau && pip install ".[all,dev]"`.
 
-Later releases publish automatically via the bundled
-[`publish-pypi.yml`](.github/workflows/publish-pypi.yml) workflow (OIDC trusted
-publishing) on each GitHub Release.
+**Optional extras** — combine freely; use `omicau[x]` from PyPI or `.[x]` from a checkout:
+
+| Extra | Adds |
+| --- | --- |
+| `[llm]` | AI plain-language verdict (Claude / ChatGPT / Gemini / local) |
+| `[data]` | remote data hubs (TCGA, CCLE, Xena, OpenPBTA, Metabolomics, Expression Atlas) |
+| `[ui]` | local no-code web UI (FastAPI + uvicorn) |
+| `[cptac]` | CPTAC hub only (needs a build toolchain; no Windows / py3.12 wheel) |
+| `[all]` | every cross-platform runtime feature (everything except `cptac` + dev) |
+| `[dev]` | pytest + coverage |
 
 Core dependencies: `numpy`, `pandas`, `scipy`, `scikit-learn`, `torch`, `plotly`,
-`click`, `jinja2`, `tqdm`. The core runs fully offline; the extras above are the
-only network-touching or platform-specific parts, so the base install is flawless
-on Windows, macOS, and Linux.
+`click`, `jinja2`, `tqdm`. Later releases publish to PyPI automatically on each
+GitHub Release ([`publish-pypi.yml`](.github/workflows/publish-pypi.yml), OIDC
+trusted publishing).
 
 ## Quickstart
 

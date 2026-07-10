@@ -112,28 +112,22 @@
 
 <section id="install">
   <h2>Installation</h2>
-  <p>Pick one — all three give you the same <code>omicau</code> command. Python ≥ 3.10.</p>
-  <h3>conda / mamba <span class="pill">recommended</span></h3>
-  <div class="callout plain"><span class="lbl">ℹ Handles PyTorch for you</span>conda installs the scientific stack (including CPU PyTorch) as prebuilt binaries — no compiler step, no CUDA download.</div>
-  <pre><code>git clone https://github.com/tunabirgun/omicau.git
-cd omicau
-conda env create -f environment.yml     # or: mamba env create -f environment.yml
-conda activate omicau
-omicau check-env</code></pre>
-  <h3>pip, from source</h3>
+  <p><a href="https://pypi.org/project/omicau/">omicau is on PyPI</a> — one line installs it. Python ≥ 3.10; every option below gives the same <code>omicau</code> command.</p>
+  <h3>pip / pipx <span class="pill">simplest</span></h3>
+  <pre><code>pipx install omicau            # isolated CLI install — recommended for a tool
+pip install omicau             # or into your current environment
+pip install "omicau[all]"      # + every cross-platform runtime feature</code></pre>
+  <div class="callout plain"><span class="lbl">ℹ pipx vs pip</span><code>pipx</code> keeps omicau in its own isolated environment (nothing to conflict with your other packages); plain <code>pip</code> works too. The base install is flawless on Windows, macOS, and Linux — only the optional extras touch the network or a platform-specific dependency.</div>
+  <h3>conda / mamba</h3>
+  <div class="callout plain"><span class="lbl">ℹ Handles PyTorch for you</span>conda installs the scientific stack (including CPU PyTorch) as prebuilt binaries — no compiler step, no CUDA download. Once the conda-forge feedstock lands, <code>conda install -c conda-forge omicau</code> will work directly.</div>
   <pre><code>git clone https://github.com/tunabirgun/omicau.git &amp;&amp; cd omicau
-pip install .                 # core, fully offline
-pip install ".[ui]"           # + optional local no-code web UI
-pip install ".[data]"         # + remote data hubs
-pip install ".[llm]"          # + AI plain-language verdict plugin
-pip install ".[all]"          # every cross-platform runtime feature
-pip install ".[cptac]"        # + CPTAC hub only (build toolchain; not on Windows/py3.12)</code></pre>
-  <h3>pip / pipx from PyPI <span class="pill">simplest</span></h3>
-  <p><a href="https://pypi.org/project/omicau/">omicau is on PyPI</a>, so these resolve for everyone; later releases publish automatically on each GitHub Release:</p>
-  <pre><code>pipx install omicau            # isolated CLI install (recommended for a tool)
-pip install omicau
-pip install "omicau[all]"</code></pre>
-  <p>Core dependencies: <code>numpy</code>, <code>pandas</code>, <code>scipy</code>, <code>scikit-learn</code>, <code>torch</code>, <code>plotly</code>, <code>click</code>, <code>jinja2</code>, <code>tqdm</code>. The base install is flawless on Windows, macOS, and Linux; only the extras touch the network or a platform-specific dependency.</p>
+conda env create -f environment.yml     # or: mamba env create -f environment.yml
+conda activate omicau</code></pre>
+  <h3>From source <span class="pill">development</span></h3>
+  <pre><code>git clone https://github.com/tunabirgun/omicau.git &amp;&amp; cd omicau
+pip install ".[all,dev]"</code></pre>
+  <p><strong>Optional extras</strong> — combine freely; use <code>omicau[x]</code> from PyPI or <code>.[x]</code> from a checkout: <code>[llm]</code> (AI verdict: Claude / ChatGPT / Gemini / local), <code>[data]</code> (remote data hubs), <code>[ui]</code> (no-code web UI), <code>[cptac]</code> (CPTAC hub; needs a build toolchain), <code>[all]</code> (every cross-platform feature), <code>[dev]</code> (tests).</p>
+  <p>Core dependencies: <code>numpy</code>, <code>pandas</code>, <code>scipy</code>, <code>scikit-learn</code>, <code>torch</code>, <code>plotly</code>, <code>click</code>, <code>jinja2</code>, <code>tqdm</code>. Each new release publishes to PyPI automatically on a version tag (OIDC trusted publishing), and conda-forge auto-follows PyPI.</p>
 </section>
 
 <section id="quickstart">
