@@ -51,6 +51,16 @@ pip install "omicau[all]"      # + every cross-platform runtime feature
 packages); plain `pip` works too. The base install is flawless on Windows, macOS,
 and Linux — only the optional extras touch the network or a platform-specific dep.
 
+> **Debian / Ubuntu (24.04+):** the system Python is "externally managed" (PEP 668),
+> so `pip install omicau` into it errors with `externally-managed-environment`.
+> Use `pipx` (recommended) or a virtual environment — not system `pip`:
+> ```bash
+> sudo apt install -y pipx && pipx ensurepath
+> pipx install omicau            # then restart the shell; `omicau` is on your PATH
+> ```
+> Or a venv: `python3 -m venv ~/.venvs/omicau && ~/.venvs/omicau/bin/pip install omicau`.
+> (`apt install python3-omicau` does not exist — omicau ships via PyPI/conda, not apt.)
+
 **With conda / mamba** (installs CPU PyTorch as a prebuilt binary — no compiler step):
 
 ```bash

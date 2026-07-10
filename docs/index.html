@@ -118,6 +118,7 @@
 pip install omicau             # or into your current environment
 pip install "omicau[all]"      # + every cross-platform runtime feature</code></pre>
   <div class="callout plain"><span class="lbl">ℹ pipx vs pip</span><code>pipx</code> keeps omicau in its own isolated environment (nothing to conflict with your other packages); plain <code>pip</code> works too. The base install is flawless on Windows, macOS, and Linux — only the optional extras touch the network or a platform-specific dependency.</div>
+  <div class="callout warn"><span class="lbl">⚠ Debian / Ubuntu 24.04+</span>The system Python is "externally managed" (PEP 668), so <code>pip install omicau</code> into it errors with <code>externally-managed-environment</code>. Install with <code>pipx</code> instead: <code>sudo apt install -y pipx &amp;&amp; pipx ensurepath &amp;&amp; pipx install omicau</code> (then restart the shell). Or use a virtual environment. <code>apt install python3-omicau</code> does not exist — omicau ships via PyPI/conda, not apt.</div>
   <h3>conda / mamba</h3>
   <div class="callout plain"><span class="lbl">ℹ Handles PyTorch for you</span>conda installs the scientific stack (including CPU PyTorch) as prebuilt binaries — no compiler step, no CUDA download. Once the conda-forge feedstock lands, <code>conda install -c conda-forge omicau</code> will work directly.</div>
   <pre><code>git clone https://github.com/tunabirgun/omicau.git &amp;&amp; cd omicau
