@@ -4,7 +4,11 @@
 ; SmartScreen reputation accrues to one certificate.
 
 #define AppName "omicau"
-#define AppVersion "0.1.0"
+; Version is injected by build-windows.ps1 from pyproject.toml (iscc /DAppVersion=X.Y.Z);
+; the default here is a fallback for a bare `iscc` invocation and must track pyproject.
+#ifndef AppVersion
+  #define AppVersion "0.1.1"
+#endif
 #define AppPublisher "Tuna Birgun"
 #define AppURL "https://github.com/tunabirgun/omicau"
 

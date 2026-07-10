@@ -331,9 +331,11 @@ def run(config_path: Path, cores: int | None, device: str, llm: bool | None,
     assets = audit.get("_assets", {})
     click.secho("\nDone. Assets written:", fg="green", bold=True)
     for k, v in assets.items():
-        click.echo(f"  {k:16s} {v}")
+        click.echo(f"  {k:16s} {Path(v).resolve()}")        # absolute paths: copy/click straight from the terminal
     if "html" in assets:
-        click.secho(f"\nOpen the dashboard: {assets['html']}", fg="cyan")
+        html_path = Path(assets["html"]).resolve()
+        click.secho(f"\nOpen the dashboard: {html_path}", fg="cyan", bold=True)
+        click.secho(f"  clickable link:   {html_path.as_uri()}", fg="cyan")
 
 
 _BOOTSTRAP_EPILOG = """\
@@ -357,8 +359,9 @@ Per-dataset usage (all write a runnable config.json + matrices):
                   omicau bootstrap --dataset expression_atlas --out-dir d --study E-GEOD-100100 --target "RNA interference"
                   [--normalization log2cpm|tmm|median_of_ratios]  (default log2cpm; tmm/mor are whole-matrix)
 
-Omit --target to let the client pick a sensible default. Remote clients need
-`pip install omicau[data]`; the mock is fully offline.
+Omit --target to let the client pick a sensible default. Remote clients need the
+'data' extra (pip install ".[data]" from a checkout, or omicau[data] once
+published); the mock is fully offline.
 """
 
 
@@ -400,7 +403,7 @@ def bootstrap(dataset: str, out_dir: Path, study: str | None, target: str | None
                        preset=preset, task=task, seed=seed, normalization=normalization)
     except Exception as exc:  # noqa: BLE001
         raise click.ClickException(str(exc)) from exc
-    click.secho(f"Ready. Run:\n  omicau run --config {cfg}", fg="green", bold=True)
+    click.secho(f"Ready. Run:\n  omicau run --config {Path(cfg).resolve()}", fg="green", bold=True)
 
 
 @main.command()
@@ -460,9 +463,9 @@ def ui(port: int | None, no_browser: bool, host: str) -> None:
     """
     try:
         from omicau.ui.server import launch
-    except ImportError as exc:
+        launch(host=host, port=port, open_browser=not no_browser, echo=click.echo)
+    except ImportError as exc:  # missing [ui] extra -> clean message, not a traceback
         raise click.ClickException(str(exc)) from exc
-    launch(host=host, port=port, open_browser=not no_browser, echo=click.echo)
 
 
 @main.command(name="check-env")
@@ -489,11 +492,13 @@ def check_env() -> None:
     ok = os.access(Path.cwd(), os.W_OK)
     click.echo(f"  {'cwd_write':12s} {'yes' if ok else 'NO'} ({Path.cwd()})")
 
-    # optional dependencies
+    # optional dependencies (names mirror the pyproject extras)
     click.secho("Optional tiers:", bold=True)
-    for name, mod in [("plotly", "plotly"), ("python-docx", "docx"), ("requests", "requests"),
-                      ("anthropic (LLM)", "anthropic"), ("cptac", "cptac"),
-                      ("google-cloud-storage", "google.cloud.storage"), ("pyyaml", "yaml")]:
+    for name, mod in [("requests ([data])", "requests"),
+                      ("google-cloud-storage ([data])", "google.cloud.storage"),
+                      ("anthropic ([llm])", "anthropic"), ("openai ([llm])", "openai"),
+                      ("fastapi ([ui])", "fastapi"), ("cptac ([cptac])", "cptac"),
+                      ("pyyaml ([yaml])", "yaml")]:
         try:
             __import__(mod)
             status, color = "available", "green"

@@ -93,6 +93,49 @@ def test_read_matrix_delimiters_and_sanitize(tmp_path):
     assert df.dtypes.map(lambda d: d == np.float64).all()
 
 
+def test_mixed_locale_decimal_not_corrupted(tmp_path):
+    # Regression: the European-decimal healer used to flip a WHOLE column to the
+    # comma->dot interpretation when it recovered more values, silently rewriting a
+    # correctly-parsed US '1.5' to 15. Now it only rescues cells direct could not read.
+    p = tmp_path / "mix.csv"
+    p.write_text("id;mix\ns1;1.5\ns2;2,5\ns3;3.0\n", encoding="utf-8", newline="")
+    df = read_matrix(p)
+    assert df.loc["s1", "mix"] == pytest.approx(1.5)   # US decimal preserved, NOT 15
+    assert df.loc["s2", "mix"] == pytest.approx(2.5)   # EU decimal rescued
+    assert df.loc["s3", "mix"] == pytest.approx(3.0)
+
+
+def test_empty_modality_file_raises_clear_error(tmp_path):
+    # A whitespace/BOM-only modality file must give a clear ValueError naming the
+    # file, not a raw pandas EmptyDataError bubbling to the CLI.
+    p = tmp_path / "empty.csv"
+    p.write_text("   \n", encoding="utf-8", newline="")
+    with pytest.raises(ValueError, match="empty or has no readable rows"):
+        read_matrix(p)
+
+
+def test_expression_atlas_ragged_sdrf_parses(tmp_path, monkeypatch):
+    # Regression: Expression Atlas condensed-SDRF rows are ragged -- a factor row may
+    # carry an optional 7th ontology-URI column. A fixed-width csv parser set its
+    # column count from the first row and then raised "Expected 6 fields, saw 7",
+    # which broke every cross-organism Atlas run. Parsing must tolerate the raggedness.
+    from omicau.data import expression_atlas as gxa
+    sdrf = (
+        "E-TEST-1\t\ts1\tcharacteristic\torganism\tMus musculus\n"                 # 6 cols
+        "E-TEST-1\t\ts1\tfactor\tgenotype\twild_type\thttp://purl.obo/OBI_1\n"     # 7 cols (URI)
+        "E-TEST-1\t\ts2\tfactor\tgenotype\tknockout\n"                             # 6 cols (no URI)
+        "E-TEST-1\t\ts2\tcharacteristic\torganism\tMus musculus\thttp://x/NCBI\n"  # 7 cols
+    )
+    p = tmp_path / "E-TEST-1.condensed-sdrf.tsv"
+    p.write_text(sdrf, encoding="utf-8", newline="")
+    monkeypatch.setattr(gxa, "download_file", lambda *a, **k: p)
+    fac = gxa.fetch_factors("E-TEST-1", session=object())        # session truthy -> no network
+    assert list(fac.columns) == ["genotype"]                     # only the factor rows pivot
+    assert fac.loc["s1", "genotype"] == "wild_type"
+    assert fac.loc["s2", "genotype"] == "knockout"
+    assert set(fac.index) == {"s1", "s2"}
+
+
 def test_orientation_autodetect_and_dirty_headers(bundle):
     cfg = _small_config()
     # transpose the signal modality (genes as rows) and add whitespace to labels.

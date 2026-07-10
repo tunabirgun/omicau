@@ -112,12 +112,24 @@
 
 <section id="install">
   <h2>Installation</h2>
-  <pre><code>pip install .                 # core, fully offline
-pip install ".[ui]"           # + optional local no-code web UI
-pip install ".[data]"         # + remote data hubs
-pip install ".[llm]"          # + optional LLM interpretation plugin
-pip install ".[all,dev]"      # everything + tests</code></pre>
-  <p>Python ≥ 3.10. Core dependencies: <code>numpy</code>, <code>pandas</code>, <code>scipy</code>, <code>scikit-learn</code>, <code>torch</code>, <code>plotly</code>, <code>click</code>, <code>jinja2</code>, <code>tqdm</code>.</p>
+  <p><a href="https://pypi.org/project/omicau/">omicau is on PyPI</a> — one line installs it. Python ≥ 3.10; every option below gives the same <code>omicau</code> command.</p>
+  <h3>pip / pipx <span class="pill">simplest</span></h3>
+  <pre><code>pipx install omicau            # isolated CLI install — recommended for a tool
+pip install omicau             # or into your current environment
+pip install "omicau[all]"      # + every cross-platform runtime feature</code></pre>
+  <div class="callout plain"><span class="lbl">ℹ pipx vs pip</span><code>pipx</code> keeps omicau in its own isolated environment (nothing to conflict with your other packages); plain <code>pip</code> works too. The base install is flawless on Windows, macOS, and Linux — only the optional extras touch the network or a platform-specific dependency.</div>
+  <div class="callout warn"><span class="lbl">⚠ Debian / Ubuntu 24.04+</span>The system Python is "externally managed" (PEP 668), so <code>pip install omicau</code> into it errors with <code>externally-managed-environment</code>. Install with <code>pipx</code> instead: <code>sudo apt install -y pipx &amp;&amp; pipx ensurepath &amp;&amp; pipx install omicau</code> (then restart the shell). Or use a virtual environment. <code>apt install python3-omicau</code> does not exist — omicau ships via PyPI/conda, not apt.</div>
+  <div class="callout plain"><span class="lbl">ℹ Linux torch size</span>On Linux, <code>pip</code>/<code>pipx</code> pull PyTorch's default <strong>CUDA build (~2.5 GB)</strong> — slow and unnecessary on a CPU-only box (e.g. WSL). For a small CPU-only install (~200 MB), install torch from the CPU index first, then omicau reuses it: <code>pip install torch --index-url https://download.pytorch.org/whl/cpu</code> then <code>pip install omicau</code>. conda gets the CPU build automatically via <code>environment.yml</code>.</div>
+  <h3>conda / mamba</h3>
+  <div class="callout plain"><span class="lbl">ℹ Handles PyTorch for you</span>conda installs the scientific stack (including CPU PyTorch) as prebuilt binaries — no compiler step, no CUDA download. Once the conda-forge feedstock lands, <code>conda install -c conda-forge omicau</code> will work directly.</div>
+  <pre><code>git clone https://github.com/tunabirgun/omicau.git &amp;&amp; cd omicau
+conda env create -f environment.yml     # or: mamba env create -f environment.yml
+conda activate omicau</code></pre>
+  <h3>From source <span class="pill">development</span></h3>
+  <pre><code>git clone https://github.com/tunabirgun/omicau.git &amp;&amp; cd omicau
+pip install ".[all,dev]"</code></pre>
+  <p><strong>Optional extras</strong> — combine freely: <code>omicau[x]</code> from PyPI, <code>.[x]</code> from a checkout, or (on a <strong>pipx</strong> install) <code>pipx inject omicau &lt;deps&gt;</code>: <code>[llm]</code> (AI verdict: Claude / ChatGPT / Gemini / local), <code>[data]</code> (remote data hubs), <code>[ui]</code> (no-code web UI), <code>[cptac]</code> (CPTAC hub; needs a build toolchain), <code>[all]</code> (every cross-platform feature), <code>[dev]</code> (tests). omicau's error messages print the exact install command for your environment.</p>
+  <p>Core dependencies: <code>numpy</code>, <code>pandas</code>, <code>scipy</code>, <code>scikit-learn</code>, <code>torch</code>, <code>plotly</code>, <code>click</code>, <code>jinja2</code>, <code>tqdm</code>. Releases are automatic: bumping the version in <code>pyproject.toml</code> and merging to <code>main</code> publishes to PyPI via OIDC (no stored token), and conda-forge auto-follows PyPI.</p>
 </section>
 
 <section id="quickstart">
@@ -345,6 +357,7 @@ omicau verify --config config.json --audit run/audit.json</code></pre>
 <section id="hubs">
   <h2>Data hubs</h2>
   <p>Optional clients pull public cohorts (verified live). The primary workflow remains your own data.</p>
+  <div class="callout plain"><span class="lbl">ℹ Finding a valid identifier</span>Browse the source, copy an id, pass it to <code>bootstrap</code>. <strong>Expression Atlas</strong> (any organism): the <code>E-…</code> accession at <a href="https://www.ebi.ac.uk/gxa/experiments">ebi.ac.uk/gxa/experiments</a>, with <code>--target</code> set to one of its listed experimental factors. <strong>TCGA</strong>: a study id at <a href="https://www.cbioportal.org/datasets">cbioportal.org/datasets</a>. <strong>Metabolomics Workbench</strong>: a <code>ST0000xx</code> id. <strong>CCLE</strong>: any gene symbol. Pick a target with at least two well-populated groups; omit <code>--target</code> for a sensible default.</div>
   <div class="tablewrap"><table>
     <tr><th>Client</th><th>Source</th><th>Modalities → target</th></tr>
     <tr><td><code>tcga</code></td><td>cBioPortal (no auth)</td><td>mRNA + copy-number + clinical</td></tr>
@@ -366,7 +379,7 @@ omicau verify --config config.json --audit run/audit.json</code></pre>
     <tr><td><code>omicau verify --config … [--expected H] [--audit …]</code></td><td>recompute / check the provenance hash</td></tr>
     <tr><td><code>omicau ui</code></td><td>launch the optional local web UI</td></tr>
   </table></div>
-  <p>Key config knobs: <code>cv.n_splits</code>, <code>cv.n_bootstrap</code>, <code>cv.batch_blocked</code>, <code>compute.deterministic</code>, <code>neural.enabled</code>, <code>llm.enabled</code>. Configs may be JSON, TOML, or YAML.</p>
+  <p>Key config knobs: <code>cv.n_splits</code>, <code>cv.n_bootstrap</code>, <code>cv.batch_blocked</code>, <code>compute.deterministic</code>, <code>neural.enabled</code>, <code>llm.enabled</code>. Configs may be JSON or TOML; YAML additionally needs <code>pip install omicau[yaml]</code>.</p>
 </section>
 
 <section id="ruo">

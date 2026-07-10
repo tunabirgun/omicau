@@ -117,12 +117,26 @@ def fetch_factors(accession: str, session=None) -> pd.DataFrame:
     session = session or require_requests().Session()
     fname = f"{accession}.condensed-sdrf.tsv"
     path = download_file(FTP.format(acc=accession, fname=fname), _cache() / fname, session=session)
-    # positional: [2]=sample, [3]=characteristic|factor, [4]=name, [5]=value, ([6]=uri)
-    sdrf = pd.read_csv(path, sep="\t", header=None, dtype=str).fillna("")
-    fac = sdrf[sdrf[3] == "factor"]
+    # The condensed-SDRF is a headerless, RAGGED TSV: most rows are
+    # [0]=accession [1]=array(blank for RNA-seq) [2]=sample [3]=characteristic|factor
+    # [4]=name [5]=value, but factor rows may carry an optional [6]=ontology URI. A
+    # fixed-width csv parser sets its column count from the first row and then errors
+    # on the wider rows, so parse positionally and keep only the four fields we use.
+    rows: list[list[str]] = []
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            line = line.rstrip("\r\n")
+            if not line.strip():
+                continue
+            parts = (line.split("\t") + [""] * 6)[:6]  # pad/truncate so [2:6] always exists
+            rows.append(parts[2:6])                     # sample, type, name, value
+    if not rows:
+        return pd.DataFrame()
+    sdrf = pd.DataFrame(rows, columns=["sample", "type", "name", "value"])
+    fac = sdrf[sdrf["type"] == "factor"]
     if fac.empty:
         return pd.DataFrame()
-    wide = (fac.pivot_table(index=2, columns=4, values=5, aggfunc="first")
+    wide = (fac.pivot_table(index="sample", columns="name", values="value", aggfunc="first")
                .rename_axis(index="sample_id", columns=None))
     wide.index = wide.index.astype(str)
     return wide

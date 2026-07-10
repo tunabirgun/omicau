@@ -1,0 +1,68 @@
+{% set name = "omicau" %}
+{% set version = "0.1.0" %}
+
+# conda-forge recipe for omicau. PyPI 0.1.0 is published and the sdist sha256
+# below is filled in, so this is READY TO SUBMIT: open a pull request adding this
+# recipe to https://github.com/conda-forge/staged-recipes. A conda-forge
+# maintainer must review and merge it before `conda install -c conda-forge omicau`
+# works; after that, the conda-forge autotick bot keeps it in sync with each new
+# PyPI release. Until the feedstock exists, use environment.yml for a conda env.
+
+package:
+  name: {{ name|lower }}
+  version: {{ version }}
+
+source:
+  url: https://pypi.org/packages/source/{{ name[0] }}/{{ name }}/{{ name }}-{{ version }}.tar.gz
+  sha256: 73b4aab21e964ed5285701fcb877234efc821ffef9f64d3387b41fae5a288031
+
+build:
+  noarch: python
+  number: 0
+  script: {{ PYTHON }} -m pip install . -vv --no-deps --no-build-isolation
+  entry_points:
+    - omicau = omicau.cli:main
+
+requirements:
+  host:
+    - python >=3.10
+    - pip
+    - setuptools >=68
+    - wheel
+  run:
+    - python >=3.10
+    - numpy >=1.24
+    - pandas >=2.2
+    - scipy >=1.11
+    - scikit-learn >=1.3
+    - pytorch >=2.0
+    - plotly >=5.18
+    - click >=8.1
+    - jinja2 >=3.1
+    - tqdm >=4.65
+
+test:
+  imports:
+    - omicau
+    - omicau.cli
+  commands:
+    - omicau --help
+    - omicau check-env
+
+about:
+  home: https://github.com/tunabirgun/omicau
+  license: MIT
+  license_file: LICENSE
+  summary: Omics Audit -- a reproducible, leakage-safe multi-omics data-audit and fusion-benchmarking CLI.
+  description: |
+    omicau audits multi-omic datasets: flexible ingestion and alignment,
+    value-level cryptographic provenance, missingness-bias and batch-effect
+    diagnostics, leakage-safe classical and PyTorch fusion benchmarks under
+    group-aware cross-validation, permutation-importance attribution, a
+    modality-utility ledger, and a self-contained interactive HTML dashboard.
+  doc_url: https://tunabirgun.github.io/omicau/
+  dev_url: https://github.com/tunabirgun/omicau
+
+extra:
+  recipe-maintainers:
+    - tunabirgun

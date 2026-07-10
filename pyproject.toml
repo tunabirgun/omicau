@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "omicau"
-version = "0.1.0"
+version = "0.1.1"
 description = "Omics Audit: a reproducible, leakage-safe multi-omics data-audit and fusion-benchmarking CLI."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -29,26 +29,33 @@ dependencies = [
     "click>=8.1",
     "jinja2>=3.1",
     "tqdm>=4.65",
+    "tomli>=2.0; python_version < '3.11'",   # TOML configs on Python 3.10 (stdlib tomllib is 3.11+)
 ]
 
 [project.optional-dependencies]
-# Optional plugin tier -- the tool degrades gracefully when these are absent.
+# Optional plugin tiers -- the core tool degrades gracefully when these are absent.
 llm = ["anthropic>=0.39", "openai>=1.0"]   # anthropic=Claude; openai SDK also drives ChatGPT/Gemini/local
-data = ["requests>=2.31", "google-cloud-storage>=2.10", "cptac>=1.5"]
+data = ["requests>=2.31", "google-cloud-storage>=2.10"]   # remote data hubs (TCGA/CCLE/Xena/OpenPBTA/Metabolomics/Expression Atlas)
+# CPTAC is isolated because its `cptac` dependency needs a C/build toolchain and
+# ships no Windows / Python 3.12 wheel; keeping it out of [data]/[all] means the
+# common installs resolve cleanly on every platform.
+cptac = ["cptac>=1.5"]
 yaml = ["pyyaml>=6.0"]
 # Opt-in local web UI (localhost only). The core stays a CLI tool without it.
 ui = ["fastapi>=0.110", "uvicorn>=0.27", "python-multipart>=0.0.9"]
 dev = ["pytest>=7.4", "pytest-cov>=4.1"]
+# `all` = every cross-platform runtime feature, so `pip install omicau[all]`
+# succeeds on Windows/macOS/Linux. CPTAC stays opt-in via [cptac]; test tooling
+# stays in [dev].
 all = [
     "anthropic>=0.39",
+    "openai>=1.0",
     "requests>=2.31",
     "google-cloud-storage>=2.10",
-    "cptac>=1.5",
     "pyyaml>=6.0",
     "fastapi>=0.110",
     "uvicorn>=0.27",
     "python-multipart>=0.0.9",
-    "pytest>=7.4",
 ]
 
 [project.scripts]

@@ -59,9 +59,10 @@ def _require_gcs():
         from google.cloud import storage  # type: ignore
         return storage
     except ImportError as exc:  # pragma: no cover - optional dep
+        from omicau._hints import extra_hint
         raise ImportError(
-            "All of Us GCS access needs 'google-cloud-storage' (pip install "
-            "omicau[data]). It is preinstalled in the Workbench."
+            f"All of Us GCS access needs 'google-cloud-storage' ({extra_hint('data')}). "
+            "It is preinstalled in the Workbench."
         ) from exc
 
 

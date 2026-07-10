@@ -1,0 +1,32 @@
+# Conda / mamba environment for omicau.
+# Creates an isolated env with the full runtime (CPU PyTorch and all core
+# libraries from conda-forge), then installs omicau itself via pip so the
+# `omicau` command is on your PATH. conda resolves the heavy scientific stack
+# (numpy/scipy/scikit-learn/pytorch) as prebuilt binaries, so there is no
+# compiler step and no CUDA download.
+#
+#   conda env create -f environment.yml       # or:  mamba env create -f environment.yml
+#   conda activate omicau
+#   omicau check-env
+#
+# To add optional tiers, install the matching extra after activating, e.g.:
+#   pip install ".[llm]"     # plain-language AI verdict (Claude / ChatGPT / Gemini / local)
+#   pip install ".[data]"    # remote data hubs (TCGA, CCLE, Xena, OpenPBTA, Metabolomics, Expression Atlas)
+#   pip install ".[ui]"      # local no-code web UI
+name: omicau
+channels:
+  - conda-forge
+dependencies:
+  - python>=3.10,<3.13
+  - numpy>=1.24
+  - pandas>=2.2
+  - scipy>=1.11
+  - scikit-learn>=1.3
+  - pytorch>=2.0        # conda-forge ships CPU builds on Windows/macOS/Linux
+  - plotly>=5.18
+  - click>=8.1
+  - jinja2>=3.1
+  - tqdm>=4.65
+  - pip
+  - pip:
+      - .               # install omicau (and its console entry point) from this directory

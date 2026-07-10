@@ -146,15 +146,17 @@ def _coerce_numeric_series(s: pd.Series) -> pd.Series:
     text = text.mask(lowered.isin(NA_TOKENS))
 
     direct = pd.to_numeric(text, errors="coerce")
-    n_ok = int(direct.notna().sum())
 
-    # European decimals / thousands separators: try a comma->dot repair and keep
-    # whichever interpretation recovers more finite numbers.
+    # European decimals / thousands separators: a comma->dot repair, applied only
+    # to RESCUE cells the direct parse could not read -- never overwriting a value
+    # direct already parsed. (A column mixing US '1.5' with EU '2,5' must not have
+    # its '1.5' silently rewritten to 15 by a whole-column flip.)
     if text.notna().any():
         repaired_txt = text.str.replace(".", "", regex=False).str.replace(",", ".", regex=False)
         repaired = pd.to_numeric(repaired_txt, errors="coerce")
-        if int(repaired.notna().sum()) > n_ok:
-            direct = repaired
+        rescue = direct.isna() & repaired.notna()
+        if bool(rescue.any()):
+            direct = direct.mask(rescue, repaired)
 
     out = direct.astype("float64")  # nullable -> numpy float64 (pd.NA -> np.nan)
     # Non-finite guards: treat +/-inf as missing to protect variance tracking.
@@ -181,6 +183,8 @@ def read_matrix(
     else:
         path = Path(source)
         text = path.read_text(encoding="utf-8-sig", errors="replace")
+        if not text.strip():
+            raise ValueError(f"Modality file is empty or has no readable rows: {path}")
         delim = _detect_delimiter(text[:8192])
         raw = pd.read_csv(
             io.StringIO(text),

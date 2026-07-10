@@ -38,16 +38,74 @@ masked missing-value handling, control baselines).
 
 ## Installation
 
+**[omicau is on PyPI](https://pypi.org/project/omicau/) — one line installs it.**
+Python ≥ 3.10; every option below gives the same `omicau` command.
+
 ```bash
-pip install .                 # core, fully offline
-pip install ".[llm]"          # + LLM verdict plugin (Claude / ChatGPT / Gemini / local)
-pip install ".[data]"         # + remote data hubs (requests, google-cloud-storage, cptac)
-pip install ".[ui]"           # + optional local no-code web UI (FastAPI + uvicorn)
-pip install ".[all,dev]"      # everything + pytest
+pipx install omicau            # simplest: isolated CLI install (recommended for a tool)
+pip install omicau             # or into your current environment
+pip install "omicau[all]"      # + every cross-platform runtime feature
 ```
 
-Python ≥ 3.10. Core dependencies: `numpy`, `pandas`, `scipy`, `scikit-learn`,
-`torch`, `plotly`, `click`, `jinja2`, `tqdm`.
+`pipx` keeps omicau in its own environment (nothing to conflict with your other
+packages); plain `pip` works too. The base install is flawless on Windows, macOS,
+and Linux — only the optional extras touch the network or a platform-specific dep.
+
+> **Debian / Ubuntu (24.04+):** the system Python is "externally managed" (PEP 668),
+> so `pip install omicau` into it errors with `externally-managed-environment`.
+> Use `pipx` (recommended) or a virtual environment — not system `pip`:
+> ```bash
+> sudo apt install -y pipx && pipx ensurepath
+> pipx install omicau            # then restart the shell; `omicau` is on your PATH
+> ```
+> Or a venv: `python3 -m venv ~/.venvs/omicau && ~/.venvs/omicau/bin/pip install omicau`.
+> (`apt install python3-omicau` does not exist — omicau ships via PyPI/conda, not apt.)
+
+> **Linux torch size:** on Linux, `pip`/`pipx` pull PyTorch's **default CUDA build
+> (~2.5 GB of NVIDIA libraries)**, which is slow and unnecessary on a CPU-only box
+> (e.g. WSL). For a small, fast CPU-only install, install torch from the CPU index
+> **first**, then omicau reuses it:
+> ```bash
+> python3 -m venv ~/.venvs/omicau && source ~/.venvs/omicau/bin/activate
+> pip install torch --index-url https://download.pytorch.org/whl/cpu   # ~200 MB, not ~2.5 GB
+> pip install omicau
+> ```
+> conda users get the CPU build automatically via `environment.yml`. Keep the
+> default CUDA wheel only if you have an NVIDIA GPU and want it.
+
+**With conda / mamba** (installs CPU PyTorch as a prebuilt binary — no compiler step):
+
+```bash
+git clone https://github.com/tunabirgun/omicau.git && cd omicau
+conda env create -f environment.yml     # or: mamba env create -f environment.yml
+conda activate omicau
+```
+
+*(Once the conda-forge feedstock lands, `conda install -c conda-forge omicau` will
+work directly.)*
+
+**From source** (development / latest `main`):
+`git clone https://github.com/tunabirgun/omicau.git && cd omicau && pip install ".[all,dev]"`.
+
+**Optional extras** — combine freely: `omicau[x]` from PyPI, `.[x]` from a checkout,
+or — if you installed with **pipx** — `pipx inject omicau <deps>` (e.g.
+`pipx inject omicau fastapi uvicorn python-multipart` for `[ui]`; omicau's error
+messages print the exact command for your install):
+
+| Extra | Adds |
+| --- | --- |
+| `[llm]` | AI plain-language verdict (Claude / ChatGPT / Gemini / local) |
+| `[data]` | remote data hubs (TCGA, CCLE, Xena, OpenPBTA, Metabolomics, Expression Atlas) |
+| `[ui]` | local no-code web UI (FastAPI + uvicorn) |
+| `[cptac]` | CPTAC hub only (needs a build toolchain; no Windows / py3.12 wheel) |
+| `[all]` | every cross-platform runtime feature (everything except `cptac` + dev) |
+| `[dev]` | pytest + coverage |
+
+Core dependencies: `numpy`, `pandas`, `scipy`, `scikit-learn`, `torch`, `plotly`,
+`click`, `jinja2`, `tqdm`. Releases are automatic: bumping `version` in
+`pyproject.toml` and merging to `main` publishes to PyPI via OIDC
+([`publish-pypi.yml`](.github/workflows/publish-pypi.yml), no stored token), and
+conda-forge auto-follows PyPI. See [RELEASING.md](RELEASING.md).
 
 ## Quickstart
 
@@ -104,6 +162,59 @@ omicau verify --config demo/config.json --audit demo/run/audit.json  # compare s
 
 ---
 
+## Step-by-step guide
+
+The whole path, from a clean machine to a finished audit, with a pointer into
+the detailed section for each step.
+
+1. **Install** — see [Installation](#installation) (conda, from source, or
+   pip/pipx once published).
+2. **Sanity-check the machine** — `omicau check-env` prints CPU/GPU, folder
+   access, and which optional tiers are present.
+3. **Get data**, one of three ways:
+   - the built-in offline demo (`omicau bootstrap --dataset mock --out-dir demo`),
+   - a public cohort from a hub (see [Finding a public dataset](#finding-a-public-dataset)),
+   - or your own matrices (see [Build omicau-ready data from wet-lab results](#build-omicau-ready-data-from-wet-lab-results)).
+4. **Run the audit** — `omicau run --config <config.json> --cores 8`.
+5. **Read the report** — open `<out>/run/report.html` (executive tab first);
+   `audit.json` + `*.csv` are the machine-readable exports.
+6. **(optional) Add a written AI verdict** — see
+   [Plain-language verdict](#plain-language-verdict-optional-ai-endpoint).
+7. **Verify provenance** — `omicau verify --config <config.json> --audit <out>/run/audit.json`.
+
+### Finding a public dataset
+
+The `[data]` extra lets `omicau bootstrap` assemble a ready-to-run dataset from a
+public hub. Browse the hub, copy an identifier, pass it as the argument.
+
+| Hub | Organism(s) | Where to find an identifier | Example |
+| --- | --- | --- | --- |
+| **Expression Atlas** | **any organism** | [ebi.ac.uk/gxa/experiments](https://www.ebi.ac.uk/gxa/experiments) — filter by species; the `E-…` accession is on the experiment page, target = one of its listed *experimental factors* | `--dataset expression_atlas --study E-GEOD-66290 --target infect` |
+| **TCGA / cBioPortal** | human | study ids at [cbioportal.org/datasets](https://www.cbioportal.org/datasets) (e.g. `brca_tcga_pub`); target = a clinical column | `--dataset tcga --study brca_tcga_pub --target PAM50_SUBTYPE` |
+| **UCSC Xena** | human | preset cohorts (e.g. `brca`); target = a phenotype column | `--dataset xena --preset brca --target PAM50Call_RNAseq` |
+| **CCLE / DepMap** | human cell lines | any gene symbol (CRISPR dependency, regression) | `--dataset ccle --target SOX10` |
+| **Metabolomics Workbench** | various | study ids `ST0000xx` at [metabolomicsworkbench.org](https://www.metabolomicsworkbench.org) | `--dataset metabolomics --study ST000009 --target gender` |
+
+Pick a target with **≥2 well-populated groups** (or a continuous column for
+regression) that is plausibly encoded in the molecular data. Omit `--target` for
+a sensible default. Each bootstrap writes a `config.json` next to the matrices,
+so `omicau run --config <out-dir>/config.json` works immediately.
+
+### Build omicau-ready data from wet-lab results
+
+Turn instrument/pipeline outputs into the layout below (details and a per-omics
+value-type table are in [Use your own data](#use-your-own-data)):
+
+1. **One matrix per modality** — a `sample × feature` CSV/TSV: sample ids in the
+   header row and first column, numbers in the body, blanks/`NA` for missing.
+   Export the *normalized* matrix (log2 TPM/CPM for RNA-seq; log2 abundance for
+   proteomics; beta/M for methylation). Do **not** impute or scale — omicau masks
+   missing values and standardizes inside each CV fold. Genes-as-rows is fine
+   (orientation is auto-detected).
+2. **One clinical table** — one row per sample: a sample-id column, the outcome,
+   and optional `group` (patient/animal/plot id) and `batch` (run/plate) columns.
+3. **A `config.json`** naming them (shown below), then `omicau run`.
+
 ## Use your own data
 
 The remote data hubs are optional shortcuts; **the primary workflow is to point
@@ -131,7 +242,8 @@ mystudy/
   config.json
 ```
 
-`config.json` (JSON shown; `.toml` and `.yaml` are also accepted):
+`config.json` (JSON shown; `.toml` is also accepted, and `.yaml` with the
+`[yaml]` extra):
 
 ```json
 {
@@ -466,6 +578,51 @@ epoch budget and feature footprint. The estimate is deliberately conservative so
 HPC allocations are safe.
 
 ---
+
+## Plain-language verdict (optional AI endpoint)
+
+omicau always writes a deterministic, rule-based verdict. On top of that you can
+point it at an LLM to turn the numbers into a short plain-English verdict. This is
+optional and additive — skip it and nothing changes. **Only aggregate,
+de-identified diagnostics are sent** (scores, CIs, flags, ledger — never raw
+matrices, sample ids, or clinical values); the key is used for one call and never
+stored, logged, or written to any output or the provenance hash.
+
+Install the SDK tier once (`pip install ".[llm]"` — Anthropic + OpenAI SDKs; the
+OpenAI SDK also drives ChatGPT, Gemini, and local servers), then add an `llm`
+block to the config. The key is read from a **named environment variable**, so
+the config stores only the variable name:
+
+| `provider` | `model` example | Endpoint / key |
+| --- | --- | --- |
+| `anthropic` (Claude) | `claude-sonnet-5` | `export ANTHROPIC_API_KEY=…` |
+| `openai` (ChatGPT) | `gpt-4o` | `export OPENAI_API_KEY=…`, `api_key_env: "OPENAI_API_KEY"` |
+| `gemini` (Google) | `gemini-2.0-flash` | `export GEMINI_API_KEY=…`, `api_key_env: "GEMINI_API_KEY"` (base URL set for you) |
+| `local` (Ollama / LM Studio / vLLM) | `llama3.1` | no key; `base_url: "http://localhost:11434/v1"` |
+
+```json
+"llm": {
+  "enabled": true, "provider": "anthropic", "model": "claude-sonnet-5",
+  "api_key_env": "ANTHROPIC_API_KEY", "base_url": null
+}
+```
+
+```bash
+export ANTHROPIC_API_KEY=sk-...              # cloud providers read the named env var
+omicau run --config my_study/config.json --llm     # --llm / --no-llm overrides the config
+```
+
+Fully offline example — a local model via [Ollama](https://ollama.com)
+(`ollama pull llama3.1`), no key, nothing leaves the machine:
+
+```json
+"llm": { "enabled": true, "provider": "local", "model": "llama3.1",
+         "base_url": "http://localhost:11434/v1" }
+```
+
+In the web UI, pick the provider and paste the key into the verdict step (held in
+memory for that one run). If the SDK, key, or network is missing, omicau silently
+falls back to the rule-based verdict — the audit never fails because of it.
 
 ## Reporting
 
