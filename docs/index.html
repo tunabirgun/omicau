@@ -128,7 +128,7 @@ conda activate omicau</code></pre>
   <h3>From source <span class="pill">development</span></h3>
   <pre><code>git clone https://github.com/tunabirgun/omicau.git &amp;&amp; cd omicau
 pip install ".[all,dev]"</code></pre>
-  <p><strong>Optional extras</strong> — combine freely; use <code>omicau[x]</code> from PyPI or <code>.[x]</code> from a checkout: <code>[llm]</code> (AI verdict: Claude / ChatGPT / Gemini / local), <code>[data]</code> (remote data hubs), <code>[ui]</code> (no-code web UI), <code>[cptac]</code> (CPTAC hub; needs a build toolchain), <code>[all]</code> (every cross-platform feature), <code>[dev]</code> (tests).</p>
+  <p><strong>Optional extras</strong> — combine freely: <code>omicau[x]</code> from PyPI, <code>.[x]</code> from a checkout, or (on a <strong>pipx</strong> install) <code>pipx inject omicau &lt;deps&gt;</code>: <code>[llm]</code> (AI verdict: Claude / ChatGPT / Gemini / local), <code>[data]</code> (remote data hubs), <code>[ui]</code> (no-code web UI), <code>[cptac]</code> (CPTAC hub; needs a build toolchain), <code>[all]</code> (every cross-platform feature), <code>[dev]</code> (tests). omicau's error messages print the exact install command for your environment.</p>
   <p>Core dependencies: <code>numpy</code>, <code>pandas</code>, <code>scipy</code>, <code>scikit-learn</code>, <code>torch</code>, <code>plotly</code>, <code>click</code>, <code>jinja2</code>, <code>tqdm</code>. Releases are automatic: bumping the version in <code>pyproject.toml</code> and merging to <code>main</code> publishes to PyPI via OIDC (no stored token), and conda-forge auto-follows PyPI.</p>
 </section>
 

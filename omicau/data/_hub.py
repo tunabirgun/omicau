@@ -31,9 +31,10 @@ def require_requests():
         import requests  # type: ignore
         return requests
     except ImportError as exc:  # pragma: no cover - optional dep
+        from omicau._hints import extra_hint
         raise ImportError(
             "Remote data hubs need the optional 'requests' dependency: "
-            "pip install omicau[data]. The core pipeline runs fully offline without it."
+            f"{extra_hint('data')}. The core pipeline runs fully offline without it."
         ) from exc
 
 

@@ -297,9 +297,10 @@ class OmicauConfig:
             try:
                 import yaml  # type: ignore
             except ImportError as exc:  # pragma: no cover - optional dep
+                from omicau._hints import extra_hint
                 raise ImportError(
                     "YAML config requires the optional 'pyyaml' dependency "
-                    "(pip install omicau[yaml]); or use a .json/.toml config."
+                    f"({extra_hint('yaml')}); or use a .json/.toml config."
                 ) from exc
             data = yaml.safe_load(text) or {}
         elif suffix == ".toml":

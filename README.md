@@ -87,7 +87,10 @@ work directly.)*
 **From source** (development / latest `main`):
 `git clone https://github.com/tunabirgun/omicau.git && cd omicau && pip install ".[all,dev]"`.
 
-**Optional extras** — combine freely; use `omicau[x]` from PyPI or `.[x]` from a checkout:
+**Optional extras** — combine freely: `omicau[x]` from PyPI, `.[x]` from a checkout,
+or — if you installed with **pipx** — `pipx inject omicau <deps>` (e.g.
+`pipx inject omicau fastapi uvicorn python-multipart` for `[ui]`; omicau's error
+messages print the exact command for your install):
 
 | Extra | Adds |
 | --- | --- |

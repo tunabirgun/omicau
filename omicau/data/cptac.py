@@ -25,9 +25,10 @@ def _require_cptac():
         import cptac  # type: ignore
         return cptac
     except ImportError as exc:  # pragma: no cover - optional dep
+        from omicau._hints import extra_hint
         raise ImportError(
-            "CPTAC access needs the optional 'cptac' package: pip install cptac "
-            "(or omicau[cptac]). It downloads cohort data on first use."
+            f"CPTAC access needs the optional 'cptac' package: {extra_hint('cptac')} "
+            "(or pip install cptac). It downloads cohort data on first use."
         ) from exc
 
 

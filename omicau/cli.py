@@ -331,9 +331,11 @@ def run(config_path: Path, cores: int | None, device: str, llm: bool | None,
     assets = audit.get("_assets", {})
     click.secho("\nDone. Assets written:", fg="green", bold=True)
     for k, v in assets.items():
-        click.echo(f"  {k:16s} {v}")
+        click.echo(f"  {k:16s} {Path(v).resolve()}")        # absolute paths: copy/click straight from the terminal
     if "html" in assets:
-        click.secho(f"\nOpen the dashboard: {assets['html']}", fg="cyan")
+        html_path = Path(assets["html"]).resolve()
+        click.secho(f"\nOpen the dashboard: {html_path}", fg="cyan", bold=True)
+        click.secho(f"  clickable link:   {html_path.as_uri()}", fg="cyan")
 
 
 _BOOTSTRAP_EPILOG = """\
@@ -401,7 +403,7 @@ def bootstrap(dataset: str, out_dir: Path, study: str | None, target: str | None
                        preset=preset, task=task, seed=seed, normalization=normalization)
     except Exception as exc:  # noqa: BLE001
         raise click.ClickException(str(exc)) from exc
-    click.secho(f"Ready. Run:\n  omicau run --config {cfg}", fg="green", bold=True)
+    click.secho(f"Ready. Run:\n  omicau run --config {Path(cfg).resolve()}", fg="green", bold=True)
 
 
 @main.command()

@@ -26,9 +26,11 @@ def _require_ui():
         import uvicorn  # noqa: F401
         return True
     except ImportError as exc:  # pragma: no cover - optional dep
+        from omicau._hints import extra_hint
         raise ImportError(
-            "The local UI needs the optional 'ui' extra: pip install omicau[ui] "
-            "(FastAPI + uvicorn). omicau itself runs fully as a CLI without it."
+            "The local UI needs the optional 'ui' extra (FastAPI + uvicorn). "
+            f"Add it with:  {extra_hint('ui')}\n"
+            "omicau itself runs fully as a CLI without it."
         ) from exc
 
 
