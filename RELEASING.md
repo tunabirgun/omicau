@@ -63,7 +63,11 @@ sdist sha256. To create the feedstock (one time):
 1. **Verify the current recipe format first.** conda-forge is migrating toward a v1
    `recipe.yaml`; confirm whether staged-recipes today expects the classic
    `recipes/omicau/meta.yaml` or the v1 schema, per its live CONTRIBUTING docs.
-2. Lint locally: `pipx run conda-smithy recipe-lint packaging/conda-forge/meta.yaml`.
+2. (optional) Lint locally — point it at the recipe **directory**, not the file:
+   `pipx run conda-smithy recipe-lint packaging/conda-forge`. Note `conda-smithy`
+   pulls in `conda-build` and usually needs a conda environment, so `pipx run`
+   may fail on a plain pip setup — that's fine: staged-recipes CI lints the PR
+   automatically (the lint bot comments), so local linting is optional.
 3. Fork <https://github.com/conda-forge/staged-recipes>, add the recipe under
    `recipes/omicau/`, open a PR, and answer the bot + reviewer thread until it
    merges. This lists you as a standing recipe maintainer, so it needs your own
