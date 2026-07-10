@@ -1,7 +1,7 @@
 {% set name = "omicau" %}
-{% set version = "0.1.0" %}
+{% set version = "0.1.1" %}
 
-# conda-forge recipe for omicau. PyPI 0.1.0 is published and the sdist sha256
+# conda-forge recipe for omicau. PyPI 0.1.1 is published and the sdist sha256
 # below is filled in, so this is READY TO SUBMIT: open a pull request adding this
 # recipe to https://github.com/conda-forge/staged-recipes. A conda-forge
 # maintainer must review and merge it before `conda install -c conda-forge omicau`
@@ -14,7 +14,7 @@ package:
 
 source:
   url: https://pypi.org/packages/source/{{ name[0] }}/{{ name }}/{{ name }}-{{ version }}.tar.gz
-  sha256: 73b4aab21e964ed5285701fcb877234efc821ffef9f64d3387b41fae5a288031
+  sha256: 0da96ccc847d3ecb5b8e89f6871a0cfca9b2318586c161b2f2dc89a629999885
 
 build:
   noarch: python
