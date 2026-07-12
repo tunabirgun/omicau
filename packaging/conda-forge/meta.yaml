@@ -1,5 +1,5 @@
 {% set name = "omicau" %}
-{% set version = "0.1.1" %}
+{% set version = "0.2.0" %}
 {% set python_min = "3.10" %}
 
 package:
@@ -8,7 +8,7 @@ package:
 
 source:
   url: https://pypi.org/packages/source/{{ name[0] }}/{{ name }}/{{ name }}-{{ version }}.tar.gz
-  sha256: 0da96ccc847d3ecb5b8e89f6871a0cfca9b2318586c161b2f2dc89a629999885
+  sha256: b9e06ccbaf014f3b266d7f5268374d65391a203cd5d2ccbcf7be15404a19c130
 
 build:
   noarch: python
