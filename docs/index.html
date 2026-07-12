@@ -88,9 +88,14 @@
   <p class="lead">omicau ingests one numeric matrix per omic layer plus a clinical endpoint, then <strong>audits the data</strong> and <strong>benchmarks how well those layers combine</strong> to predict the endpoint. It emits a self-contained interactive HTML dashboard alongside machine-readable JSON and CSV, and runs fully offline.</p>
   <div class="btns">
     <a class="btn btn-primary" href="#quickstart">Quick start</a>
+    <a class="btn btn-ghost" href="#validation">Benchmarks</a>
     <a class="btn btn-ghost" href="https://github.com/tunabirgun/omicau">View on GitHub</a>
   </div>
-  <div class="callout plain" style="margin-top:24px">
+  <div class="callout repro" style="margin-top:24px">
+    <span class="lbl">✓ Validated on real data</span>
+    Re-run and checked against the literature on <strong>8 public datasets across model and non-model organisms</strong> (human, mouse, zebrafish, yeast, <em>Arabidopsis</em>) and every task type — e.g. TCGA-BRCA subtype <strong>AUROC 0.953</strong>, overall-survival <strong>C-index 0.66</strong>, CCLE SOX10 <strong>R² 0.72</strong> — with the CI-aware leakage gate correctly refusing to certify the n≪p perfect scores. <a href="#validation">See the benchmark table →</a>
+  </div>
+  <div class="callout plain" style="margin-top:14px">
     <span class="lbl">ℹ Who is this for</span>
     <strong>Clinicians / PIs:</strong> start at <a href="#report">Reading the report</a> — omicau answers three questions in plain language and tells you how far to trust the result. <strong>Bioinformaticians:</strong> start at <a href="#methods">How it works</a> or <a href="#quickstart">Quick start</a>.
   </div>
