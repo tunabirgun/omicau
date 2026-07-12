@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,7 +8,8 @@ version = "0.2.0"
 description = "Omics Audit: a reproducible, leakage-safe multi-omics data-audit and fusion-benchmarking CLI."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Tuna Birgun" }]
 keywords = ["bioinformatics", "multi-omics", "data-audit", "reproducibility", "machine-learning"]
 classifiers = [
