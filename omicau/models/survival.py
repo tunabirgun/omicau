@@ -131,7 +131,9 @@ def _cv_cindex(X, time, event, groups, n_splits, seed, max_features, l2=10.0):
     strat = event.astype(int)
     split_args = (X, strat, groups) if groups is not None else (X, strat)
     for tr, va in splitter.split(*split_args):
-        if event[tr].sum() < 2 or len(np.unique(event[va])) < 1:
+        # need events in train (to fit Cox) and at least one event in val (a c-index
+        # needs a comparable event); the old unique()<1 clause could never be true.
+        if event[tr].sum() < 2 or event[va].sum() < 1:
             continue
         pre = _Preproc(max_features).fit(X[tr])
         beta = cox_fit(pre.transform(X[tr]), time[tr], event[tr], l2=l2)

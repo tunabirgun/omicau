@@ -49,6 +49,14 @@ def _environment() -> dict[str, Any]:
         "machine": platform.machine(),
         "numpy": numpy.__version__,
     }
+    # sklearn/scipy/pandas drive every default-hyperparameter model and all p-values;
+    # audit.json is the per-run provenance record, so stamp them (not just torch).
+    for mod, key in (("sklearn", "sklearn"), ("scipy", "scipy"), ("pandas", "pandas"),
+                     ("plotly", "plotly"), ("jinja2", "jinja2")):
+        try:
+            env[key] = __import__(mod).__version__
+        except Exception:  # noqa: BLE001
+            env[key] = "unknown"
     try:
         import torch
         env["torch"] = torch.__version__

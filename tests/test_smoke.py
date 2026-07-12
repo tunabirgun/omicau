@@ -532,6 +532,38 @@ def test_survival_benchmark_runs_and_controls_at_chance():
     assert harrell_cindex([1, 2, 3], [1, 1, 0], [3.0, 2.0, 1.0]) == 1.0
 
 
+def test_survival_event_encoding_is_tolerant():
+    # A clinician's event column is rarely a clean 1/0: cBioPortal ships "1:DECEASED"/
+    # "0:LIVING", others ship word labels. All must parse to 1=event / 0=censored.
+    import pandas as pd
+    from omicau.data.alignment import _encode_event
+    ev = _encode_event(pd.Series(["1:DECEASED", "0:LIVING", "DECEASED", "Alive",
+                                   1, 0, "yes", "no", "", None]))
+    assert list(ev[:8]) == [1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0]
+    assert int(ev.isna().sum()) == 2                     # "" and None -> unparsed (caller censors)
+
+
+def test_survival_does_not_require_a_target_column():
+    # Survival keys on time+event, not target; a survival run must not be rejected
+    # for a missing 'target' column, and events must be parsed (not silently censored).
+    import numpy as np
+    b = make_mock_dataset(task="survival", n_samples=60, seed=7)
+    cfg = mock_config(task="survival")
+    cfg.clinical.target = "no_such_target_column"        # irrelevant for survival -> must be ignored
+    ad = align_modalities(b.modalities, b.clinical, cfg)
+    assert ad.task == "survival" and ad.event is not None
+    assert int((np.asarray(ad.event) > 0).sum()) >= 1    # at least one event survived parsing
+
+
+def test_survival_all_censored_raises_clear_error():
+    b = make_mock_dataset(task="survival", n_samples=40, seed=2)
+    clin = b.clinical.copy()
+    cfg = mock_config(task="survival")
+    clin[cfg.clinical.event] = 0                          # degenerate: no events
+    with pytest.raises(ValueError, match="zero events"):
+        align_modalities(b.modalities, clin, cfg)
+
+
 def test_composite_grouping_coarsens_folds():
     import pandas as pd
     from omicau.data.alignment import _resolve_group_series

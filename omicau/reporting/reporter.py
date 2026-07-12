@@ -22,6 +22,10 @@ from jinja2 import Template
 from omicau.reporting._assets import (
     DASHBOARD_CSS, TOOLTIP_JS, GLOSSARY, SECTION_COPY, BADGES, FONT_FACES,
 )
+# Single source of truth for the fusion/marginal-gain plain-language bands, so the
+# executive answer strip, headline card, and summary flags cannot disagree on the
+# same number (e.g. read "Marginally" above "does not beat").
+from omicau.interpretation.utility import GAIN_EPS, GAIN_STRONG, GAIN_ALPHA
 
 # --------------------------------------------------------------------------- #
 # Color-blind-safe palette (Okabe-Ito) + semantic mapping
@@ -39,6 +43,7 @@ OKABE_ITO = {
 COBALT = OKABE_ITO["blue"]
 VERMILLION = OKABE_ITO["vermillion"]
 SLATE = "#4477AA"
+SKY = OKABE_ITO["sky"]   # distinct Okabe-Ito hue for single-modality bars (not a 2nd blue)
 TEAL = OKABE_ITO["green"]
 AMBER = OKABE_ITO["orange"]
 INK = "#1A202C"
@@ -62,7 +67,9 @@ def _verdict_status(verdict: str) -> str:
         return "batch_confounded"
     if "no detectable" in v or "control-like" in v:
         return "control_like"
-    return "redundant"  # "informative but non-additive" reads as neutral
+    if v.startswith("informative"):
+        return "not_additive"   # predictive alone but not a significant fusion contributor
+    return "redundant"
 
 
 def _rating_status(rating: str) -> str:
@@ -86,13 +93,16 @@ def _answer_strip(util: dict, rating_status: str) -> list[dict]:
     confounded = [m["modality"] for m in ledger if m.get("batch_confounded")]
     dead = [m["modality"] for m in ledger if "no detectable" in str(m.get("verdict", ""))]
     useful = [m["modality"] for m in ledger if str(m.get("verdict", "")).startswith("predictive")]
+    miss_biased = [m["modality"] for m in ledger if m.get("missingness_biased")]
 
+    # Bands share GAIN_EPS/GAIN_STRONG with the headline card and summary flags, so
+    # the same number never reads "Marginally" here and "does not beat" below.
     if single:
         q1 = ("Single-layer honesty check", "•", "answer--neutral")
-    elif isinstance(gain, (int, float)) and gain > 0.02:
+    elif isinstance(gain, (int, float)) and gain >= GAIN_STRONG:
         q1 = ("Yes — fusion adds signal", "✚", "answer--added")
-    elif isinstance(gain, (int, float)) and gain > 0.005:
-        q1 = ("Marginally", "△", "answer--mid")
+    elif isinstance(gain, (int, float)) and gain > GAIN_EPS:
+        q1 = ("Yes — a modest gain", "△", "answer--mid")
     else:
         q1 = ("No — one layer suffices", "•", "answer--neutral")
 
@@ -107,13 +117,15 @@ def _answer_strip(util: dict, rating_status: str) -> list[dict]:
         q3 = ("Re-check that no subject or group is split across train and test (leakage)", "▲", "answer--warn")
     elif confounded:
         q3 = (f"Distrust {confounded[0]}: its signal tracks the processing batch, not biology", "▲", "answer--warn")
+    elif miss_biased:
+        q3 = (f"Investigate outcome-linked missingness in {miss_biased[0]} before trusting any gain", "▲", "answer--warn")
     elif single and useful:
         q3 = ("This layer predicts on its own — validate externally", "✓", "answer--ok")
     elif single:
         q3 = ("This layer does not beat chance here", "•", "answer--neutral")
     elif dead:
         q3 = (f"Consider dropping {dead[0]}", "△", "answer--mid")
-    elif useful and isinstance(gain, (int, float)) and gain > 0.005:
+    elif useful and isinstance(gain, (int, float)) and gain > GAIN_EPS:
         q3 = ("Adopt the fusion model", "✓", "answer--ok")
     else:
         q3 = ("Prefer the best single layer", "•", "answer--neutral")
@@ -139,10 +151,28 @@ def _trust_checklist(audit: dict, util: dict, missing: dict, batch: dict,
     leak = util.get("leakage_warning")
     ctrl = (f"shuffled-label control scored {control_max:.2f}"
             if control_max is not None else "controls unavailable")
-    checks.append({"label": "Control baselines at chance (no leakage)",
+    checks.append({"label": "Control baselines at chance (no target/pipeline leakage)",
                    "status": "fail" if leak else "pass",
                    "note": ctrl + (" — above chance; investigate leakage before trusting the model."
-                                   if leak else ", so a random target is not predictable — as it should be.")})
+                                   if leak else ", so a scrambled target is not predictable — as it should be. "
+                                   "These controls catch target/pipeline leakage; group leakage is covered by the next check.")})
+
+    # Grouping status: whether samples were keyed to independent subjects. The
+    # controls above cannot detect group leakage, so surface it explicitly rather
+    # than leaving the CLI's pseudoreplication warning invisible on the dashboard.
+    grouped = bool((audit.get("config", {}).get("clinical") or {}).get("group"))
+    n_groups = ds.get("n_groups")
+    if grouped and n_groups:
+        gnote = (f"a group id is set; cross-validation keeps each of the {n_groups} groups wholly in "
+                 "train or test, so repeated samples from one subject cannot leak across the split.")
+        gstatus = "pass"
+    else:
+        gnote = ("no group column was set — every row is treated as an independent sample. If your data "
+                 "has repeated samples per subject (aliquots, timepoints), set a group id, or scores can "
+                 "be inflated by pseudoreplication that the shuffled-target control cannot detect.")
+        gstatus = "caution"
+    checks.append({"label": "Samples keyed to independent subjects (no group leakage)",
+                   "status": gstatus, "note": gnote})
 
     if n is not None:
         # key on independent units (groups), not raw rows — replicates of one
@@ -290,7 +320,7 @@ def _classify_model(name: str) -> tuple[str, str]:
         return "leave-one-out", TEAL
     if name.startswith("neural::"):
         return "neural single", OKABE_ITO["purple"]
-    return "single modality", SLATE
+    return "single modality", SKY
 
 
 def fig_performance(models: dict, include_js: bool, single: bool = False) -> str:
@@ -397,10 +427,18 @@ def fig_marginal_gain(util: dict, include_js: bool) -> str:
         return "<p class='muted'>No modality ledger available.</p>"
     x = [m["modality"] for m in ledger]
     y = [m.get("marginal_gain_classical") or 0.0 for m in ledger]
-    colors = [COBALT if v > 0.01 else VERMILLION for v in y]
-    fig = go.Figure(go.Bar(x=x, y=y, marker_color=colors))
+    # Colour by significance, not just sign: a positive point estimate that fails
+    # the paired test is amber (not the confident cobalt), matching the ledger verdict.
+    colors = []
+    for m, v in zip(ledger, y):
+        p = m.get("marginal_gain_p")
+        sig = (p is not None) and (v > GAIN_EPS) and (p < GAIN_ALPHA)
+        colors.append(COBALT if sig else (AMBER if v > GAIN_EPS else VERMILLION))
+    fig = go.Figure(go.Bar(x=x, y=y, marker_color=colors,
+                           customdata=[m.get("marginal_gain_p") for m in ledger],
+                           hovertemplate="%{x}: gain %{y:+.3f}<br>paired p = %{customdata:.3f}<extra></extra>"))
     fig.add_hline(y=0, line_color="#94A3B8")
-    _base_layout(fig, ytitle="marginal gain (fusion - leave-one-out)")
+    _base_layout(fig, ytitle="marginal gain (fusion − leave-one-out)")
     fig.update_layout(showlegend=False)
     return _fig_html(fig, include_js)
 
@@ -444,8 +482,10 @@ def render_table(table_id: str, columns: list[str], rows: list[list[Any]],
                  numeric_cols: set[int] | None = None) -> str:
     numeric_cols = numeric_cols or set()
     head = "".join(
-        f'<th onclick="omicauSort(\'{table_id}\',{i})">{html.escape(c)}'
-        f'<span class="sort-ind"></span></th>' for i, c in enumerate(columns)
+        f'<th tabindex="0" role="button" aria-sort="none" '
+        f'onclick="omicauSort(\'{table_id}\',{i})" '
+        f'onkeydown="if(event.key===\'Enter\'||event.key===\' \'){{event.preventDefault();omicauSort(\'{table_id}\',{i});}}">'
+        f'{html.escape(c)}<span class="sort-ind"></span></th>' for i, c in enumerate(columns)
     )
     body = []
     for row in rows:
@@ -481,9 +521,19 @@ def _write_csv(path: Path, header: list[str], rows: list[list[Any]]) -> None:
             w.writerow(["" if v is None else v for v in r])
 
 
-def _model_rows(models: dict, single: bool = False) -> tuple[list[str], list[list[Any]]]:
+def _model_rows(models: dict, single: bool = False) -> tuple[list[str], list[list[Any]], set[int]]:
     metric = models.get("primary_metric", "score")
-    header = ["model", "type", metric, "95% CI", "n_features", "modalities", "folds"]
+    # For classification, surface AUPRC and balanced accuracy next to the primary
+    # metric — the report tells the reader to judge the rare class by these, so the
+    # numbers must be visible, not only in audit.json.
+    classification = models.get("task") == "classification"
+    if classification:
+        header = ["model", "type", metric, "AUPRC", "balanced acc", "95% CI",
+                  "n_features", "modalities", "folds"]
+        numeric = {2, 3, 4, 6}
+    else:
+        header = ["model", "type", metric, "95% CI", "n_features", "modalities", "folds"]
+        numeric = {2, 4}
     rows = []
     allr = list(models.get("classical", [])) + list(models.get("neural", {}).get("results", []))
     allr += list(models.get("controls", []))
@@ -493,9 +543,13 @@ def _model_rows(models: dict, single: bool = False) -> tuple[list[str], list[lis
         label, _ = _classify_model(r["name"])
         lo, hi = r.get("ci_low"), r.get("ci_high")
         ci = f"{lo:.3f}–{hi:.3f}" if (lo is not None and hi is not None) else "—"
-        rows.append([r["name"], label, r.get("primary"), ci,
-                     r.get("n_features"), "+".join(r.get("modalities", [])), r.get("n_splits")])
-    return header, rows
+        met = r.get("metrics") or {}
+        base = [r["name"], label, r.get("primary")]
+        if classification:
+            base += [met.get("auprc"), met.get("balanced_accuracy")]
+        base += [ci, r.get("n_features"), "+".join(r.get("modalities", [])), r.get("n_splits")]
+        rows.append(base)
+    return header, rows, numeric
 
 
 def _build_dome(audit: dict) -> dict:
@@ -634,7 +688,7 @@ def build_report(audit: dict, out_dir: str | Path, config=None) -> dict[str, Pat
     batch = audit.get("diagnostics", {}).get("batch", {})
 
     _single = bool(util.get("single_modality"))
-    mheader, mrows = _model_rows(models, single=_single)
+    mheader, mrows, mnum = _model_rows(models, single=_single)
     _write_csv(out / "model_metrics.csv", mheader, mrows)
     assets["model_metrics"] = out / "model_metrics.csv"
 
@@ -662,7 +716,7 @@ def build_report(audit: dict, out_dir: str | Path, config=None) -> dict[str, Pat
     attr_html = fig_attribution(models, include_js=False)
 
     # -- tables ------------------------------------------------------------ #
-    model_table = render_table("tbl-models", mheader, mrows, numeric_cols={2, 4, 6})
+    model_table = render_table("tbl-models", mheader, mrows, numeric_cols=mnum)
     ledger_table = render_table("tbl-ledger", led_header, led_rows, numeric_cols={1, 2, 3, 4, 5})
     diag_table = render_table("tbl-diag", diag_header, diag_rows, numeric_cols={3, 4, 5})
     attr_rows, attr_header = _attr_rows(models)
@@ -685,6 +739,8 @@ def build_report(audit: dict, out_dir: str | Path, config=None) -> dict[str, Pat
         "audit": audit,
         "control_max": control_max,
         "checklist": checklist,
+        "gain_eps": GAIN_EPS,
+        "gain_strong": GAIN_STRONG,
         "dashboard_css": DASHBOARD_CSS,
         "font_faces": FONT_FACES,
         "tooltip_js": TOOLTIP_JS,
@@ -751,6 +807,20 @@ _TEMPLATE = r"""<!doctype html>
 .check-label{font-weight:600;color:var(--ink)}
 .check--fail .check-label{color:var(--vermillion-ink)}
 .check-note{font-size:14px;color:var(--ink-soft);margin-top:2px;line-height:1.5}
+/* Consequence notes carry the report's load-bearing caveats; without a rule they
+   render as plain body prose, inverting the visual hierarchy against the styled
+   callouts. Base = a flagged note; --warn = highest-stakes (recalibrate, collinearity). */
+.consequence{border:1px solid var(--border);border-left:3px solid var(--slate);background:var(--sunken);
+  border-radius:var(--r1);padding:12px var(--s4);margin:var(--s3) 0;font-size:14.5px;
+  color:var(--ink-soft);line-height:1.55}
+.consequence strong{color:var(--ink)}
+.consequence--warn{border-left-color:var(--vermillion);background:var(--vermillion-bg)}
+.consequence--warn strong{color:var(--vermillion-ink)}
+.preview-table{overflow-x:auto;margin:var(--s3) 0}
+.preview-table table{border-collapse:collapse;width:auto;font-size:14.5px}
+.preview-table th,.preview-table td{border:1px solid var(--border);padding:6px 14px;text-align:left}
+.preview-table th{background:var(--sunken);font-weight:600;color:var(--ink)}
+.preview-table td.mono{font-family:var(--mono);font-size:13px}
 </style>
 </head>
 <body>
@@ -764,13 +834,13 @@ _TEMPLATE = r"""<!doctype html>
   <div class="hashline">provenance SHA-256: {{ meta.provenance_hash }}</div>
 </header>
 
-<div class="tabs">
-  <button class="tab active" onclick="omicauTab(event,'exec')">Executive summary</button>
-  <button class="tab" onclick="omicauTab(event,'research')">Research detail</button>
+<div class="tabs" role="tablist" aria-label="Report views">
+  <button class="tab active" id="tab-exec" role="tab" aria-selected="true" aria-controls="exec" onclick="omicauTab(event,'exec')">Executive summary</button>
+  <button class="tab" id="tab-research" role="tab" aria-selected="false" aria-controls="research" onclick="omicauTab(event,'research')">Research detail</button>
 </div>
 
 <!-- ===================== EXECUTIVE ===================== -->
-<div id="exec" class="panel active">
+<div id="exec" class="panel active" role="tabpanel" aria-labelledby="tab-exec">
   <div class="answer-strip">
     {% for a in answers %}
     <div class="answer {{ a.cls }}">
@@ -810,8 +880,9 @@ _TEMPLATE = r"""<!doctype html>
         <div class="v {{ 'pos' if (util.best_model.primary or 0) > util.chance_level else 'neg' }}">{{ '%+.3f'|format(util.best_model.primary - util.chance_level) if util.best_model and util.best_model.primary is not none else '—' }}</div>
         <div class="plain">The one layer's score above chance (single-modality run — no fusion to compare).</div></div>
       {% else %}
-      <div class="card {{ 'card--positive' if (util.fusion_gain_over_best_single or 0) > 0.01 else 'card--neutral' }}"><div class="k">Fusion gain {{ tip('Fusion gain (leave-one-out)') }}</div>
-        <div class="v {{ 'pos' if (util.fusion_gain_over_best_single or 0) > 0 else 'neg' }}">{{ '%+.3f'|format(util.fusion_gain_over_best_single) if util.fusion_gain_over_best_single is not none else '—' }}</div>
+      <div class="card {{ 'card--positive' if (util.fusion_gain_over_best_single or 0) > gain_eps else 'card--neutral' }}"><div class="k">Fusion gain {{ tip('Fusion gain (leave-one-out)') }}</div>
+        <div class="v {{ 'pos' if (util.fusion_gain_over_best_single or 0) > gain_eps else '' }}">{{ '%+.3f'|format(util.fusion_gain_over_best_single) if util.fusion_gain_over_best_single is not none else '—' }}</div>
+        {% if util.fusion_gain_ci %}<div class="plain mono" style="font-size:12px">95% CI {{ '%+.3f'|format(util.fusion_gain_ci.low) }} to {{ '%+.3f'|format(util.fusion_gain_ci.high) }}{% if util.fusion_gain_ci.low is not none and util.fusion_gain_ci.high is not none %}{% if util.fusion_gain_ci.low <= 0 and util.fusion_gain_ci.high >= 0 %} · spans zero{% elif util.fusion_gain_ci.high < 0 %} · favors the single layer{% endif %}{% endif %}</div>{% endif %}
         <div class="plain">How much combining layers beats the best single layer.</div></div>
       {% endif %}
       <div class="card"><div class="k">Samples aligned</div>
@@ -819,7 +890,7 @@ _TEMPLATE = r"""<!doctype html>
         <div class="plain">{{ dataset.get('n_dropped',0) }} dropped for a missing outcome.</div></div>
       <div class="card {{ 'card--risk' if util.leakage_warning else 'card--optimal' }}"><div class="k">Control check {{ tip('Control baseline (shuffled target)') }}</div>
         <div class="v mono">{{ '%.3f'|format(control_max) if control_max is not none else '—' }}</div>
-        <div class="plain">{{ 'Above chance — leakage flag.' if util.leakage_warning else 'Near chance — no leakage.' }}</div></div>
+        <div class="plain">{{ 'Above chance — leakage flag.' if util.leakage_warning else 'Near chance — no target/pipeline leakage.' }}</div></div>
     </div>
   </section>
 
@@ -853,7 +924,7 @@ _TEMPLATE = r"""<!doctype html>
     </ul>
   </section>
 
-  <details class="glossary">
+  <details class="reading-guide">
     <summary>Reading guide — plain-language glossary</summary>
     <div class="gloss-body">
       {% for term, definition in glossary.items() %}<p><strong>{{ term }}</strong> — {{ definition }}</p>{% endfor %}
@@ -862,14 +933,20 @@ _TEMPLATE = r"""<!doctype html>
 </div>
 
 <!-- ===================== RESEARCH ===================== -->
-<div id="research" class="panel">
+<div id="research" class="panel" role="tabpanel" aria-labelledby="tab-research">
+  <section>
+    <h2>How this audit was computed</h2>
+    <p class="rc-sub">The end-to-end pipeline, in order. Every model is evaluated under group-aware cross-validation with all preprocessing (imputation, variance filtering, scaling, and optional feature selection) fitted inside the training folds only, so no validation sample informs training.</p>
+    <div class="figure">{{ flowchart_svg|safe }}</div>
+  </section>
+
   <section>
     <h2>{% if util.single_modality %}Model performance{% else %}Cross-modal performance{% endif %}</h2>
     {{ means('cross_modal_performance') }}
-    <p class="rc-sub">Error bars are a bootstrap 95% confidence interval {{ tip('Bootstrap 95% confidence interval') }}.</p>
+    <p class="rc-sub">Error bars are a bootstrap 95% confidence interval {{ tip('Bootstrap 95% confidence interval') }} where available; for a row whose bootstrap did not converge they fall back to the per-fold spread (a wider, less reliable indicator — not a 95% CI).</p>
     <div class="reading-guide">
       <span class="legend-row"><span class="swatch" style="background:#0072B2"></span>fusion</span>
-      <span class="legend-row"><span class="swatch" style="background:#4477AA"></span>single modality</span>
+      <span class="legend-row"><span class="swatch" style="background:#56B4E9"></span>single modality</span>
       {% if audit.models.neural and audit.models.neural.enabled %}<span class="legend-row"><span class="swatch" style="background:#CC79A7"></span>neural single</span>{% endif %}
       <span class="legend-row"><span class="swatch" style="background:#009E73"></span>leave-one-out</span>
       <span class="legend-row"><span class="swatch" style="background:#D55E00"></span>control baseline</span>
@@ -878,7 +955,7 @@ _TEMPLATE = r"""<!doctype html>
     <div class="figure">{{ figs.performance|safe }}</div>
     {{ tables.models|safe }}
     {% if util.auprc_baseline is not none %}
-    <p class="rc-sub">AUPRC {{ tip('AUPRC') }} baseline (positive-class prevalence) = {{ '%.3f'|format(util.auprc_baseline) }}; read each model's AUPRC as lift over this, not against 0.5.</p>
+    <p class="rc-sub">AUPRC {{ tip('AUPRC') }} baseline (positive-class prevalence) = {{ '%.3f'|format(util.auprc_baseline) }}; read each model's AUPRC as its improvement over this prevalence baseline, not against 0.5.</p>
     {% endif %}
     {% if util.batch_blocked %}
     <div class="consequence"><strong>Cross-site stress test {{ tip('Cross-site stress test (batch-blocked)') }}.</strong> Blocking folds on batch (a new-batch
@@ -894,8 +971,9 @@ _TEMPLATE = r"""<!doctype html>
       means the signal is not merely batch structure; a large drop means much of it was. This is an
       exploratory probe — omicau applies no correction to your data and produces no corrected matrix.
       It ran only because batch is not confounded with the outcome here; correcting a confounded batch
-      would inflate this estimate (Nygaard et al., <em>Nat. Rev. Genet.</em> 2016). Complementary to,
-      not a replacement for, the cross-site stress test.</div>
+      would inflate this estimate (Nygaard et al., <em>Nat. Rev. Genet.</em> 2016). This in-fold-centering
+      probe and the batch-blocked cross-site stress test are alternative robustness checks selected by
+      configuration (they are mutually exclusive, so only one appears in any run).</div>
     {% endif %}
   </section>
 
@@ -905,7 +983,7 @@ _TEMPLATE = r"""<!doctype html>
     {{ means('calibration') }}
     <p class="rc-sub">Whether predicted probabilities match observed event rates — discrimination {{ tip('Discrimination') }} (the AUROC above) does not measure this.</p>
     <div class="figure">{{ figs.calibration|safe }}</div>
-    <div class="consequence">
+    <div class="consequence consequence--warn">
       Brier score {{ tip('Brier score') }} {{ '%.3f'|format(util.calibration.brier) }} (lower is better) ·
       expected calibration error {{ tip('Expected calibration error (ECE)') }} {{ '%.3f'|format(util.calibration.ece) }}.
       These probabilities are research-use-only and may be miscalibrated by construction — balanced
@@ -918,15 +996,18 @@ _TEMPLATE = r"""<!doctype html>
 
   {% if util.subgroups %}
   <section>
-    <h2>Subgroup performance</h2>
-    <p class="rc-sub">The best model's {{ util.subgroups.metric|upper }} re-scored within each level of <code>{{ util.subgroups.by }}</code> — a global metric can hide large subgroup disparities (Obermeyer et al., <em>Science</em> 2019).</p>
+    <h2>Per-site performance</h2>
+    <p class="rc-sub">The best model's {{ util.subgroups.metric|upper }} re-scored within each level of <code>{{ util.subgroups.by }}</code> (the mapped batch/site column) — a global metric can hide performance that differs across sites. If <code>{{ util.subgroups.by }}</code> encodes a demographic or protected attribute, read this as a subgroup-fairness check (cf. Obermeyer et al., <em>Science</em> 2019). Strata below n={{ util.subgroups.min_stratum }} are shown but not scored (too few samples for a stable estimate). Each estimate carries a bootstrap 95% CI.</p>
     <div class="preview-table"><table>
-      <tr><th>{{ util.subgroups.by }}</th><th>n</th><th>{{ util.subgroups.metric|upper }}</th></tr>
+      <tr><th>{{ util.subgroups.by }}</th><th>n</th><th>{{ util.subgroups.metric|upper }}</th><th>95% CI</th></tr>
       {% for s in util.subgroups.strata %}
-      <tr><td>{{ s.stratum }}</td><td>{{ s.n }}</td><td>{{ '%.3f'|format(s.primary) if s.primary is not none else '—' }}</td></tr>
+      <tr><td>{{ s.stratum }}</td><td>{{ s.n }}</td>
+        <td>{{ '%.3f'|format(s.primary) if s.primary is not none else '—' }}</td>
+        <td class="mono">{% if s.ci_low is not none and s.ci_high is not none %}{{ '%.3f'|format(s.ci_low) }}–{{ '%.3f'|format(s.ci_high) }}{% else %}—{% endif %}</td></tr>
       {% endfor %}
     </table></div>
-    <div class="consequence">Largest gap across strata: <strong>{{ '%.3f'|format(util.subgroups.gap) }}</strong>{% if util.subgroups.gap and util.subgroups.gap > 0.1 %} — a wide gap; investigate site/subgroup bias before trusting the global metric{% endif %}.</div>
+    <div class="consequence">Largest gap across scored strata: <strong>{{ '%.3f'|format(util.subgroups.gap) }}</strong>{% if util.subgroups.gap_ci_low is not none %} (95% CI {{ '%.3f'|format(util.subgroups.gap_ci_low) }}–{{ '%.3f'|format(util.subgroups.gap_ci_high) }}){% endif %}.
+      {% if util.subgroups.gap_ci_low is not none and util.subgroups.gap_ci_low > 0.05 %}The interval excludes a negligible gap; investigate site/subgroup bias before trusting the global metric.{% elif util.subgroups.gap_ci_low is not none %}The interval reaches down to a small gap, so this disparity is within sampling noise at these stratum sizes — not yet evidence of real site bias.{% endif %}</div>
   </section>
   {% endif %}
 
@@ -954,7 +1035,7 @@ _TEMPLATE = r"""<!doctype html>
   <section>
     <h2>Feature attribution {{ tip('Permutation importance') }}</h2>
     {{ means('feature_attribution') }}
-    <div class="consequence">
+    <div class="consequence consequence--warn">
       Importances are <strong>unconditional permutation importance {{ tip('Collinearity (unconditional importance)') }}</strong>, which over-credits
       correlated predictors and can split or inflate importance among collinear features (Hooker
       et al. 2021; Strobl et al. 2008). Omic layers are highly collinear, so read the ranking as
@@ -972,12 +1053,13 @@ _TEMPLATE = r"""<!doctype html>
       <div class="card"><div class="k">Provenance hash {{ tip('Provenance hash') }}</div><div class="v mono" style="font-size:13px;word-break:break-all">{{ meta.provenance_hash }}</div></div>
       <div class="card"><div class="k">Device / cores</div><div class="v mono">{{ meta.device }} / {{ meta.cores }}</div></div>
       <div class="card"><div class="k">Python / torch</div><div class="v mono" style="font-size:16px">{{ env.python }} · {{ env.torch }}</div></div>
+      <div class="card"><div class="k">Core libraries</div><div class="v mono" style="font-size:13px;word-break:break-word">sklearn {{ env.get('sklearn','?') }} · scipy {{ env.get('scipy','?') }} · pandas {{ env.get('pandas','?') }}</div></div>
       <div class="card"><div class="k">Est. wall-time</div><div class="v mono" style="font-size:18px">{{ cost.get('human_readable','—') }}</div></div>
     </div>
     <h3>Resolved configuration</h3>
     <pre class="config">{{ config_json }}</pre>
     {% if audit.dome %}
-    <details class="glossary">
+    <details class="reading-guide">
       <summary>DOME {{ tip('DOME') }} methods summary (Data · Optimization · Model · Evaluation)</summary>
       <div class="gloss-body">
         {% for area, fields in audit.dome.items() %}
@@ -1002,9 +1084,10 @@ _TEMPLATE = r"""<!doctype html>
 
 <script>
 function omicauTab(ev, id){
-  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t=>{t.classList.remove('active');t.setAttribute('aria-selected','false');});
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
   ev.currentTarget.classList.add('active');
+  ev.currentTarget.setAttribute('aria-selected','true');
   document.getElementById(id).classList.add('active');
   window.dispatchEvent(new Event('resize'));
 }
@@ -1027,7 +1110,9 @@ function omicauSort(id, col){
   tbl.setAttribute('data-sort-col', col);
   tbl.setAttribute('data-sort-dir', asc?'asc':'desc');
   tbl.querySelectorAll('.sort-ind').forEach(s=>s.textContent='');
+  Array.from(tbl.tHead.rows[0].cells).forEach(c=>c.setAttribute('aria-sort','none'));
   tbl.tHead.rows[0].cells[col].querySelector('.sort-ind').textContent = asc?' ▲':' ▼';
+  tbl.tHead.rows[0].cells[col].setAttribute('aria-sort', asc?'ascending':'descending');
 }
 function omicauFilter(id, q){
   q = q.toLowerCase();
