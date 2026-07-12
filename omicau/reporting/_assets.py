@@ -29,7 +29,7 @@ GLOSSARY = {
     "Discrimination": "Whether the model ranks a true positive above a true negative (what AUROC measures). It says nothing about whether the predicted probabilities are numerically right.",
     "Calibration": "Whether a predicted probability matches reality: among cases given 70%, about 70% should actually be positive. A model can rank well yet still report wrong probabilities.",
     "Brier score": "The average squared error of the predicted probabilities. Lower is better; it rewards being both correct and honestly confident.",
-    "Expected calibration error (ECE)": "The average gap between predicted probability and observed event rate across probability bins. Lower is better; near 0 means well calibrated as measured (binning can mask small offsetting errors).",
+    "Expected calibration error (ECE)": "The average gap between predicted probability and observed event rate across probability bins. Lower is better; near 0 means well calibrated as measured. Binning can mask small offsetting errors, and with fixed equal-width bins ECE is biased upward at small samples (few points per bin), so read it alongside the Brier score.",
     "Cross-validation": "Rotating which samples are held out for testing so every sample is scored by a model that never saw it during training.",
     "Held-out (out-of-fold)": "Scored on samples the model was not trained on. Only held-out scores are trustworthy; scoring on training data flatters the model.",
     "Leakage": "When information from the test samples sneaks into training, so scores look great in-house but collapse on new data.",
@@ -131,6 +131,11 @@ BADGES = {
     "control_like": {
         "label": "Control-like",
         "icon": "≈",
+        "css_class": "badge--neutral"
+    },
+    "not_additive": {
+        "label": "Not additive",
+        "icon": "△",
         "css_class": "badge--neutral"
     }
 }

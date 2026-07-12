@@ -321,6 +321,30 @@ def _encode_target(
     return encoded, classes
 
 
+# Survival event vocabularies (lower-cased). Covers the common encodings a clinician
+# meets in the wild — plain numeric, word labels, and cBioPortal's "1:DECEASED".
+_EVENT_WORDS = {"dead", "deceased", "death", "event", "progressed", "progression",
+                "relapse", "relapsed", "recurred", "recurrence", "yes", "true",
+                "positive", "1"}
+_CENSOR_WORDS = {"alive", "living", "censored", "no event", "no_event", "none",
+                 "no", "false", "negative", "0"}
+
+
+def _encode_event(raw: pd.Series) -> pd.Series:
+    """Parse a survival event indicator to 1=event / 0=censored, tolerant of common
+    encodings: numeric 1/0, word labels ('DECEASED'/'LIVING', 'Dead'/'Alive'),
+    cBioPortal 'N:LABEL' ('1:DECEASED'/'0:LIVING'), booleans, and yes/no. Returns a
+    float64 series with NaN where a value could not be interpreted (the caller
+    decides how to handle unparseable / degenerate columns)."""
+    num = pd.to_numeric(raw, errors="coerce")
+    if num.notna().mean() >= 0.9 and set(num.dropna().unique()) <= {0.0, 1.0}:
+        return num.astype("float64")               # already numeric 1/0
+    txt = raw.astype("string").str.strip().str.lower()
+    lead = pd.to_numeric(txt.str.extract(r"^([01])\s*:", expand=False), errors="coerce")  # "1:deceased" -> 1
+    words = txt.map(lambda v: 1.0 if v in _EVENT_WORDS else (0.0 if v in _CENSOR_WORDS else float("nan")))
+    return lead.fillna(words).fillna(num).astype("float64")
+
+
 # --------------------------------------------------------------------------- #
 # Provenance
 # --------------------------------------------------------------------------- #
@@ -472,13 +496,27 @@ def align_modalities(
     )
     clinical = clinical[~clinical.index.duplicated(keep="first")]
 
-    if clin_spec.target not in clinical.columns:
+    # The endpoint column is the target for classification/regression but the
+    # time column for survival (which uses time + event, not target). Validate and
+    # drop-missing against the column the task actually needs, so a survival run is
+    # not spuriously rejected for a missing 'target'.
+    if clin_spec.task == "survival":
+        for kind, col in (("time", clin_spec.time), ("event", clin_spec.event)):
+            if not col or col not in clinical.columns:
+                raise ValueError(
+                    f"task='survival' requires clinical.{kind} to be a column in the clinical "
+                    f"table (got {col!r}; columns: {list(clinical.columns)[:20]})."
+                )
+        endpoint_col = clin_spec.time
+    elif clin_spec.target not in clinical.columns:
         raise ValueError(
             f"Target column '{clin_spec.target}' not found in clinical table "
             f"(columns: {list(clinical.columns)[:20]})."
         )
+    else:
+        endpoint_col = clin_spec.target
 
-    y_all = clinical[clin_spec.target]
+    y_all = clinical[endpoint_col]
     if clin_spec.drop_missing_target:
         keep = y_all.notna() & (y_all.astype("string").str.strip().str.lower() != "")
         n_drop = int((~keep).sum())
@@ -582,9 +620,26 @@ def align_modalities(
 
     event = None
     if is_survival:
-        event = pd.to_numeric(clinical[clin_spec.event], errors="coerce").fillna(0.0).astype("float64")
+        parsed = _encode_event(clinical[clin_spec.event])
+        n_unparsed = int(parsed.isna().sum())
+        event = parsed.fillna(0.0).astype("float64")
         event.index = pd.Index(sample_ids)
         event = event.loc[sample_ids]
+        n_event = int((event > 0).sum())
+        if n_event == 0:
+            raise ValueError(
+                f"Survival event column '{clin_spec.event}' parsed to zero events (all "
+                f"right-censored). Expected 1=event / 0=censored; word labels "
+                f"('DECEASED'/'LIVING', 'Dead'/'Alive') and cBioPortal '1:DECEASED' are "
+                f"handled automatically. Check the column's encoding — a survival analysis "
+                f"needs at least one event.")
+        if n_event == len(event):
+            report.setdefault("notes", []).append(
+                f"Survival event column '{clin_spec.event}' parsed to all events (no censoring).")
+        if n_unparsed:
+            report.setdefault("notes", []).append(
+                f"{n_unparsed} value(s) in event column '{clin_spec.event}' were unrecognized and "
+                f"treated as censored.")
 
     y_raw = clinical[target_col].copy()
     y_raw.index = pd.Index(sample_ids)

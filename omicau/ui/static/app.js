@@ -415,9 +415,18 @@ function previewTable(f, flip) {
   const box = el("div", { class: "preview-table", style: "margin-top:12px" });
   const table = el("table");
   const head = f.header || [];
-  table.append(el("tr", {}, ...head.map((hh) => el("th", {}, hh))));
-  (f.preview || []).forEach((r) => table.append(el("tr", {}, ...r.map((cell, i) =>
-    el("td", {}, cell)))));
+  const rows = f.preview || [];
+  if (flip) {
+    // Transpose so the grid visibly matches the caption: sample ids (the file's
+    // column headers) run down the left, features across the top.
+    head.forEach((hcell, c) => {
+      table.append(el("tr", {}, el("th", {}, hcell),
+        ...rows.map((r) => el("td", {}, r[c]))));
+    });
+  } else {
+    table.append(el("tr", {}, ...head.map((hh) => el("th", {}, hh))));
+    rows.forEach((r) => table.append(el("tr", {}, ...r.map((cell) => el("td", {}, cell)))));
+  }
   box.append(table);
   return box;
 }
@@ -459,7 +468,7 @@ RENDERERS.clinical = async () => {
   } else {
     wrap.append(colSelect("target", "Outcome to predict (target)", cols, true, "target"));
   }
-  wrap.append(colSelect("sample_id", "Sample identifier", cols, true, null));
+  wrap.append(colSelect("sample_id", "Sample identifier", cols, true, "sample_id"));
   wrap.append(colSelect("group", "Patient / group id (optional, prevents leakage)", cols, false, "group"));
   wrap.append(colSelect("batch", "Batch / site (optional)", cols, false, "batch"));
 
@@ -472,7 +481,7 @@ RENDERERS.clinical = async () => {
   // appends `wrap`. Deferring one tick lets pre-filled values (e.g. a hub-loaded
   // cohort, or returning to this step) show their notes instead of staying blank.
   setTimeout(() => {
-    ["target", "group", "batch"].forEach((k) => { if (state.clinical[k]) showConsequence(k); });
+    ["target", "group", "batch", "sample_id"].forEach((k) => { if (state.clinical[k]) showConsequence(k); });
   }, 0);
   return wrap;
 
@@ -499,6 +508,20 @@ RENDERERS.clinical = async () => {
 
   async function showConsequence(key) {
     const node = $("#conseq-" + key); if (!node) return;
+    // Sample-id quality is judged client-side from the column metadata; the server
+    // /consequence endpoint only covers target/group/batch.
+    if (key === "sample_id") {
+      const col = cols.find((c) => c.name === state.clinical.sample_id);
+      if (!col) { node.textContent = ""; return; }
+      if (col.looks_like_id) {
+        node.className = "consequence";
+        node.textContent = `Looks like a unique identifier (${col.n_unique} unique values) — good for aligning layers across files.`;
+      } else {
+        node.className = "consequence msg-error";
+        node.textContent = `This column has ${col.n_unique} unique value(s); if that is fewer than your sample count it repeats ids, which can misalign layers or leak across cross-validation folds. Prefer a column with one value per sample, or set a group id below.`;
+      }
+      return;
+    }
     node.textContent = "…";
     const kind = key === "sample_id" ? null : key;
     const params = new URLSearchParams({ column: state.clinical[key], kind: kind || "target" });
@@ -695,7 +718,7 @@ RENDERERS.run = async () => {
 
 async function startRun() {
   if (state.run && state.run.status === "running") return;   // ignore a double click
-  state.run = { status: "running", stages: [] };
+  state.run = { status: "running", stages: [], t0: Date.now() };
   render();
   try {
     // No-key runs stay byte-identical to before; the key only ever rides this one body.
@@ -719,22 +742,45 @@ async function renderProgress(wrap) {
   return wrap;
 }
 
+function fmtElapsed(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
+}
+
 function fillProgress(box) {
   const r = state.run || { stages: [], status: "running" };
   box.innerHTML = "";
-  box.append(el("div", { class: "progress-bar" },
-    el("span", { style: `width:${r.status === "done" ? 100 : Math.min(90, r.stages.length * 12)}%` })));
+  // Bar reflects named stages, then goes indeterminate (the heavy benchmarks emit no
+  // stage lines) so it never reads as a frozen hang at 90%.
+  const running = r.status === "running";
+  const indet = running && r.stages.length >= 7;
+  box.append(el("div", { class: "progress-bar" + (indet ? " indeterminate" : "") },
+    el("span", { style: `width:${r.status === "done" ? 100 : indet ? 100 : Math.min(85, r.stages.length * 12)}%` })));
+  // Elapsed + estimate line, so a multi-minute run shows life and a horizon.
+  const est = state.preflight && state.preflight.cost && state.preflight.cost.human_readable;
+  const elapsed = r.t0 ? fmtElapsed(Date.now() - r.t0) : null;
+  if (running && (elapsed || est))
+    box.append(el("div", { class: "note-line", style: "margin:8px 0 4px" },
+      (elapsed ? `Elapsed ${elapsed}` : "") + (elapsed && est ? " · " : "") +
+      (est ? `estimated ~${est}` : "")));
   const log = el("div", { class: "stage-log" });
   r.stages.forEach((s) => log.append(el("div", { class: s.includes("·") ? "done" : "" }, s)));
   box.append(log);
-  if (r.status === "error") box.append(el("div", { class: "msg-error" }, "Run failed: " + r.error));
+  if (r.status === "error") {
+    box.append(el("div", { class: "msg-error" }, "Run failed: " + r.error));
+    box.append(el("div", { class: "btn-row" },
+      el("button", { class: "btn-ghost", onclick: () => goStep(5) }, "Back to options"),
+      el("span", { class: "spacer" }),
+      el("button", { class: "btn-primary", onclick: () => { state.run = null; goStep(6); } }, "Try again")));
+  }
 }
 
 async function poll() {
   try {
     const p = await api(`/api/session/${state.session}/progress`);
     state.run = { status: p.status, stages: p.stages, error: p.error,
-                  report_ready: p.report_ready, provenance: p.provenance };
+                  report_ready: p.report_ready, provenance: p.provenance,
+                  t0: (state.run && state.run.t0) || Date.now() };
     const box = $("#progbox"); if (box) fillProgress(box);
     if (p.status === "done") { state.step = 7; return render(); }
     if (p.status === "error") return;

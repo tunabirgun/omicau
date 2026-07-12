@@ -37,6 +37,7 @@
     <a class="nav" href="#methods">How it works</a>
     <a class="nav" href="#uncertainty">Uncertainty &amp; calibration</a>
     <a class="nav" href="#hygiene">Data hygiene</a>
+    <a class="nav" href="#validation">Validation</a>
     <a class="nav" href="#repro">Reproducibility</a>
   </div>
   <div class="nav-group">
@@ -287,7 +288,8 @@ pip install ".[llm]"                  # installs the anthropic + openai SDKs</co
   <h3>The run report card</h3>
   <p>A short pass / caution / fail checklist telling you how far to trust the run itself, <em>before</em> you trust any score in it:</p>
   <ul>
-    <li><span class="pill pass">✓ pass</span> <strong>Control baselines at chance</strong> — a shuffled target is not predictable, so no leakage.</li>
+    <li><span class="pill pass">✓ pass</span> <strong>Control baselines at chance</strong> — a shuffled target is not predictable, so no target/pipeline leakage.</li>
+    <li><span class="pill pass">✓ pass</span> <strong>Samples keyed to independent subjects</strong> — a group id keeps each subject's samples wholly in train or test, so repeated samples can't leak; a caution here means no group column was set.</li>
     <li><span class="pill caution">△ caution</span> <strong>Batch confounding / missingness</strong> — a layer whose batch is confounded with the outcome, or missingness linked to the outcome.</li>
     <li><span class="pill warn">▲ fail</span> <strong>Leakage flagged</strong> — a control beat chance; investigate the splits before trusting any score.</li>
   </ul>
@@ -302,11 +304,12 @@ pip install ".[llm]"                  # installs the anthropic + openai SDKs</co
   <p>Read the result only as far as these allow:</p>
   <div class="tablewrap"><table>
     <tr><th>Check</th><th>Trust when</th><th>Discount when</th></tr>
-    <tr><td>Control baselines</td><td>all near chance (no leakage flag)</td><td>a control is significantly above chance</td></tr>
+    <tr><td>Control baselines</td><td>all near chance (no target/pipeline leakage)</td><td>a control is significantly above chance</td></tr>
+    <tr><td>Grouping</td><td>samples keyed to independent subjects (group id set)</td><td>no group column, but repeated samples per subject exist</td></tr>
     <tr><td>Confidence interval</td><td>the 95% CI is narrow and clears chance</td><td>the CI is wide or overlaps chance</td></tr>
     <tr><td>Calibration</td><td>the reliability curve tracks the diagonal</td><td>large Brier/ECE — probabilities ≠ risks</td></tr>
     <tr><td>Batch confounding</td><td>no layer flagged batch-confounded</td><td>a layer is confounded with the outcome</td></tr>
-    <tr><td>Subgroups</td><td>a small gap across sites/subgroups</td><td>a wide gap — the global metric hides it</td></tr>
+    <tr><td>Subgroups</td><td>the per-site gap's 95% CI reaches a negligible difference</td><td>the gap CI excludes a negligible difference</td></tr>
   </table></div>
   <div class="callout warn"><span class="lbl">⚠ Not a diagnosis</span>A good score is evidence that the <em>data</em> carries predictive signal for the endpoint under cross-validation — not that any individual can be classified, and never a clinical decision.</div>
 </section>
@@ -322,7 +325,24 @@ pip install ".[llm]"                  # installs the anthropic + openai SDKs</co
     <li><strong>Intermediate</strong> — a masked global-pooling neural network that ignores missing features per sample (no artificial variance injected).</li>
     <li><strong>Late</strong> — stacking: a meta-learner cross-validated over the single-modality out-of-fold predictions (leakage-safe by construction).</li>
   </ul>
-  <p>Each layer's <strong>marginal gain</strong> — how much it adds beyond the others — is tested with the Nadeau–Bengio corrected resampled <em>t</em>-test (k-fold train sets overlap, so a naive paired <em>t</em>-test has inflated Type-I error). Cross-layer <strong>redundancy</strong> is the linear CKA; a layer highly aligned with a stronger one is flagged redundant.</p>
+  <p>Each layer's <strong>marginal gain</strong> — how much it adds beyond the others — is tested with the Nadeau–Bengio corrected resampled <em>t</em>-test (k-fold train sets overlap, so a naive paired <em>t</em>-test has inflated Type-I error). A layer is only badged <em>predictive (adds signal)</em> when that gain clears both an effect-size floor <strong>and</strong> the significance test — a positive but non-significant gain reads "not additive", so a noisy gain is never shown as an established contribution. Cross-layer <strong>redundancy</strong> is the linear CKA; a layer highly aligned with a stronger one is flagged redundant.</p>
+</section>
+
+<section id="validation">
+  <h2>Validation</h2>
+  <div class="callout plain"><span class="lbl">ℹ In plain terms</span>omicau was re-run end-to-end on eight public datasets — human tumours, cell lines, mouse, zebrafish, yeast, and a plant — covering classification, regression, and survival, and every score was checked against the published finding. The point isn't just the headline number; it's that the honesty machinery (shuffled controls, confidence intervals, the leakage gate) behaves correctly on real data.</div>
+  <div class="tablewrap"><table>
+    <tr><th>Organism</th><th>Target · layers</th><th>n</th><th>Metric</th><th>Score</th><th>95% CI</th><th>Leakage gate</th></tr>
+    <tr><td>Human (BRCA)</td><td>PAM50 subtype · RNA+CNV</td><td>493</td><td>AUROC</td><td>0.953</td><td>0.94–0.96</td><td>clean</td></tr>
+    <tr><td>Human (BRCA)</td><td>PAM50 subtype · RNA</td><td>956</td><td>AUROC</td><td>0.988</td><td>0.98–0.99</td><td>clean</td></tr>
+    <tr><td>Human (BRCA)</td><td>Overall survival · RNA+CNV</td><td>499</td><td>C-index</td><td>0.656</td><td>0.55–0.76</td><td>clean</td></tr>
+    <tr><td>Cell lines</td><td>SOX10 dependency · expression</td><td>1103</td><td>R²</td><td>0.723</td><td>0.66–0.77</td><td>clean</td></tr>
+    <tr><td>Mouse</td><td>Dlx3-KO genotype · RNA</td><td>12</td><td>AUROC</td><td>0.778</td><td>0.46–1.00</td><td>clean (wide CI)</td></tr>
+    <tr><td>Zebrafish</td><td>IL-KO genotype · RNA</td><td>20</td><td>AUROC</td><td>1.000</td><td>—</td><td><strong>flagged (n≪p)</strong></td></tr>
+    <tr><td>Yeast</td><td>NaCl osmostress · RNA</td><td>15</td><td>AUROC</td><td>1.000</td><td>—</td><td>clean</td></tr>
+    <tr><td>Arabidopsis</td><td>Botrytis infection · RNA</td><td>12</td><td>AUROC</td><td>1.000</td><td>—</td><td><strong>flagged (n≪p)</strong></td></tr>
+  </table></div>
+  <p>Each score matches the literature — PAM50 subtypes are transcriptionally defined (Parker 2009; TCGA 2012), expression predicts SOX10 dependency in melanoma lineage (DepMap), the Dlx3 knockout is a moderate signature so 0.778 with a wide CI at n=12 is the honest read (Duverger 2014), and the yeast osmostress and <em>Arabidopsis</em> defense programs are large real responses (Babazadeh 2017; Liu 2015). Where n ≪ features (zebrafish, <em>Arabidopsis</em>), a perfect AUROC is a small-sample artifact: the shuffled-target control also beats chance, so omicau <strong>flags leakage and refuses to certify the score</strong> rather than reporting a misleading 1.000. That refusal — not the headline number — is the point of the tool.</p>
 </section>
 
 <section id="uncertainty">
@@ -341,15 +361,15 @@ pip install ".[llm]"                  # installs the anthropic + openai SDKs</co
   <ul>
     <li><strong>Missingness bias</strong> — Kruskal-Wallis / Spearman / chi-square tests (BH-corrected) for missingness associated with the outcome (possible MNAR).</li>
     <li><strong>Batch &amp; confounding</strong> — PCA silhouette + ANOVA η² for batch structure, plus a chi-square/Cramér's V (categorical) or ANOVA/η² (continuous) test for batch–outcome confounding. A layer is called <em>batch-confounded</em> only when its variance is batch-structured <em>and</em> batch is confounded with the outcome (an orthogonal batch effect is harmless).</li>
-    <li><strong>Control baselines</strong> — shuffled-target / shuffled-feature / random-noise runs; the leakage alarm fires when a control's CI lower bound clears chance.</li>
-    <li><strong>Subgroup performance</strong> — the best model re-scored within each site/subgroup, with the max-minus-min gap surfaced.</li>
+    <li><strong>Control baselines</strong> — shuffled-target / shuffled-feature / random-noise runs; the leakage alarm fires when a control's CI lower bound clears chance. These catch target/pipeline leakage; group leakage from a mis-set group column is surfaced separately as a grouping-status check.</li>
+    <li><strong>Per-site / subgroup performance</strong> — the best model re-scored within each site/subgroup, with the max-minus-min gap and each stratum reported with a bootstrap 95% CI (strata below n=20 shown but not scored), so a disparity is only called out when its interval excludes a negligible difference.</li>
     <li><strong>Cross-site stress test</strong> (opt-in) — folds blocked on batch (leave-one-batch-out) for an honest new-batch estimate + optimism gap.</li>
   </ul>
 </section>
 
 <section id="repro">
   <h2>Reproducibility &amp; provenance</h2>
-  <div class="callout repro"><span class="lbl">✓ Reproducible by design</span>Every stochastic step is seeded; a value-level SHA-256 hash of the aligned matrices, sample index, and target is written to <code>audit.json</code> and re-checkable with <code>omicau verify</code> (exit 1 on any drift). A <strong>DOME</strong> methods block and a <strong>MODEL_CARD.md</strong> are emitted for governance.</div>
+  <div class="callout repro"><span class="lbl">✓ Reproducible by design</span>Every stochastic step is seeded; a value-level SHA-256 hash of the aligned matrices, sample index, and target is written to <code>audit.json</code> and re-checkable with <code>omicau verify</code> (exit 1 on any drift). <code>audit.json</code> also stamps the versions of the packages that drive the numbers — numpy, scikit-learn, scipy, pandas, plotly, jinja2, torch — so a result ties to the exact stack. A <strong>DOME</strong> methods block and a <strong>MODEL_CARD.md</strong> are emitted for governance.</div>
   <pre><code>omicau verify --config config.json --expected &lt;hash&gt;   # exit 1 on mismatch
 omicau verify --config config.json --audit run/audit.json</code></pre>
 </section>

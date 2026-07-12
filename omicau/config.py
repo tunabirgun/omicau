@@ -67,6 +67,9 @@ class ClinicalSpec:
 @dataclass
 class CVSpec:
     n_splits: int = 5
+    #: Mirrors the master OmicauConfig.seed via _propagate_seed(); kept for config
+    #: round-tripping. The pipeline seeds every estimator/splitter/bootstrap from the
+    #: master seed, so a run is reproducible from that single value.
     seed: int = 42
     shuffle: bool = True
     #: Group-level bootstrap resamples for the primary-metric confidence interval.
@@ -97,7 +100,7 @@ class NeuralSpec:
     lr: float = 1e-3
     weight_decay: float = 1e-4
     patience: int = 12
-    pooling: str = "mean"  # "mean" | "max" | "attention"
+    pooling: str = "mean"  # "mean" | "max"
 
 
 @dataclass

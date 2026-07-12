@@ -14,6 +14,20 @@ degrade gracefully when their dependencies or network are absent.
 
 📖 **Documentation:** https://tunabirgun.github.io/omicau/
 
+**Contents:** [What it answers](#what-it-answers) · [Installation](#installation) ·
+[Quickstart](#quickstart) · [Step-by-step guide](#step-by-step-guide) ·
+[Use your own data](#use-your-own-data) · [Workflow](#workflow) ·
+[Methodology](#methodology) · [Plain-language verdict](#plain-language-verdict-optional-ai-endpoint) ·
+[Reporting](#reporting) · [Validation](#validation) · [Data hubs](#data-hubs) ·
+[CLI & config reference](#command-line-and-configuration-reference) ·
+[Software versions](#software-versions) · [Reproducibility](#reproducibility-log) ·
+[HPC](#decoupling-and-hpc) · [Troubleshooting](#troubleshooting)
+
+**New here?** Clinicians / PIs: skim [What it answers](#what-it-answers), then
+[Reporting](#reporting). Bioinformaticians: [Quickstart](#quickstart) →
+[Use your own data](#use-your-own-data) → [Methodology](#methodology). Power users:
+the [CLI & configuration reference](#command-line-and-configuration-reference).
+
 ---
 
 ## What it answers
@@ -500,22 +514,32 @@ Representational redundancy between modalities *X* and *Y* is the linear
 **centered kernel alignment**
 `CKA(X, Y) = ‖YᵀX‖_F² / (‖XᵀX‖_F · ‖YᵀY‖_F) ∈ [0, 1]`
 on column-standardized matrices; high CKA with a stronger-alone modality marks a
-layer as redundant. Each modality receives a verdict — *predictive*, *redundant*,
-*batch-confounded*, or *control-like*. A layer is called *batch-confounded* only
-when its variance is batch-structured **and** batch is genuinely confounded with
-the outcome; a batch effect orthogonal to the outcome is harmless and is not
-flagged (Nygaard et al. 2016).
+layer as redundant. Each modality receives a verdict — *predictive* (adds marginal
+signal), *not additive* (predictive alone, but its leave-one-out gain is not
+distinguishable from zero, or it is subsumed by a stronger layer), *batch-confounded*,
+or *control-like*. The *predictive* verdict is gated on **significance, not just a
+positive point estimate**: a modality is only badged as adding signal when its
+leave-one-out gain clears both a minimum effect size and the Nadeau–Bengio paired
+test (a positive but non-significant gain reads "not additive", so a noisy gain is
+never rendered as an established contribution). A layer is called *batch-confounded*
+only when its variance is batch-structured **and** batch is genuinely confounded with
+the outcome; a batch effect orthogonal to the outcome is harmless and is not flagged
+(Nygaard et al. 2016).
 
 ### 11. Control baselines
 
-The identical pipeline is run on three corrupted inputs to prove it does not
-leak: **shuffled target**, **column-shuffled features**, and **random Gaussian
-noise**. A well-behaved harness scores at chance on all three. The leakage alarm
-gates the whole ledger and is **CI-aware**: it fires when a control's bootstrap
-95% CI **lower bound** clears chance (i.e. the control is *significantly* above
-chance), falling back to a task-aware margin (chance + 0.12) when no CI is
-available. AUPRC is reported against its prevalence baseline so lift over chance
-is visible.
+The identical pipeline is run on three corrupted inputs: **shuffled target**,
+**column-shuffled features**, and **random Gaussian noise**. A well-behaved harness
+scores at chance on all three. The leakage alarm gates the whole ledger and is
+**CI-aware**: it fires when a control's bootstrap 95% CI **lower bound** clears chance
+(i.e. the control is *significantly* above chance), falling back to a task-aware margin
+(chance + 0.12) when no CI is available. These controls detect **target/pipeline
+leakage** (a preprocessing step or the target sneaking into training); they cannot by
+themselves detect **group leakage** from a mis-set or missing group column, so the
+report and the dashboard word the pass as "no target/pipeline leakage" and surface the
+grouping status (whether samples were keyed to independent subjects) as its own
+trust-checklist row. AUPRC is reported against its prevalence baseline so improvement
+over chance is visible.
 
 ### 12. Metrics
 
@@ -530,7 +554,11 @@ C-index (survival).
 ### 12b. Task types and optional capabilities
 
 - **Survival / time-to-event** (`task: "survival"`) — Cox + C-index under the same
-  leakage-safe group-aware CV, controls, and bootstrap CIs.
+  leakage-safe group-aware CV, controls, and bootstrap CIs. Set `clinical.time` and
+  `clinical.event` (not `target`); the event indicator is parsed tolerantly (numeric
+  `1`/`0`, word labels `DECEASED`/`LIVING` or `Dead`/`Alive`, cBioPortal `1:DECEASED`,
+  booleans, yes/no), and a column that parses to zero events fails loudly rather than
+  silently treating every subject as censored.
 - **Single-modality runs** are a first-class *honesty check*: with one layer there
   is no fusion to benchmark, so the report drops the inert fusion/redundancy panels
   and verifies the single layer's signal is real and leakage-free.
@@ -554,10 +582,14 @@ construction.
 
 ### 13. Fairness, generalization, and governance
 
-- **Subgroup performance** — the best model's pooled out-of-fold predictions are
-  re-scored within each level of the batch/site column, and the max-minus-min
-  metric gap is surfaced, since a global metric can hide subgroup disparities
-  (Obermeyer et al., *Science* 2019). Pure re-aggregation, no retraining.
+- **Per-site / subgroup performance** — the best model's pooled out-of-fold
+  predictions are re-scored within each level of the batch/site column, since a
+  global metric can hide disparities across sites or subgroups (Obermeyer et al.,
+  *Science* 2019). Pure re-aggregation, no retraining. Each per-stratum metric **and
+  the max-minus-min gap carry a bootstrap 95% CI**, and strata below n=20 are shown
+  but not scored — so the "investigate site/subgroup bias" call fires only when the
+  gap interval excludes a negligible difference, not on a max-minus-min point estimate
+  that small-sample noise inflates.
 - **Cross-site stress test** (opt-in `cv.batch_blocked`) — the reference fusion is
   additionally cross-validated with folds **blocked on batch** (leave-one-batch-out),
   giving an honest new-batch generalization estimate and an optimism gap against
@@ -634,8 +666,50 @@ falls back to the rule-based verdict — the audit never fails because of it.
   biologists, five interactive figures, and tables that are sortable,
   text-filterable, and CSV/TSV-exportable via dependency-free vanilla JavaScript.
 - **Machine-readable**: `audit.json` (full state, including a DOME methods block),
-  `model_metrics.csv`, `modality_ledger.csv`, `missingness_tests.csv`, and
-  `MODEL_CARD.md` (a research-use-only model card).
+  `model_metrics.csv` (per model: primary metric + **AUPRC + balanced accuracy** for
+  classification, with the 95% CI), `modality_ledger.csv`, `missingness_tests.csv`,
+  and `MODEL_CARD.md` (a research-use-only model card).
+
+---
+
+## Validation
+
+omicau was re-run end-to-end on eight public datasets spanning model and non-model
+organisms and every task type, and each result was checked against the published
+finding. Numbers below are the fresh runs (group-aware CV, feature attribution off
+for speed); the shuffled-target control and the CI-aware leakage gate are shown so
+the honesty behaviour is visible, not just the headline score.
+
+| Organism | Use case | Target · layers | n | Metric | Score | 95% CI | Shuffled control | Leakage gate |
+| --- | --- | --- | --: | --- | --: | --- | --: | --- |
+| Human (BRCA) | clinical | PAM50 subtype · RNA+CNV | 493 | AUROC | 0.953 | 0.94–0.96 | 0.49 | clean |
+| Human (BRCA) | clinical | PAM50 subtype · RNA | 956 | AUROC | 0.988 | 0.98–0.99 | 0.50 | clean |
+| Human (BRCA) | clinical | Overall survival · RNA+CNV | 499 | C-index | 0.656 | 0.55–0.76 | 0.54 | clean |
+| Cell lines | drug / biotech | SOX10 dependency · expression | 1103 | R² | 0.723 | 0.66–0.77 | −0.07 | clean |
+| Mouse | biology | Dlx3-KO genotype · RNA | 12 | AUROC | 0.778 | 0.46–1.00 | 0.53 | clean (wide CI) |
+| Zebrafish | biology | IL-KO genotype · RNA | 20 | AUROC | 1.000 | — | 0.69 | **flagged (n≪p)** |
+| Yeast | biotech | NaCl osmostress · RNA | 15 | AUROC | 1.000 | — | 0.42 | clean |
+| Arabidopsis | non-model plant | Botrytis infection · RNA | 12 | AUROC | 1.000 | — | 0.89 | **flagged (n≪p)** |
+
+Each score matches the literature: PAM50 subtypes are transcriptionally defined
+(Parker et al. 2009; TCGA 2012), expression predicts SOX10 dependency in melanoma
+lineage (DepMap; Broad self-expression ρ ≈ −0.82), the Dlx3 knockout is a moderate
+osteogenic signature (Duverger et al. 2014, so AUROC 0.778 with a wide CI at n=12 is
+the honest read), the yeast HOG/ESR osmostress program is a large clean response
+(Babazadeh et al. 2017), and *Botrytis* infection reprograms roughly a third of the
+*Arabidopsis* genome (Liu et al. 2015). Where n ≪ features (zebrafish, *Arabidopsis*),
+a perfect AUROC is a small-sample artifact, and the control baselines catch it — the
+shuffled-target control also beats chance (0.69, 0.89), so omicau **flags leakage and
+refuses to certify the score** rather than reporting a misleading 1.000. Where the
+cohort is adequate (human, yeast) or the effect is moderate (mouse), the controls sit
+at chance and the confidence interval tells the honest story.
+
+Earlier releases were additionally validated on non-hub multi-omics benchmarks:
+ROSMAP and BRCA (MOGONET; three omics — fusion AUROC ≈ 0.80 and ≈ 0.95, with
+methylation and miRNA correctly flagged redundant with RNA), a GEO lung
+tumour-vs-normal microarray (AUROC ≈ 0.99), and a whole-blood methylation epigenetic
+clock (regression, R² ≈ 0.88, MAE ≈ 3.6 years). Across all of these the shuffled
+controls scored at chance and no leakage was flagged.
 
 ---
 
@@ -666,19 +740,96 @@ the managed `WORKSPACE_CDR` / `WORKSPACE_BUCKET` / `GOOGLE_PROJECT` variables;
 data cannot be exported and off-platform sessions raise a clear error. No
 participant-level data is ever transmitted off-platform.
 
-`omicau` was also validated on four external datasets that are **not** hubs,
-spanning binary, multi-class, and regression tasks:
+Reproduce any row of the [Validation](#validation) table in two commands, e.g.
+`omicau bootstrap --dataset expression_atlas --study E-GEOD-66290 --target infect --out-dir d`
+then `omicau run --config d/config.json`.
 
-- **ROSMAP** (MOGONET; Alzheimer's, three omics) — fusion AUROC ≈ 0.80.
-- **BRCA** (MOGONET; PAM50 subtype, three omics, 5-class) — fusion AUROC ≈ 0.95,
-  with methylation and miRNA correctly flagged redundant with RNA.
-- **GSE19804** (GEO microarray; lung tumor-vs-normal, 120 samples × ~54k probes) —
-  AUROC ≈ 0.99.
-- **GSE41037** (GEO; an epigenetic clock — whole-blood DNA methylation → age,
-  720 samples × ~27.6k CpGs, **regression**) — R² ≈ 0.88, MAE ≈ 3.6 years.
+---
 
-Across all four, the shuffled-target / shuffled-feature / random-noise controls
-scored at chance (negative R² for the regression), and no leakage was flagged.
+## Command-line and configuration reference
+
+### Commands
+
+| Command | Key options | What it does |
+| --- | --- | --- |
+| `omicau check-env` | — | CPU/GPU, folder access, and which optional tiers (`[data]`, `[ui]`, `[llm]`) are installed. |
+| `omicau bootstrap` | `--dataset`\*, `--out-dir`\*, `--study` / `--target` / `--preset` / `--cancer`, `--task`, `--seed`, `--normalization` | Assemble a runnable dataset (matrices + `clinical.csv` + `config.json`) from the mock generator or a public hub. |
+| `omicau run` | `--config`\*, `--cores`/`--threads`, `--device {auto,cpu,cuda,mps}`, `--llm`/`--no-llm`, `--deterministic`, `--out-dir` | Full audit → `report.html` + `audit.json` + CSVs + `MODEL_CARD.md`. |
+| `omicau verify` | `--config`, `--audit`, `--expected <hash>` | Recompute the provenance SHA-256 and compare (exit 1 on drift). |
+| `omicau ui` | `--port`, `--host`, `--no-browser` | Local no-code wizard (needs `[ui]`). |
+
+\* required. `--cores`/`--threads` honor cgroup limits; `--deterministic` turns on strict
+PyTorch determinism (`torch.use_deterministic_algorithms` + `CUBLAS_WORKSPACE_CONFIG`).
+
+### Configuration
+
+A config is JSON, TOML, or YAML (`[yaml]` extra). Unknown keys warn and are ignored,
+every omitted key takes the default below, and the fully-resolved config is written back
+into `audit.json`. Top-level: `run_name`, `output_dir`, `organism`, `seed` (the master
+seed — every component derives from it), `modalities`, plus these blocks:
+
+| Key | Default | Purpose |
+| --- | --- | --- |
+| `clinical.target` | `"target"` | Outcome column (classification / regression). |
+| `clinical.sample_id` | index | Sample-id column (omit → table index / first column). |
+| `clinical.group` | `null` | Independent unit for leakage-safe CV; a **list** combines columns to the coarsest unit. |
+| `clinical.batch` | `null` | Batch/site column → hygiene diagnostics + opt-in stress tests. |
+| `clinical.task` | `"auto"` | `auto` \| `classification` \| `regression` \| `survival`. |
+| `clinical.time` / `clinical.event` | `null` | Survival only: numeric time + event indicator (tolerant parsing). |
+| `cv.n_splits` | `5` | CV folds (auto-clamped so every fold is populated). |
+| `cv.n_bootstrap` | `1000` | Group-level bootstrap resamples for the 95% CI. |
+| `cv.batch_blocked` | `false` | Opt-in leave-one-batch-out cross-site stress test. |
+| `cv.batch_adjust_sensitivity` | `false` | Opt-in in-fold batch-centering probe (auto-off if batch is confounded). |
+| `classical.models` | `["linear","random_forest"]` | Estimators; also `gradient_boosting`. |
+| `classical.max_features` | `2000` | In-fold `SelectKBest` cap (`null` = keep all). |
+| `neural.enabled` / `neural.epochs` / `neural.pooling` | `true` / `60` / `"mean"` | Fusion network; pooling `mean` \| `max`. |
+| `xai.enabled` | `true` | Permutation-importance attribution — set `false` to skip on high-dimensional data (much faster). |
+| `controls.enabled` | `true` | Shuffled-target / shuffled-feature / random-noise baselines. |
+| `compute.cores` / `compute.device` / `compute.deterministic` | `null` / `"auto"` / `false` | Workers, backend, strict determinism. |
+| `normalization.preset` | `"none"` | `none` (ids verbatim) \| `tcga` (uppercase + collapse aliquot barcode). |
+| `llm.enabled` / `llm.provider` / `llm.model` | `false` / `"anthropic"` / `"claude-sonnet-5"` | Optional plain-language verdict (key is never part of the config). |
+
+### Output files
+
+| File | Contents |
+| --- | --- |
+| `report.html` | Self-contained interactive dashboard (executive + research tabs; opens with no network). |
+| `audit.json` | Full run state — dataset, models, utility ledger, diagnostics, calibration, subgroups, DOME block, resolved config, environment, provenance hash. |
+| `model_metrics.csv` | Per model: primary metric (+ AUPRC + balanced accuracy for classification), 95% CI, features, folds. |
+| `modality_ledger.csv` | Per layer: standalone score, marginal gain + p-value, redundancy CKA, verdict. |
+| `missingness_tests.csv` | Missingness-bias tests with BH-adjusted p-values. |
+| `MODEL_CARD.md` | Research-use-only model card (intended use, data, metrics, caveats). |
+| `runtime_log.txt` | Wall-time per step with a `hostname/device/cores` tag. |
+
+### Python API
+
+The CLI is a thin wrapper — the identical audit runs in-process, returning the full
+audit dict with asset paths under `_assets`:
+
+```python
+from omicau.config import OmicauConfig
+from omicau.cli import run_audit
+
+cfg = OmicauConfig.from_file("mystudy/config.json")
+audit = run_audit(cfg, cores=8, device="auto", llm=False)
+print(audit["_assets"]["html"], audit["_assets"]["json"])   # report.html + audit.json
+print(audit["utility"]["best_model"])                       # results as plain dicts
+```
+
+### On a cluster (SLURM)
+
+The core is headless and honors cgroup CPU limits; no GUI, network, or interactive
+prompt is required.
+
+```bash
+#SBATCH -c 16
+#SBATCH --mem=32G
+omicau run --config study/config.json --cores $SLURM_CPUS_PER_TASK --device cpu --deterministic
+```
+
+Install torch from the CPU wheel first (see [Installation](#installation)) to avoid the
+~2.5 GB CUDA download on CPU-only nodes, and set `xai.enabled=false` in the config for
+very high-dimensional matrices where feature attribution dominates the runtime.
 
 ---
 
@@ -735,9 +886,11 @@ production.
 - **Provenance**: the value-level SHA-256 of the aligned matrices, sample index,
   features, and target is written to `audit.json` and re-checkable with
   `omicau verify` (exit 1 on any drift).
-- **Environment capture**: `audit.json → environment` records the Python,
-  platform, numpy, and torch versions of the run; `runtime_log.txt` records the
-  wall-time of every step with a device tag (`hostname/device/cores`).
+- **Environment capture**: `audit.json → environment` records the Python and
+  platform plus the versions of the packages that actually drive the numbers —
+  numpy, **scikit-learn, scipy, pandas**, plotly, jinja2, and torch — so a run's
+  results can be tied to the exact stack that produced them; `runtime_log.txt`
+  records the wall-time of every step with a device tag (`hostname/device/cores`).
 - **Built and tested on**: Python 3.12.10, Windows 11 (10.0.26200), x86-64
   (AMD64), CPU-only torch. The package is cross-platform (`pathlib` throughout,
   defensive `newline=""` I/O, no shell invocation) and headless-HPC ready
@@ -756,6 +909,21 @@ imports. Thread/worker counts are set explicitly via `--cores` / `--threads`;
 the PyTorch device is chosen with `--device` (MPS/CUDA/CPU, `auto` by default).
 
 ---
+
+## Troubleshooting
+
+| Symptom | Cause / fix |
+| --- | --- |
+| `error: externally-managed-environment` on `pip install` | Debian/Ubuntu 24.04+ system Python (PEP 668). Use `pipx install omicau` or a virtual environment — not system `pip`. |
+| `omicau: command not found` after pip install | The script dir isn't on `PATH`. Use `pipx` (runs `pipx ensurepath`), or call `python -m omicau`. |
+| A feature errors asking for an extra (e.g. `[ui]`, `[data]`, `[llm]`) | Install it: `pip install "omicau[ui]"`, or on a pipx install `pipx inject omicau fastapi uvicorn python-multipart`. The error prints the exact command for your environment. |
+| The run seems to "hang" after "Checking for batch effects" | On high-dimensional data, permutation-importance attribution re-scores per feature and is the bottleneck. Set `xai.enabled=false` in the config — the audit finishes in seconds with full metrics/CIs/controls/calibration, just no feature ranking. |
+| Linux install pulls ~2.5 GB of NVIDIA libraries | That's torch's default CUDA wheel. On a CPU-only box install `torch` from the CPU index *first* (see [Installation](#installation)), then `pip install omicau`. |
+| `All modalities were dropped during alignment` | Sample ids don't overlap across your files. Check that the same ids appear in every matrix and the clinical table; for raw TCGA barcodes set `normalization.preset: "tcga"`. |
+| Survival run: `Target column 'target' not found` | A survival config uses `clinical.time` + `clinical.event`, not `target`. Set `task: "survival"` with both columns. |
+| Survival run reports no events / a degenerate C-index | The event column parses to all-censored. omicau now errors loudly on this; check the encoding (numeric `1`/`0`, `DECEASED`/`LIVING`, or cBioPortal `1:DECEASED` are all handled). |
+| AUROC 1.000 but the report flags leakage / a very wide CI | Not a bug — this is the honesty gate. With few samples relative to features (n ≪ p) a perfect score is a small-sample artifact; the shuffled control also beats chance, so omicau refuses to certify it. Collect more independent samples. |
+| `UnicodeEncodeError` in the terminal (Windows) | The CLI reconfigures stdout to UTF-8 at startup; if a wrapper suppresses that, set `PYTHONUTF8=1`. |
 
 ## License
 

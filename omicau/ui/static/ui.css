@@ -126,6 +126,13 @@ body { background: var(--bg); }
 .progress-wrap { margin-top: var(--s5); }
 .progress-bar { height: 8px; border-radius: 4px; background: var(--sunken); overflow: hidden; }
 .progress-bar > span { display: block; height: 100%; background: var(--cobalt); transition: width .3s; }
+/* Indeterminate: the heavy benchmarks emit no stage lines, so animate a sweep past
+   the last named stage instead of freezing the bar (which reads as a hang). */
+.progress-bar.indeterminate > span { width: 100% !important;
+  background: linear-gradient(90deg, var(--sunken) 0%, var(--cobalt) 50%, var(--sunken) 100%);
+  background-size: 200% 100%; animation: omicau-sweep 1.4s ease-in-out infinite; }
+@keyframes omicau-sweep { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { .progress-bar.indeterminate > span { animation: none; } }
 .stage-log { font-family: var(--mono); font-size: 12.5px; color: var(--muted); margin-top: var(--s4); }
 .stage-log .done { color: var(--teal-ink); }
 .result-frame { width: 100%; height: calc(100vh - 220px); border: 1px solid var(--border);

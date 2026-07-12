@@ -72,6 +72,8 @@ class ModalityEncoder(nn.Module):
         self.embed = nn.Parameter(torch.randn(n_features, embed_dim) * 0.1)
         self.bias = nn.Parameter(torch.zeros(embed_dim))
         self.norm = nn.LayerNorm(embed_dim)
+        if pooling not in ("mean", "max"):
+            raise ValueError(f"Unsupported pooling '{pooling}'; expected 'mean' or 'max'.")
         self.pooling = pooling
 
     def forward(self, x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
@@ -79,8 +81,9 @@ class ModalityEncoder(nn.Module):
         tokens = x.unsqueeze(-1) * self.embed.unsqueeze(0)
         m = mask.unsqueeze(-1)
         if self.pooling == "max":
-            neg = torch.finfo(tokens.dtype).min
-            masked = tokens.masked_fill(m == 0, neg)
+            # true -inf sentinel so a row with every feature masked pools to -inf and
+            # the guard below zero-fills it (finfo.min stays finite and never trips isinf).
+            masked = tokens.masked_fill(m == 0, float("-inf"))
             pooled = masked.max(dim=1).values
             pooled = torch.where(torch.isinf(pooled), torch.zeros_like(pooled), pooled)
         else:  # masked mean
