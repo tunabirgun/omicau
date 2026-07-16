@@ -165,10 +165,10 @@ html.js .reveal.in{opacity:1;transform:none;
 /* 3. True sliding nav indicator — one absolutely-positioned bar inside the
    already-sticky sidebar (its position:sticky is the containing block; do NOT
    add position:relative). Geometry is driven from the active link in JS. */
-.nav-marker{position:absolute;left:0;width:2px;height:0;background:var(--accent);
-  transform:translateY(0);border-radius:1px;pointer-events:none}
-.nav-marker.ready{transition:transform .28s cubic-bezier(.4,0,.2,1),
-                            height .28s cubic-bezier(.4,0,.2,1)}
+.nav-marker{position:absolute;left:8px;width:3px;height:0;background:var(--accent);
+  transform:translateY(0);border-radius:3px;pointer-events:none;z-index:1}
+.nav-marker.ready{transition:transform .26s cubic-bezier(.4,0,.2,1),
+                            height .26s cubic-bezier(.4,0,.2,1)}
 
 /* 4. Scoped, honest theme crossfade — explicit props only (never 'all', which
    would drag the reveal transforms), gated so it can't fire on first paint. */
@@ -195,3 +195,13 @@ a:focus-visible,.sidebar a.nav:focus-visible{outline-offset:3px}
   *,*::before,*::after{transition:none!important;animation:none!important;
     scroll-behavior:auto!important}
 }
+
+/* 8. Omicau scrollbars — thin, themed, subtle; replaces the default OS bar
+   on the page, the sidebar rail, code blocks, and wide tables. */
+*{scrollbar-width:thin;scrollbar-color:var(--ink-300) transparent}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--ink-300);border-radius:10px;
+  border:2px solid transparent;background-clip:content-box}
+::-webkit-scrollbar-thumb:hover{background:var(--accent)}
+::-webkit-scrollbar-corner{background:transparent}
