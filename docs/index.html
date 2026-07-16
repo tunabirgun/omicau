@@ -5,7 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>omicau — leakage-safe multi-omics audit &amp; fusion benchmarking</title>
 <meta name="description" content="omicau audits multi-omic datasets and benchmarks how well omic layers combine to predict a clinical endpoint — leakage-safe, with confidence intervals, calibration, and a research-use-only clinical dashboard.">
+<link rel="stylesheet" href="assets/fonts.css">
 <link rel="stylesheet" href="assets/site.css">
+<script>
+/* Run before paint: gate reveal-hidden state on JS, and resolve the theme up-front
+   (no light-flash) so a saved/system-dark preference is applied on first paint. */
+document.documentElement.classList.add('js');
+(function(){let t;try{t=localStorage.getItem('omicau-docs-theme')}catch(e){}
+  if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';
+  document.documentElement.setAttribute('data-theme',t);})();
+</script>
 </head>
 <body>
 <div class="mobile-top">
@@ -14,6 +23,7 @@
 </div>
 <div class="layout">
 <nav class="sidebar" id="sidebar">
+  <span class="nav-marker" aria-hidden="true"></span>
   <div class="brand">omicau</div>
   <div class="tagline">multi-omics audit &amp; fusion benchmarking</div>
   <div class="nav-group">
@@ -105,7 +115,7 @@
   </figure>
 </section>
 
-<section id="what">
+<section id="what" class="reveal">
   <h2>What omicau answers</h2>
   <p>Before anyone builds a model on a multi-omic dataset, omicau answers three questions about the data itself:</p>
   <ol>
@@ -116,7 +126,7 @@
   <p>It makes <strong>no patient predictions and issues no diagnosis.</strong> Under leakage-safe, group-aware cross-validation it benchmarks classical and neural fusion with group-level bootstrap 95% confidence intervals, tests each layer's marginal contribution with a corrected resampled <em>t</em>-test, measures cross-layer redundancy, benchmarks negative controls to prove the pipeline does not leak, and locks provenance with a value-level SHA-256 hash.</p>
 </section>
 
-<section id="install">
+<section id="install" class="reveal">
   <h2>Installation</h2>
   <p><a href="https://pypi.org/project/omicau/">omicau is on PyPI</a> — one line installs it. Python ≥ 3.10; every option below gives the same <code>omicau</code> command.</p>
   <h3>pip / pipx <span class="pill">simplest</span></h3>
@@ -138,7 +148,7 @@ pip install ".[all,dev]"</code></pre>
   <p>Core dependencies: <code>numpy</code>, <code>pandas</code>, <code>scipy</code>, <code>scikit-learn</code>, <code>torch</code>, <code>plotly</code>, <code>click</code>, <code>jinja2</code>, <code>tqdm</code>. Releases are automatic: bumping the version in <code>pyproject.toml</code> and merging to <code>main</code> publishes to PyPI via OIDC (no stored token), and conda-forge auto-follows PyPI.</p>
 </section>
 
-<section id="quickstart">
+<section id="quickstart" class="reveal">
   <h2>Quick start</h2>
   <div class="callout plain"><span class="lbl">ℹ In plain terms</span>Four commands take you from a built-in synthetic dataset to a verified dashboard. Nothing leaves your machine.</div>
   <pre><code>omicau check-env                                 # CPU/GPU + dependency status
@@ -149,7 +159,7 @@ omicau verify --config demo/config.json          # recompute the provenance hash
   <p>The <code>mock</code> dataset is offline and the recommended starting template — it writes a runnable <code>config.json</code> and example CSVs with deliberately redundant, batch-confounded, and pure-noise layers, so the diagnostics have something to flag. Add <code>--task regression</code> for a regression mock.</p>
 </section>
 
-<section id="inputs">
+<section id="inputs" class="reveal">
   <h2>Bring your own data</h2>
   <div class="callout plain"><span class="lbl">ℹ In plain terms</span>Every omic layer is one table: sample identifiers in the header row and first column, numbers in the body, blanks (or <code>NA</code>) for missing. You do not need to normalize, scale, or impute first — omicau aligns the files and does all scaling inside cross-validation so nothing leaks.</div>
   <p>Provide one file per modality, one clinical table, and a small config that names them (paths resolve relative to the config). Ingestion is forgiving: delimiter and orientation are auto-detected (<code>samples × features</code> or <code>features × samples</code>), sample names are fuzzily matched across files, and common NA tokens, European decimals, and <code>±inf</code> are healed. Missing values stay masked — never imputed at ingest.</p>
@@ -177,7 +187,7 @@ omicau verify --config demo/config.json          # recompute the provenance hash
 }</code></pre>
 </section>
 
-<section id="organisms">
+<section id="organisms" class="reveal">
   <h2>Model &amp; non-model organisms</h2>
   <div class="callout plain"><span class="lbl">ℹ In plain terms</span>omicau makes no assumptions about biology. It reads your tables as numbers with row and column labels — it never looks up a gene, a probe, or a species. Mouse, zebrafish, yeast, <em>Arabidopsis</em>, a crop, livestock, or a non-model organism with no reference at all: if you can write a <code>samples × features</code> matrix and a column saying what each sample is, omicau runs on it unchanged.</div>
 
@@ -228,7 +238,7 @@ omicau verify --config demo/config.json          # recompute the provenance hash
   <p style="margin-top:16px">To try a real non-human dataset in one command, use the cross-organism data hub: <code>omicau bootstrap --dataset expression_atlas --out-dir d</code> (defaults to a mouse experiment from EMBL-EBI Expression Atlas).</p>
 </section>
 
-<section id="ui">
+<section id="ui" class="reveal">
   <h2>The optional no-code UI</h2>
   <p>omicau is a CLI tool first. For non-coders there is an opt-in local web UI — a wizard to upload files, map columns, and run the audit without a config file:</p>
   <pre><code>pip install ".[ui]"
@@ -241,7 +251,7 @@ omicau ui        # opens a browser wizard on 127.0.0.1</code></pre>
   </figure>
 </section>
 
-<section id="llm">
+<section id="llm" class="reveal">
   <h2>AI plain-language verdict <span class="pill">optional</span></h2>
   <p>omicau always writes a deterministic, rule-based summary of the audit. On top of that you can ask an AI model to turn the numbers into a short plain-English verdict — naming the best fusion model, whether combining layers helped, which layers to trust, and what to do next. This is <strong>optional and additive</strong>: skip it and nothing changes; the built-in summary and every figure are still produced.</p>
 
@@ -285,7 +295,7 @@ pip install ".[llm]"                  # installs the anthropic + openai SDKs</co
   <div class="callout plain"><span class="lbl">ℹ Graceful fallback</span>If the provider SDK is not installed, the key is missing, or the model refuses or errors, omicau silently falls back to its deterministic rule-based summary — the audit never fails because of the optional verdict.</div>
 </section>
 
-<section id="report">
+<section id="report" class="reveal">
   <h2>Reading the report</h2>
   <p>The dashboard has two tabs, both driven by the same <code>audit.json</code>. <strong>Executive summary</strong> answers the three questions in plain language and states a verdict and a trust checklist — read this first. <strong>Research detail</strong> holds the numbers behind those answers.</p>
   <h3>The answer strip</h3>
@@ -304,7 +314,7 @@ pip install ".[llm]"                  # installs the anthropic + openai SDKs</co
   </figure>
 </section>
 
-<section id="trust">
+<section id="trust" class="reveal">
   <h2>Is my result trustworthy?</h2>
   <p>Read the result only as far as these allow:</p>
   <div class="tablewrap"><table>
@@ -319,7 +329,7 @@ pip install ".[llm]"                  # installs the anthropic + openai SDKs</co
   <div class="callout warn"><span class="lbl">⚠ Not a diagnosis</span>A good score is evidence that the <em>data</em> carries predictive signal for the endpoint under cross-validation — not that any individual can be classified, and never a clinical decision.</div>
 </section>
 
-<section id="methods">
+<section id="methods" class="reveal">
   <h2>How it works</h2>
   <div class="callout plain"><span class="lbl">ℹ In plain terms</span>omicau tries three ways of combining your data types — glue the columns together, let a neural network blend them, or train a small model on each type and combine the answers — and reports which one your dataset actually prefers. Every scaling and feature-picking step happens <strong>inside</strong> the training data only, so the test scores can't be secretly inflated. It also asks, for each data type, "how much does this one <em>add</em> once we already have the others?" and "do any two mostly repeat each other?"</div>
   <p>The whole pipeline is designed to not fool you. Preprocessing (median-impute → variance-filter → standardize → feature selection) is fitted <strong>inside each training fold only</strong>; cross-validation is <strong>group-aware</strong> (multiple samples from one patient never split across train and test).</p>
@@ -333,7 +343,7 @@ pip install ".[llm]"                  # installs the anthropic + openai SDKs</co
   <p>Each layer's <strong>marginal gain</strong> — how much it adds beyond the others — is tested with the Nadeau–Bengio corrected resampled <em>t</em>-test (k-fold train sets overlap, so a naive paired <em>t</em>-test has inflated Type-I error). A layer is only badged <em>predictive (adds signal)</em> when that gain clears both an effect-size floor <strong>and</strong> the significance test — a positive but non-significant gain reads "not additive", so a noisy gain is never shown as an established contribution. Cross-layer <strong>redundancy</strong> is the linear CKA; a layer highly aligned with a stronger one is flagged redundant.</p>
 </section>
 
-<section id="validation">
+<section id="validation" class="reveal">
   <h2>Validation</h2>
   <div class="callout plain"><span class="lbl">ℹ In plain terms</span>omicau was re-run end-to-end on eight public datasets — human tumours, cell lines, mouse, zebrafish, yeast, and a plant — covering classification, regression, and survival, and every score was checked against the published finding. The point isn't just the headline number; it's that the honesty machinery (shuffled controls, confidence intervals, the leakage gate) behaves correctly on real data.</div>
   <div class="tablewrap"><table>
@@ -350,7 +360,7 @@ pip install ".[llm]"                  # installs the anthropic + openai SDKs</co
   <p>Each score matches the literature — PAM50 subtypes are transcriptionally defined (Parker 2009; TCGA 2012), expression predicts SOX10 dependency in melanoma lineage (DepMap), the Dlx3 knockout is a moderate signature so 0.778 with a wide CI at n=12 is the honest read (Duverger 2014), and the yeast osmostress and <em>Arabidopsis</em> defense programs are large real responses (Babazadeh 2017; Liu 2015). Where n ≪ features (zebrafish, <em>Arabidopsis</em>), a perfect AUROC is a small-sample artifact: the shuffled-target control also beats chance, so omicau <strong>flags leakage and refuses to certify the score</strong> rather than reporting a misleading 1.000. That refusal — not the headline number — is the point of the tool.</p>
 </section>
 
-<section id="uncertainty">
+<section id="uncertainty" class="reveal">
   <h2>Uncertainty &amp; calibration</h2>
   <div class="callout plain"><span class="lbl">ℹ In plain terms</span>A single score is never the whole story. The <strong>confidence interval</strong> is the range the score would plausibly fall in on new samples — a narrow band that clears chance means a solid result; a wide band overlapping chance means "not proven." <strong>Calibration</strong> asks whether a predicted 70% risk really happens about 70% of the time. <strong>Feature attribution</strong> ranks which inputs mattered most, but it is a hint, not proof of cause — correlated inputs can trade places in the ranking.</div>
   <ul>
@@ -360,7 +370,7 @@ pip install ".[llm]"                  # installs the anthropic + openai SDKs</co
   </ul>
 </section>
 
-<section id="hygiene">
+<section id="hygiene" class="reveal">
   <h2>Data hygiene &amp; generalization</h2>
   <div class="callout plain"><span class="lbl">ℹ In plain terms</span>These checks look for ways the data could fool a model. A <strong>batch effect</strong> is a technical signature of when or where samples were run that a model can mistake for real biology — only flagged when it also tracks the outcome. <strong>Missingness bias</strong> is when <em>which</em> values are missing is itself a clue to the outcome, faking a signal. The <strong>control baselines</strong> are the same models trained on scrambled labels: they should score no better than a coin-flip, and an alarm fires if they don't. <strong>Subgroups</strong> checks the score isn't propped up by one site while failing another.</div>
   <ul>
@@ -372,14 +382,14 @@ pip install ".[llm]"                  # installs the anthropic + openai SDKs</co
   </ul>
 </section>
 
-<section id="repro">
+<section id="repro" class="reveal">
   <h2>Reproducibility &amp; provenance</h2>
   <div class="callout repro"><span class="lbl">✓ Reproducible by design</span>Every stochastic step is seeded; a value-level SHA-256 hash of the aligned matrices, sample index, and target is written to <code>audit.json</code> and re-checkable with <code>omicau verify</code> (exit 1 on any drift). <code>audit.json</code> also stamps the versions of the packages that drive the numbers — numpy, scikit-learn, scipy, pandas, plotly, jinja2, torch — so a result ties to the exact stack. A <strong>DOME</strong> methods block and a <strong>MODEL_CARD.md</strong> are emitted for governance.</div>
   <pre><code>omicau verify --config config.json --expected &lt;hash&gt;   # exit 1 on mismatch
 omicau verify --config config.json --audit run/audit.json</code></pre>
 </section>
 
-<section id="hubs">
+<section id="hubs" class="reveal">
   <h2>Data hubs</h2>
   <p>Optional clients pull public cohorts (verified live). The primary workflow remains your own data.</p>
   <div class="callout plain"><span class="lbl">ℹ Finding a valid identifier</span>Browse the source, copy an id, pass it to <code>bootstrap</code>. <strong>Expression Atlas</strong> (any organism): the <code>E-…</code> accession at <a href="https://www.ebi.ac.uk/gxa/experiments">ebi.ac.uk/gxa/experiments</a>, with <code>--target</code> set to one of its listed experimental factors. <strong>TCGA</strong>: a study id at <a href="https://www.cbioportal.org/datasets">cbioportal.org/datasets</a>. <strong>Metabolomics Workbench</strong>: a <code>ST0000xx</code> id. <strong>CCLE</strong>: any gene symbol. Pick a target with at least two well-populated groups; omit <code>--target</code> for a sensible default.</div>
@@ -394,7 +404,7 @@ omicau verify --config config.json --audit run/audit.json</code></pre>
   <pre><code>omicau bootstrap --dataset xena --out-dir d --preset brca --target PAM50Call_RNAseq</code></pre>
 </section>
 
-<section id="cli">
+<section id="cli" class="reveal">
   <h2>CLI &amp; configuration</h2>
   <div class="tablewrap"><table>
     <tr><th>Command</th><th>Purpose</th></tr>
@@ -407,7 +417,7 @@ omicau verify --config config.json --audit run/audit.json</code></pre>
   <p>Key config knobs: <code>cv.n_splits</code>, <code>cv.n_bootstrap</code>, <code>cv.batch_blocked</code>, <code>compute.deterministic</code>, <code>neural.enabled</code>, <code>llm.enabled</code>. Configs may be JSON or TOML; YAML additionally needs <code>pip install omicau[yaml]</code>.</p>
 </section>
 
-<section id="ruo">
+<section id="ruo" class="reveal">
   <h2>Research use only</h2>
   <div class="callout warn"><span class="lbl">⚠ Not a diagnostic device</span>omicau audits data for predictive signal and data hygiene. It is <strong>not a diagnostic device</strong>: it does not diagnose disease, recommend treatment, or assess an individual patient's risk. Use its output to judge data quality and the value of each omic layer for research — not for clinical decisions.</div>
   <p style="color:var(--ink-500);font-size:14px;margin-top:32px">omicau · <a href="https://github.com/tunabirgun/omicau">github.com/tunabirgun/omicau</a> · part of the Build with Claude: Life Sciences hackathon (Anthropic × Gladstone Institutes).</p>
@@ -422,19 +432,35 @@ function toggleTheme(){
   const el=document.documentElement, next=el.getAttribute('data-theme')==='dark'?'light':'dark';
   el.setAttribute('data-theme',next); try{localStorage.setItem('omicau-docs-theme',next)}catch(e){}
 }
-(function(){
-  let t; try{t=localStorage.getItem('omicau-docs-theme')}catch(e){}
-  if(!t) t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';
-  document.documentElement.setAttribute('data-theme',t);
-})();
+// lightbox (click-to-zoom; Esc or backdrop click to close)
 function lb(img){const l=document.getElementById('lightbox');document.getElementById('lbimg').src=img.src;l.classList.add('open')}
-// active-nav on scroll
+document.addEventListener('keydown',e=>{if(e.key==='Escape')document.getElementById('lightbox').classList.remove('open')});
+
+// active-nav scrollspy + sliding indicator on the sidebar
 const links=[...document.querySelectorAll('.sidebar a.nav[href^="#"]')];
 const map=Object.fromEntries(links.map(a=>[a.getAttribute('href').slice(1),a]));
+const marker=document.querySelector('.nav-marker');
+let current=null, markerReady=false;
+function moveMarker(a){
+  if(!marker||!a) return;
+  marker.style.transform='translateY('+a.offsetTop+'px)';
+  marker.style.height=a.offsetHeight+'px';
+  if(!markerReady){markerReady=true; requestAnimationFrame(()=>marker.classList.add('ready'));}
+}
 const obs=new IntersectionObserver((es)=>{es.forEach(e=>{if(e.isIntersecting){
-  links.forEach(a=>a.classList.remove('active')); const a=map[e.target.id]; if(a)a.classList.add('active');}})},
+  const a=map[e.target.id]; if(!a) return;
+  links.forEach(x=>x.classList.remove('active')); a.classList.add('active');
+  current=a; moveMarker(a);}})},
   {rootMargin:'-10% 0px -80% 0px'});
 document.querySelectorAll('main section[id]').forEach(s=>obs.observe(s));
+let rt; addEventListener('resize',()=>{clearTimeout(rt); rt=setTimeout(()=>moveMarker(current),120)});
+
+// scroll reveals — fire once then unobserve; hidden state is CSS-gated (JS + no-reduced-motion)
+const rev=new IntersectionObserver((es)=>es.forEach(e=>{if(e.isIntersecting){
+  e.target.classList.add('in'); rev.unobserve(e.target);}}),
+  {threshold:.01,rootMargin:'0px 0px -12% 0px'});
+document.querySelectorAll('main section.reveal').forEach(s=>rev.observe(s));
+
 document.querySelectorAll('.sidebar a.nav').forEach(a=>a.addEventListener('click',()=>document.querySelector('.sidebar').classList.remove('open')));
 </script>
 </body>
