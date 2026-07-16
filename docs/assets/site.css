@@ -165,7 +165,7 @@ html.js .reveal.in{opacity:1;transform:none;
 /* 3. True sliding nav indicator — one absolutely-positioned bar inside the
    already-sticky sidebar (its position:sticky is the containing block; do NOT
    add position:relative). Geometry is driven from the active link in JS. */
-.nav-marker{position:absolute;left:8px;width:3px;height:0;background:var(--accent);
+.nav-marker{position:absolute;left:8px;top:0;width:3px;height:0;background:var(--accent);
   transform:translateY(0);border-radius:3px;pointer-events:none;z-index:1}
 .nav-marker.ready{transition:transform .26s cubic-bezier(.4,0,.2,1),
                             height .26s cubic-bezier(.4,0,.2,1)}
