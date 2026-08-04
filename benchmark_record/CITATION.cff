@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "Please cite the new Zenodo record for this protocol; its DOI and publication date are PENDING."
+title: "omicau: independent benchmark protocol"
+type: dataset
+version: 1.0.0
+authors:
+  - given-names: Tuna
+    family-names: Birgün
+    orcid: "https://orcid.org/0009-0009-1827-7933"
+    affiliation: "Istanbul Technical University, Graduate School, Department of Molecular Biology - Genetics and Biotechnology, Türkiye"
+abstract: >-
+  Prospective protocol for an independent, compute-efficient benchmark of omicau's
+  multi-omics audit diagnostics and predictive benchmarking workflow. All runs made
+  before the successful protocol freeze are pilot-only and excluded from definitive
+  evidence.
+keywords:
+  - multi-omics
+  - benchmark protocol
+  - group-aware cross-validation
+  - reproducibility
+license: CC-BY-4.0
+repository-code: "https://github.com/tunabirgun/omicau"

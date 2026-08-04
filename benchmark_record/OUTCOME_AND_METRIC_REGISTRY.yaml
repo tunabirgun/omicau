@@ -1,0 +1,269 @@
+schema_version: "1.0"
+protocol_id: omicau-independent-benchmark-protocol
+protocol_version: "1.0.0"
+analysis_parameter_source: benchmark_record/benchmark_protocol.yaml#statistical_analysis
+status: prospective
+
+outcomes:
+  SIMULATED_BINARY_OUTCOME:
+    role: simulation_outcome
+    task: binary_classification
+    positive_class: 1
+    negative_class: 0
+    generation_ref: SIMULATION_DESIGN.yaml#scenarios
+
+  COVID_ICU_STATUS:
+    role: primary_real_candidate
+    task: binary_classification
+    positive_class: ICU_required
+    negative_class: ICU_not_required
+    source: external_cohort_clinical_metadata
+    derivable_from_predictors: false
+    ambiguity_rule: exclude_missing_or_ambiguous_ICU_status_before_splitting
+
+  CPTAC_UCEC_MSIH_VS_CNVL:
+    role: primary_real_candidate
+    task: binary_classification
+    positive_class: MSI-H
+    negative_class: CNV-low
+    source: published_CPTAC_molecular_subtype_annotation
+    derivable_from_allowed_predictors: false
+    forbidden_predictors: [whole_genome_sequence, whole_exome_sequence, copy_number]
+    ambiguity_rule: exclude_all_other_or_ambiguous_subtypes_before_splitting
+
+  TCGA_BRCA_CLINICAL_ER:
+    role: primary_real_candidate
+    task: binary_classification
+    positive_class: Positive
+    negative_class: Negative
+    source: GDC_clinical_breast_carcinoma_estrogen_receptor_status
+    derivable_from_predictors: false
+    ambiguity_rule: exclude_missing_indeterminate_or_equivocal_status_before_splitting
+
+  TCGA_BRCA_PAM50_POSITIVE_CONTROL:
+    role: secondary_positive_control
+    task: multiclass_classification
+    classes: [Basal-like, HER2-enriched, Luminal_A, Luminal_B, Normal-like]
+    source: published_expression_derived_PAM50_annotation
+    derivable_from_RNA_predictors: true
+    permitted_claim: pipeline_recovers_a_known_expression_linked_signal
+    forbidden_claims: [predictive_adequacy, external_generalization, primary_method_superiority]
+
+metrics:
+  AUROC:
+    label: area_under_receiver_operating_characteristic_curve
+    role: primary_predictive_metric
+    applies_to: binary_classification
+    input: continuous_positive_class_score
+    estimator: empirical_Mann_Whitney_equivalent
+    direction: higher_is_better
+    null_value: 0.5
+    undefined_when: an_evaluation_partition_contains_only_one_class
+    failure_handling: record_numerical_failure_do_not_impute
+
+  ROLE_MACRO_F1:
+    label: macro_averaged_modality_role_F1
+    role: primary_role_recovery_metric
+    applies_to: simulation_role_labels
+    classes_ref: SIMULATION_DESIGN.yaml#role_vocabulary
+    aggregation: >-
+      Within each scenario-by-sample-size cell, pool modality predictions across
+      independent dataset replicates, compute one F1 per ground-truth role represented
+      in that cell, and take their unweighted mean.
+    uncertainty_unit: independent_dataset_replicate_cluster
+    direction: higher_is_better
+    range: [0.0, 1.0]
+
+  AUPRC:
+    label: average_precision
+    role: secondary_imbalance_sensitive_metric
+    applies_to: binary_classification
+    input: continuous_positive_class_score
+    estimator: noninterpolated_average_precision
+    direction: higher_is_better
+    reference_value: evaluation_partition_positive_prevalence
+    reporting_rule: always_report_with_prevalence
+
+  BALANCED_ACCURACY:
+    label: balanced_accuracy
+    role: secondary_thresholded_metric
+    applies_to: classification
+    input: hard_class_prediction
+    estimator: mean_per_class_recall
+    direction: higher_is_better
+    binary_null_value: 0.5
+
+  MCC:
+    label: Matthews_correlation_coefficient
+    role: secondary_thresholded_metric
+    applies_to: binary_classification
+    input: hard_class_prediction
+    direction: higher_is_better
+    null_value: 0.0
+
+  BRIER_SCORE:
+    label: Brier_score
+    role: secondary_calibration_metric
+    applies_to: binary_classification
+    input: positive_class_probability
+    estimator: mean_squared_probability_error
+    direction: lower_is_better
+    range: [0.0, 1.0]
+
+  CALIBRATION_INTERCEPT:
+    label: calibration_in_the_large
+    role: secondary_calibration_metric
+    applies_to: binary_classification
+    target_value: 0.0
+    estimation: logistic_recalibration_with_prediction_logit_as_offset
+    minimum_events_and_nonevents: 20
+
+  CALIBRATION_SLOPE:
+    label: calibration_slope
+    role: secondary_calibration_metric
+    applies_to: binary_classification
+    target_value: 1.0
+    estimation: logistic_recalibration_on_prediction_logit
+    minimum_events_and_nonevents: 20
+
+  MACRO_OVR_AUROC:
+    label: macro_one_vs_rest_AUROC
+    role: secondary_positive_control_metric
+    applies_to: multiclass_classification
+    input: class_probability_matrix
+    aggregation: unweighted_mean_over_classes
+    direction: higher_is_better
+
+  RISK_FLAG_SENSITIVITY:
+    label: diagnostic_risk_flag_sensitivity
+    role: secondary_diagnostic_operating_characteristic
+    applies_to: [batch_severe, missingness_severe, group_unsafe]
+    estimator: flagged_positive_units_divided_by_eligible_positive_units
+    direction: higher_is_better
+    interpretation: sensitivity_of_a_risk_flag_not_causal_detection
+
+  RISK_FLAG_SPECIFICITY:
+    label: diagnostic_risk_flag_specificity
+    role: secondary_diagnostic_operating_characteristic
+    applies_to: [batch_clean, missingness_clean, group_safe]
+    estimator: unflagged_negative_units_divided_by_eligible_negative_units
+    direction: higher_is_better
+    interpretation: specificity_of_a_risk_flag_not_proof_of_no_bias
+
+  NULL_CONTROL_SPECIFICITY:
+    label: pipeline_sanity_check_specificity
+    role: secondary_pipeline_validation_metric
+    applies_to: null_control_specificity_family
+    estimator: units_without_sanity_check_failure_divided_by_eligible_null_units
+    direction: higher_is_better
+    forbidden_alias: leakage_detector_specificity
+
+  GROUP_AUROC_GAP:
+    label: naive_minus_group_aware_AUROC
+    role: primary_group_leakage_quantification
+    applies_to: paired_group_leakage_family
+    estimator: AUROC_from_naive_split_minus_AUROC_from_group_aware_split_on_the_same_unit
+    direction: larger_values_indicate_more_optimism_under_naive_splitting
+    companion_output: grouping_warning
+
+  WALL_SECONDS:
+    label: wall_clock_seconds
+    role: secondary_resource_metric
+    applies_to: every_fit_attempt
+    direction: lower_is_better
+
+  PEAK_RSS_MIB:
+    label: peak_resident_set_size_MiB
+    role: secondary_resource_metric
+    applies_to: every_fit_attempt
+    direction: lower_is_better
+
+analysis_sets:
+  role_recovery:
+    claim_role: primary
+    family_ref: benchmark_protocol.yaml#simulation.families.role_recovery
+    metric: ROLE_MACRO_F1
+    estimand: expected_role_macro_F1_within_each_scenario_and_sample_size
+    uncertainty: cluster_bootstrap_resampling_independent_dataset_replicates
+    comparisons: omicau_output_against_generator_ground_truth
+
+  simulation_predictive_performance:
+    claim_role: primary
+    family_ref: benchmark_protocol.yaml#simulation.families.predictive_performance
+    metric: AUROC
+    estimand: mean_paired_AUROC_difference_within_each_scenario_sample_size_and_arm
+    pairing_key_ref: benchmark_protocol.yaml#statistical_analysis.simulation_pairing_key
+    interval: percentile_bootstrap_of_paired_replicate_differences
+    test: two_sided_sign_flip_permutation_test_on_paired_replicate_differences
+    multiplicity_ref: benchmark_protocol.yaml#statistical_analysis.multiplicity
+
+  external_method_performance:
+    claim_role: primary_on_prespecified_subset
+    family_ref: benchmark_protocol.yaml#simulation.external_comparator_subset
+    metric: AUROC
+    estimand: mean_paired_AUROC_difference_within_each_scenario_sample_size_and_tuned_arm
+    pairing: exact_dataset_replicate_and_split
+    results_outside_subset: forbidden
+
+  nonlinear_interaction:
+    claim_role: secondary
+    family_ref: benchmark_protocol.yaml#simulation.families.nonlinear_secondary
+    metric: AUROC
+    estimand: mean_paired_AUROC_difference_within_each_sample_size
+
+  real_primary_cohorts:
+    claim_role: primary_within_each_eligible_cohort
+    cohort_ref: DATASET_MANIFEST.yaml#datasets
+    metric: AUROC
+    estimand: mean_outer_test_AUROC_over_the_repeated_group_aware_partitions
+    comparison_estimand: mean_paired_outer_test_AUROC_difference_within_cohort_and_arm
+    uncertainty: Nadeau_Bengio_corrected_repeated_k_fold_interval
+    test: two_sided_Nadeau_Bengio_corrected_paired_t_test
+    pooling_across_different_endpoints: forbidden
+    outer_test_predictions_used_for_tuning: false
+
+  batch_flags:
+    claim_role: secondary
+    family_ref: benchmark_protocol.yaml#simulation.families.batch_risk_flags
+    metrics: [RISK_FLAG_SENSITIVITY, RISK_FLAG_SPECIFICITY]
+    intermediate_severity: descriptive_monotonicity_only
+
+  missingness_flags:
+    claim_role: secondary
+    family_ref: benchmark_protocol.yaml#simulation.families.missingness_risk_flags
+    metrics: [RISK_FLAG_SENSITIVITY, RISK_FLAG_SPECIFICITY]
+    intermediate_severity: descriptive_monotonicity_only
+
+  group_leakage:
+    claim_role: secondary_diagnostic_validation
+    family_ref: benchmark_protocol.yaml#simulation.families.group_leakage
+    metrics: [RISK_FLAG_SENSITIVITY, RISK_FLAG_SPECIFICITY, GROUP_AUROC_GAP]
+    assessment_components: [grouping_warning, naive_vs_group_aware_gap]
+
+  null_controls:
+    claim_role: secondary_pipeline_validation
+    family_ref: benchmark_protocol.yaml#simulation.families.null_control_specificity
+    metric: NULL_CONTROL_SPECIFICITY
+    permitted_language: pipeline_sanity_check
+    forbidden_language: arbitrary_leakage_detector
+
+  PAM50_positive_control:
+    claim_role: secondary_positive_control
+    outcome: TCGA_BRCA_PAM50_POSITIVE_CONTROL
+    metric: MACRO_OVR_AUROC
+    inferential_test: none
+    predictive_adequacy_role: none
+
+reporting:
+  point_estimates_with_denominators: required
+  intervals:
+    confidence_level_ref: benchmark_protocol.yaml#statistical_analysis.confidence_level
+    purpose: uncertainty_quantification
+    primary_coverage_claim: false
+  failures:
+    remain_in_denominators: true
+    scores_imputed: false
+    counts_by_method_condition_and_disposition: required
+  arm_labels: [default, matched_tuned]
+  cross_arm_superiority_language: forbidden
+  effect_sizes_reported_with_raw_metric_scale: true

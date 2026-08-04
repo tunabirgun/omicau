@@ -1,0 +1,99 @@
+schema_version: "1.0"
+record:
+  id: omicau-independent-benchmark-protocol
+  title: "omicau: independent benchmark protocol"
+  version: "1.0.0"
+  type: benchmark_protocol
+  status: draft_pending_zenodo_archive
+  doi: PENDING
+  publication_date: PENDING
+  language: eng
+  licence: CC-BY-4.0
+  repository: https://github.com/tunabirgun/omicau
+
+creators:
+  - name: Tuna Birgün
+    given_name: Tuna
+    family_name: Birgün
+    orcid: 0009-0009-1827-7933
+    orcid_url: https://orcid.org/0009-0009-1827-7933
+    affiliations:
+      - order: 1
+        role: primary
+        name: Istanbul Technical University, Graduate School, Department of Molecular Biology - Genetics and Biotechnology, Türkiye
+      - order: 2
+        role: secondary
+        name: Istanbul Yeni Yuzyil University, Faculty of Sciences and Literature, Department of Molecular Biology and Genetics, Türkiye
+
+description: >-
+  Prospective, machine-readable protocol for an independent evaluation of omicau's
+  multi-omics audit diagnostics and predictive benchmarking workflow. The design
+  separates independent simulations from repeated group-aware real-cohort
+  validation, limits external methods to a prespecified simulation subset, and
+  treats all pre-freeze runs as pilot-only.
+
+keywords:
+  - multi-omics
+  - benchmark protocol
+  - group-aware cross-validation
+  - data leakage
+  - batch effects
+  - missingness
+  - reproducibility
+  - machine learning
+
+record_lineage:
+  independent_new_record: true
+  prior_zenodo_record_relation: none
+  prior_records_deleted: true
+  prior_run_status: pilot_only
+  prior_outputs_in_deposition: false
+  prior_seeds_in_definitive_registry: false
+  historical_DOIs_or_versions_in_metadata: false
+
+canonical_files:
+  scientific_parameter_source: benchmark_record/benchmark_protocol.yaml
+  simulation_design: benchmark_record/SIMULATION_DESIGN.yaml
+  dataset_manifest: benchmark_record/DATASET_MANIFEST.yaml
+  comparator_manifest: benchmark_record/COMPARATOR_MANIFEST.yaml
+  outcome_metric_registry: benchmark_record/OUTCOME_AND_METRIC_REGISTRY.yaml
+  record_metadata: benchmark_record/RECORD_METADATA.yaml
+  zenodo_metadata: benchmark_record/zenodo.json
+  citation_metadata: CITATION.cff
+
+archive_contents:
+  include:
+    - benchmark_record/benchmark_protocol.yaml
+    - benchmark_record/SIMULATION_DESIGN.yaml
+    - benchmark_record/DATASET_MANIFEST.yaml
+    - benchmark_record/COMPARATOR_MANIFEST.yaml
+    - benchmark_record/OUTCOME_AND_METRIC_REGISTRY.yaml
+    - benchmark_record/RECORD_METADATA.yaml
+    - benchmark_record/zenodo.json
+    - CITATION.cff
+    - benchmark_record/COMPARATOR_ELIGIBILITY_RULES.md
+    - benchmark_record/DEVIATION_POLICY.md
+    - benchmark_record/EXCLUSION_CRITERIA.md
+    - benchmark_record/FAILURE_REPORTING_POLICY.md
+    - benchmark_record/PREPROCESSING_RULES.md
+    - benchmark_record/LICENSE
+  exclude:
+    - every_pre_freeze_result
+    - every_pilot_output
+    - every_pilot_seed_registry
+    - raw_or_derived_subject_level_data
+    - local_logs
+    - historical_Zenodo_metadata
+    - historical_DOIs
+
+publication_state:
+  citation_ready: false
+  blocking_fields: [record.doi, record.publication_date]
+  release_rule: populate_both_fields_from_the_new_Zenodo_record_then_rerun_freeze_validation
+
+integrity:
+  text_encoding: UTF-8
+  checksum_algorithm: SHA-256
+  checksum_manifest: benchmark_record/checksums/SHA256SUMS
+  generated_summary_rule: benchmark_protocol.yaml#machine_summary
+  aggregate_counts_embedded: false

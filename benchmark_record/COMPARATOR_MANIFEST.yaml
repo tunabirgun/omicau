@@ -1,0 +1,259 @@
+schema_version: "1.0"
+protocol_id: omicau-independent-benchmark-protocol
+protocol_version: "1.0.0"
+eligibility_rules: benchmark_record/COMPARATOR_ELIGIBILITY_RULES.md
+tuning_parameter_source: benchmark_record/benchmark_protocol.yaml#tuning
+status: pre_run_eligibility_pending
+
+comparison_rules:
+  frozen_splits_required: true
+  identical_splits_within_paired_comparison: true
+  preprocessing_ref: benchmark_record/PREPROCESSING_RULES.md
+  official_implementation_preferred: true
+  test_features_available_during_fit: false
+  transductive_result_in_primary_ranking: false
+  failure_policy_ref: benchmark_record/FAILURE_REPORTING_POLICY.md
+  no_method_dropped_after_results_seen: true
+  external_method_scope_ref: benchmark_protocol.yaml#simulation.external_comparator_subset
+  external_methods_on_real_cohorts: false
+  aggregate_rank_across_default_and_tuned_arms: false
+
+system_under_test:
+  id: omicau_masked_fusion
+  label: omicau_masked_fusion
+  role: system_under_test
+  implementation:
+    repository: https://github.com/tunabirgun/omicau
+    package: omicau
+    version_source: installed_distribution_metadata_at_freeze
+    frozen_version: PENDING
+    commit: PENDING
+  task_support: [binary_classification]
+  supervision: supervised
+  operation: inductive
+  external_split_support: native
+  missingness_handling: masked_pooling
+  group_aware_resampling: externally_supplied_folds
+  arms:
+    default:
+      status: included
+      settings: documented_package_defaults
+    matched_tuned:
+      status: included_only_in_contrasts_requiring_a_tuned_arm
+      search_space_ref: benchmark_protocol.yaml#tuning.search_spaces.omicau_masked_fusion
+
+comparators:
+  nested_best_single:
+    label: nested_best_single_modality
+    role: primary_internal_comparator
+    eligibility_status: primary_eligible_by_design_pending_implementation_check
+    implementation:
+      package: scikit-learn
+      components: [Pipeline, LogisticRegression]
+      version_source: installed_distribution_metadata_at_freeze
+      frozen_version: PENDING
+      licence: BSD-3-Clause
+    task_support: [binary_classification]
+    supervision: supervised
+    operation: inductive
+    external_split_support: native
+    group_aware_resampling: externally_supplied_folds
+    procedure: >-
+      Within each outer training set, fit the same leakage-safe elastic-net pipeline
+      separately to every modality; choose the modality using inner-CV AUROC only,
+      refit on the complete outer training set, and score the untouched outer test set.
+    oracle_outer_test_selection: false
+    arms:
+      default:
+        status: included
+        settings: documented_estimator_defaults_except_the_protocol_random_seed
+      matched_tuned:
+        status: included_when_the_paired_contrast_uses_the_tuned_arm
+        search_space_ref: benchmark_protocol.yaml#tuning.search_spaces.early_elastic_net
+
+  early_elastic_net:
+    label: early_fusion_elastic_net
+    role: primary_internal_comparator
+    eligibility_status: primary_eligible_by_design_pending_implementation_check
+    implementation:
+      package: scikit-learn
+      components: [Pipeline, LogisticRegression]
+      version_source: installed_distribution_metadata_at_freeze
+      frozen_version: PENDING
+      licence: BSD-3-Clause
+    task_support: [binary_classification]
+    supervision: supervised
+    operation: inductive
+    external_split_support: native
+    group_aware_resampling: externally_supplied_folds
+    feature_integration: concatenate_namespaced_modalities_after_fold_local_preprocessing
+    arms:
+      default:
+        status: included
+        settings: documented_estimator_defaults_except_the_protocol_random_seed
+      matched_tuned:
+        status: included_when_the_paired_contrast_uses_the_tuned_arm
+        search_space_ref: benchmark_protocol.yaml#tuning.search_spaces.early_elastic_net
+
+  random_forest_early_fusion:
+    label: early_fusion_random_forest
+    role: primary_internal_comparator_tree_ensemble
+    eligibility_status: primary_eligible_by_design_pending_implementation_check
+    implementation:
+      package: scikit-learn
+      component: RandomForestClassifier
+      version_source: installed_distribution_metadata_at_freeze
+      frozen_version: PENDING
+      licence: BSD-3-Clause
+    task_support: [binary_classification]
+    supervision: supervised
+    operation: inductive
+    external_split_support: native
+    group_aware_resampling: externally_supplied_folds
+    feature_integration: concatenate_namespaced_modalities_after_fold_local_preprocessing
+    arms:
+      default:
+        status: included
+        settings: documented_estimator_defaults_except_seed_and_parallel_worker_limit
+      matched_tuned:
+        status: included_when_the_paired_contrast_uses_the_tuned_arm
+        search_space_ref: benchmark_protocol.yaml#tuning.search_spaces.random_forest_early_fusion
+
+  fully_nested_stacking:
+    label: fully_nested_late_stacking
+    role: primary_internal_comparator
+    eligibility_status: primary_eligible_by_design_pending_implementation_check
+    implementation:
+      package: scikit-learn
+      components: [Pipeline, LogisticRegression]
+      version_source: installed_distribution_metadata_at_freeze
+      frozen_version: PENDING
+      licence: BSD-3-Clause
+    task_support: [binary_classification]
+    supervision: supervised
+    operation: inductive
+    external_split_support: native
+    group_aware_resampling: externally_supplied_outer_and_inner_folds
+    procedure: >-
+      Generate base-learner predictions for outer-training subjects only through
+      inner group-aware out-of-fold prediction, fit the meta-learner on those
+      predictions, refit base learners on the complete outer training set, and apply
+      both levels once to the untouched outer test set.
+    direct_outer_training_fitted_predictions_for_meta_training: forbidden
+    arms:
+      default:
+        status: included
+        settings: documented_base_and_meta_estimator_defaults
+      matched_tuned:
+        status: included_when_the_paired_contrast_uses_the_tuned_arm
+        search_space_ref: benchmark_protocol.yaml#tuning.search_spaces.fully_nested_stacking
+
+  DIABLO:
+    label: DIABLO_block_sPLS_DA
+    role: primary_external_comparator
+    eligibility_status: pending_pre_run_eligibility_assessment
+    implementation:
+      package: mixOmics
+      function: block.splsda
+      repository: https://github.com/mixOmicsTeam/mixOmics
+      documentation: https://mixomics.org/mixdiablo/
+      version_source: installed_R_package_DESCRIPTION_at_freeze
+      frozen_version: PENDING
+      licence: GPL-2-or-later
+    task_support: [binary_classification]
+    supervision: supervised
+    operation: inductive_candidate
+    novel_sample_prediction: official_predict_method_required
+    external_split_support: wrapper_must_consume_frozen_indices_without_internal_outer_resampling
+    group_aware_resampling: protocol_supplied_folds_required
+    arms:
+      default:
+        status: not_used
+        reason: sparse_component_and_keepX_choices_require_training_only_selection_for_a_valid_matched_analysis
+      matched_tuned:
+        status: required_if_eligible
+        search_space_ref: benchmark_protocol.yaml#tuning.search_spaces.DIABLO
+    scope_ref: benchmark_protocol.yaml#simulation.external_comparator_subset
+
+  additional_supervised_eligibility_slot:
+    label: MOGONET_if_inductive_eligible
+    role: conditional_primary_external_comparator
+    candidate_method: MOGONET
+    candidate_order_locked: true
+    substitute_after_failure_permitted: false
+    eligibility_status: pending_inductive_external_split_audit
+    implementation:
+      repository: https://github.com/txWang/MOGONET
+      package: official_source_repository
+      version_source: checked_out_commit_at_freeze
+      frozen_version: PENDING
+      commit: PENDING
+      licence: MIT
+    task_support: [binary_classification]
+    supervision: supervised
+    operation: pending_code_audit
+    decisive_eligibility_test: >-
+      Training and graph construction must use outer-training subjects only, and the
+      fitted model must predict outer-test subjects without rebuilding a graph that
+      includes test subjects or otherwise fitting on test features.
+    eligible_outcome: include_as_the_single_additional_established_supervised_method
+    ineligible_outcome: retain_slot_as_ineligible_for_inductive_task_and_do_not_replace
+    arms:
+      default:
+        status: included_only_if_official_documented_defaults_form_a_complete_configuration
+      matched_tuned:
+        status: included_if_eligible_and_tuning_is_required
+        search_space_ref: benchmark_protocol.yaml#tuning.search_spaces.additional_supervised_eligibility_slot
+    scope_ref: benchmark_protocol.yaml#simulation.external_comparator_subset
+
+  MOFA_plus:
+    label: MOFA_plus_factor_then_classifier
+    role: secondary_external_comparator
+    eligibility_status: pending_inductive_projection_audit
+    implementation:
+      package: MOFA2
+      repository: https://github.com/bioFAM/MOFA2
+      documentation: https://biofam.github.io/MOFA2/
+      version_source: installed_R_package_DESCRIPTION_and_mofapy2_metadata_at_freeze
+      frozen_version: PENDING
+      licence: LGPL-3.0
+    task_support: [unsupervised_factor_model]
+    supervision: unsupervised_then_supervised_readout
+    operation: pending_inductive_projection_audit
+    procedure_if_eligible: >-
+      Fit factors using outer-training predictors only, project untouched outer-test
+      samples with an official fixed-model operation, and fit the downstream logistic
+      classifier using outer-training factor scores only.
+    transductive_fallback: forbidden
+    primary_ranking_eligible: false
+    arms:
+      default:
+        status: secondary_only_if_complete_documented_defaults_exist
+      matched_tuned:
+        status: not_primary
+        search_space_ref: benchmark_protocol.yaml#tuning.search_spaces.MOFA_plus
+    scope_ref: benchmark_protocol.yaml#simulation.external_comparator_subset
+
+eligibility_record_required_fields:
+  - method_id
+  - assessed_before_results
+  - official_implementation_commit_or_version
+  - licence_from_installed_artifact
+  - installation_status
+  - task_support
+  - supervised_status
+  - inductive_status
+  - frozen_external_split_support
+  - group_aware_resampling_support
+  - missingness_handling
+  - tuning_requirement
+  - known_limitations
+  - evidence_paths_or_code_locations
+  - final_eligibility_status
+  - assessor_and_date
+
+resource_accounting:
+  budget_ref: benchmark_protocol.yaml#tuning.resource_budget
+  configuration_cap_ref: benchmark_protocol.yaml#tuning.maximum_configurations_per_method_per_outer_training_set
+  record_each_fit: true
+  unsuccessful_methods_retained: true

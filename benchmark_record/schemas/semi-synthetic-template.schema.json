@@ -1,0 +1,163 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tunabirgun/omicau/benchmark_record/schemas/semi-synthetic-template.schema.json",
+  "title": "omicau benchmark semi-synthetic template descriptor",
+  "description": "The frozen input the semi_synthetic_robustness family needs before it can be generated. SIMULATION_DESIGN.yaml#semi_synthetic_design defines each structure's template as the first eligible harmonized cohort matrix, with a fallback of a 'prespecified synthetic template matching manifest dimension and missingness targets'. Both branches resolve to the quantities below, and neither can be invented: they are properties of a harmonized cohort. This schema states them explicitly so the missing input is a named, checkable artifact rather than an open question. Outcomes are absent by construction, satisfying simulation_parameters.semi_synthetic.template_outcomes_accessed = false.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "protocol_version",
+    "structure",
+    "origin",
+    "n_subjects",
+    "modalities",
+    "cross_modality_correlation",
+    "batch"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"type": "string"},
+    "protocol_version": {"type": "string", "const": "1.0.0"},
+    "structure": {
+      "type": "string",
+      "enum": ["acute_infection_like", "solid_tumour_like"],
+      "description": "Cohort structure from benchmark_protocol.yaml#simulation.families.semi_synthetic_robustness.cohort_structures."
+    },
+    "origin": {
+      "type": "object",
+      "required": ["branch", "source_dataset_id", "eligibility_disposition",
+                   "template_outcomes_accessed", "derived_at_utc"],
+      "additionalProperties": false,
+      "properties": {
+        "branch": {
+          "type": "string",
+          "enum": ["eligible_harmonized_cohort", "prespecified_synthetic_fallback"],
+          "description": "Which branch of semi_synthetic_design.structures.*.template_selection produced this descriptor."
+        },
+        "source_dataset_id": {
+          "type": "string",
+          "description": "Dataset id in DATASET_MANIFEST.yaml whose harmonized predictor matrices supplied the dimension and missingness targets, for either branch."
+        },
+        "eligibility_disposition": {"type": "string"},
+        "harmonization_manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "template_outcomes_accessed": {"const": false},
+        "derived_at_utc": {"type": "string"}
+      }
+    },
+    "n_subjects": {"type": "integer", "minimum": 2},
+    "modalities": {
+      "type": "object",
+      "minProperties": 2,
+      "additionalProperties": {"$ref": "#/$defs/modality"}
+    },
+    "cross_modality_correlation": {
+      "type": "object",
+      "minProperties": 1,
+      "description": "Target mean absolute cross-modality feature correlation, keyed 'modality_a::modality_b' in sorted order.",
+      "additionalProperties": {"type": "number", "minimum": 0, "maximum": 1}
+    },
+    "batch": {
+      "type": "object",
+      "required": ["variable", "prevalence"],
+      "additionalProperties": false,
+      "properties": {
+        "variable": {"type": "string"},
+        "prevalence": {
+          "type": "array",
+          "minItems": 2,
+          "items": {"type": "number", "minimum": 0, "maximum": 1},
+          "description": "Observed batch prevalence in the template; the batch_prevalence_shift perturbation is defined relative to it."
+        }
+      }
+    },
+    "perturbation_magnitudes": {
+      "type": "object",
+      "description": "NOT registered in the published v1.0.0 record. SIMULATION_DESIGN.yaml names the three operations but no magnitude, and no split-coupling rule. Supplying these values prespecifies parameters the frozen protocol does not contain, so a deviation record and a new record version are required before use. See SEMI_SYNTHETIC_EXECUTION_BLOCKERS.md.",
+      "required": ["deviation_id", "covariate_shift", "blockwise_missingness",
+                   "batch_prevalence_shift", "split_coupling"],
+      "additionalProperties": false,
+      "properties": {
+        "deviation_id": {"type": "string", "minLength": 1},
+        "covariate_shift": {
+          "type": "object",
+          "required": ["latent_factor_index", "standard_deviations"],
+          "additionalProperties": false,
+          "properties": {
+            "latent_factor_index": {"type": "integer", "minimum": 0},
+            "standard_deviations": {"type": "number"}
+          }
+        },
+        "blockwise_missingness": {
+          "type": "object",
+          "required": ["feature_blocks_removed", "held_out_group_probability",
+                       "training_group_probability"],
+          "additionalProperties": false,
+          "properties": {
+            "feature_blocks_removed": {"type": "integer", "minimum": 1},
+            "held_out_group_probability": {"type": "number", "minimum": 0, "maximum": 1},
+            "training_group_probability": {"type": "number", "minimum": 0, "maximum": 1}
+          }
+        },
+        "batch_prevalence_shift": {
+          "type": "object",
+          "required": ["held_out_prevalence"],
+          "additionalProperties": false,
+          "properties": {
+            "held_out_prevalence": {
+              "type": "array",
+              "minItems": 2,
+              "items": {"type": "number", "minimum": 0, "maximum": 1}
+            }
+          }
+        },
+        "split_coupling": {
+          "type": "string",
+          "enum": ["applied_to_frozen_outer_test_folds"],
+          "description": "The three operations are defined 'between training and test groups', which exist only after the partition is frozen. The only reading consistent with simulation.split_reuse is to apply the perturbation to the frozen outer test folds."
+        }
+      }
+    }
+  },
+  "$defs": {
+    "modality": {
+      "type": "object",
+      "required": ["n_features", "measurement_family", "marginal",
+                   "within_modality_correlation", "missingness"],
+      "additionalProperties": false,
+      "properties": {
+        "n_features": {"type": "integer", "minimum": 1},
+        "measurement_family": {"type": "string"},
+        "marginal": {
+          "type": "object",
+          "required": ["mean", "standard_deviation", "quantiles"],
+          "additionalProperties": false,
+          "properties": {
+            "mean": {"type": "number"},
+            "standard_deviation": {"type": "number", "minimum": 0},
+            "quantiles": {
+              "type": "object",
+              "description": "Quantile levels as decimal strings mapped to template values; used to match marginal distributions rather than only their first two moments.",
+              "minProperties": 3,
+              "additionalProperties": {"type": "number"}
+            }
+          }
+        },
+        "within_modality_correlation": {"type": "number", "minimum": 0, "maximum": 1},
+        "missingness": {
+          "type": "object",
+          "required": ["overall_fraction", "geometry"],
+          "additionalProperties": false,
+          "properties": {
+            "overall_fraction": {"type": "number", "minimum": 0, "maximum": 1},
+            "geometry": {
+              "type": "string",
+              "enum": ["scattered", "blockwise", "whole_modality_absence", "mixed"]
+            },
+            "block_fraction": {"type": "number", "minimum": 0, "maximum": 1},
+            "subject_absence_fraction": {"type": "number", "minimum": 0, "maximum": 1}
+          }
+        }
+      }
+    }
+  }
+}

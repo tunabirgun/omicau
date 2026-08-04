@@ -33,6 +33,11 @@ CKA_REDUNDANT = 0.5
 # for regression), so it actually fires on regression -- a fixed 0.62 threshold
 # never could, since a shuffled-target R2 sits near 0.
 CONTROL_MARGIN = 0.12
+# Family-wise level for the control baselines. Three controls are tested per run and
+# any one of them can raise the alarm, so testing each at 5% inflates the false-alarm
+# rate to roughly 15%. The interval used by the leakage gate is therefore computed at
+# CONTROL_FAMILY_ALPHA / (number of controls), a Bonferroni correction over the family.
+CONTROL_FAMILY_ALPHA = 0.05
 
 
 def _by_name(results: list) -> dict[str, Any]:
@@ -176,13 +181,25 @@ def build_utility_ledger(
     present = [c for c in controls if c["primary"] is not None]
 
     def _sig_above_chance(c):
-        # A control leaks if EITHER its 95% CI lower bound clears chance (a
-        # significant control) OR its point estimate clears the margin. An audit
-        # tool should err toward warning, so a leaking control with a wide CI is
-        # not silently cleared; gating on the CI *upper* bound is avoided (it would
-        # false-fire on any wide small-sample CI).
-        by_ci = c.get("ci_low") is not None and c["ci_low"] > chance
-        return by_ci or (c["primary"] > alarm)
+        # A control leaks only when BOTH conditions hold: its 95% CI lower bound
+        # clears chance (the excess is distinguishable from sampling noise) AND its
+        # point estimate clears the margin (the excess is large enough to matter).
+        #
+        # These two tests fail in opposite directions with sample size, which is why
+        # requiring either one alone produced false alarms at every n. The margin
+        # alone fires on small samples, where a control's score has a wide sampling
+        # distribution and can clear a fixed absolute threshold by chance. The
+        # interval alone fires on large samples, where a narrow interval makes a
+        # trivially-above-chance control look significant. Requiring both closes each
+        # gap with the other, and an effect that is neither significant nor large is
+        # not evidence of leakage.
+        #
+        # With no interval available the margin is used alone, since that is the only
+        # evidence there is.
+        by_margin = c["primary"] > alarm
+        if c.get("ci_low") is None:
+            return by_margin
+        return (c["ci_low"] > chance) and by_margin
 
     leaking = [c for c in present if _sig_above_chance(c)]
     leakage = bool(leaking)

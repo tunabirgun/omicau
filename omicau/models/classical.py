@@ -22,6 +22,7 @@ from sklearn.ensemble import (
 )
 from sklearn.linear_model import LogisticRegression, Ridge
 
+from omicau.interpretation.utility import CONTROL_FAMILY_ALPHA
 from omicau.models.base import CVResult, PRIMARY_METRIC, attach_cis, cross_validate_estimator
 
 
@@ -239,7 +240,14 @@ def run_classical_benchmarks(aligned, config, batch_diag=None) -> dict[str, Any]
         if ba is not None:
             results.append(ba)
 
-    attach_cis(results + controls, n_boot=config.cv.n_bootstrap, seed=seed)
+    # Models get an ordinary 95% interval. The controls are a family of three, any
+    # one of which can raise the leakage alarm, so their interval is Bonferroni
+    # corrected -- otherwise the family-wise false-alarm rate is roughly three times
+    # the nominal level.
+    attach_cis(results, n_boot=config.cv.n_bootstrap, seed=seed)
+    if controls:
+        attach_cis(controls, n_boot=config.cv.n_bootstrap, seed=seed,
+                   alpha=CONTROL_FAMILY_ALPHA / len(controls))
 
     return {
         "task": task,

@@ -1,0 +1,179 @@
+schema_version: "1.0"
+protocol_id: omicau-independent-benchmark-protocol
+protocol_version: "1.0.0"
+eligibility_parameter_source: benchmark_record/benchmark_protocol.yaml#real_cohorts.dataset_rules
+status: eligibility_not_yet_assessed
+
+eligibility_workflow:
+  timing: after_protocol_freeze_and_before_any_model_fit
+  outcome_blind_predictor_harmonization: true
+  required_checks:
+    - source_identifier_resolves_to_the_named_cohort
+    - source_terms_allow_the_planned_reproducible_processing
+    - subject_identifier_is_recoverable
+    - required_modalities_intersect_at_subject_level
+    - outcome_is_external_to_the_predictor_matrices
+    - each_retained_class_meets_minimum_subjects_per_class
+    - a_valid_outer_k_meets_the_minority_subjects_per_test_fold_floor
+    - no_subject_crosses_an_outer_fold_boundary
+  model_results_visible_during_eligibility: false
+  output: benchmarks/datasets/manifests/real_cohort_eligibility.json
+  aggregate_subject_counts: derived_after_harmonization_not_stored_here
+
+datasets:
+  COVID_ICU:
+    priority: 1
+    analysis_role: primary_candidate
+    feasibility_status: pending_matched_feasibility
+    cohort: Overmyer_2021_hospitalized_COVID19_multiomics
+    source_records:
+      publication:
+        doi: 10.1016/j.cels.2020.10.003
+        url: https://doi.org/10.1016/j.cels.2020.10.003
+      bioproject:
+        accession: PRJNA660067
+        url: https://www.ncbi.nlm.nih.gov/bioproject/PRJNA660067
+      transcriptomics:
+        accession: GSE157103
+        url: https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE157103
+      processed_multiomics_and_clinical:
+        source: publication_supplementary_files_and_linked_public_repository
+        version_rule: record_exact_download_URL_release_and_SHA256_at_harmonization
+    population:
+      include: hospitalized_SARS_CoV_2_positive_subjects_with_external_ICU_status
+      exclude: [SARS_CoV_2_negative_controls, missing_ICU_status]
+    endpoint:
+      registry_id: COVID_ICU_STATUS
+      positive_label: ICU_required
+      negative_label: ICU_not_required
+      definition_source: cohort_clinical_metadata
+      predictor_derived: false
+    required_modalities:
+      minimum_count_ref: benchmark_protocol.yaml#real_cohorts.dataset_rules.minimum_modalities
+      candidates: [leukocyte_RNA, plasma_proteome, plasma_metabolome, plasma_lipidome]
+      selection_rule: retain_all_modalities_with_subject_level_overlap_and_documented_processed_values
+    group_id: deidentified_subject_identifier
+    batch_candidates: [collection_batch, assay_batch, plate, acquisition_run]
+    feasibility_gate: >-
+      The SARS-CoV-2-positive matched subset must independently satisfy every class
+      and test-fold floor; negative controls cannot be added merely to pass the floor.
+
+  CPTAC_UCEC_MSIH_VS_CNVL:
+    priority: 2
+    analysis_role: primary_candidate
+    feasibility_status: pending_matched_feasibility
+    cohort: CPTAC_UCEC_Discovery_Study
+    source_records:
+      publication:
+        doi: 10.1016/j.cell.2020.01.026
+        url: https://doi.org/10.1016/j.cell.2020.01.026
+      proteome:
+        accession: PDC000125
+        url: https://proteomic.datacommons.cancer.gov/pdc/study/PDC000125
+      genomics_and_transcriptomics:
+        project: CPTAC-3
+        url: https://portal.gdc.cancer.gov/projects/CPTAC-3
+      controlled_access_parent:
+        accession: phs001287
+        url: https://www.ncbi.nlm.nih.gov/projects/gap/cgi-bin/study.cgi?study_id=phs001287
+      processed_tables:
+        source: publication_supplementary_files_or_version_pinned_CPTAC_API_export
+        version_rule: record_exact_accession_release_API_version_and_SHA256_at_harmonization
+    population:
+      include: primary_UCEC_tumours_with_matched_RNA_proteome_and_published_molecular_subtype
+      retain_subtypes: [MSI-H, CNV-low]
+      exclude_subtypes: [POLE, CNV-high, ambiguous, missing]
+    endpoint:
+      registry_id: CPTAC_UCEC_MSIH_VS_CNVL
+      positive_label: MSI-H
+      negative_label: CNV-low
+      definition_source: published_CPTAC_molecular_subtype_annotation
+      predictor_derived: false
+    required_modalities:
+      exact: [RNA, proteome]
+      forbidden_predictor_modalities: [whole_genome_sequence, whole_exome_sequence, copy_number]
+      rationale: WGS_and_CNV_contribute_to_the_subtype_definition_and_would_make_the_task_circular
+    group_id: CPTAC_participant_identifier
+    batch_candidates: [TMT_plex, proteomic_center, RNA_sequencing_center]
+    feasibility_gate: >-
+      Eligibility is assessed after exact RNA-proteome-subtype intersection; neither
+      another subtype nor a subtype-defining predictor may be added to meet sample floors.
+
+  TCGA_BRCA_ER:
+    priority: 3
+    analysis_role: primary_candidate
+    feasibility_status: pending_matched_feasibility
+    cohort: TCGA_Breast_Invasive_Carcinoma
+    source_records:
+      project:
+        accession: TCGA-BRCA
+        url: https://portal.gdc.cancer.gov/projects/TCGA-BRCA
+      project_publication_page:
+        url: https://gdc.cancer.gov/about-data/publications/brca_2012
+      download_rule: GDC_manifest_with_data_release_and_file_SHA256_recorded_at_harmonization
+    population:
+      include: primary_tumour_subjects_with_clinical_ER_status_and_matched_required_modalities
+      exclude: [metastatic_samples, recurrent_samples, duplicate_aliquots, missing_ER_status, indeterminate_ER_status, equivocal_ER_status]
+    endpoint:
+      registry_id: TCGA_BRCA_CLINICAL_ER
+      positive_label: Positive
+      negative_label: Negative
+      definition_source: GDC_clinical_breast_carcinoma_estrogen_receptor_status
+      predictor_derived: false
+    required_modalities:
+      exact: [RNA, DNA_methylation]
+      selection_reason: broad_matched_availability_without_using_a_subtype_label_as_the_primary_endpoint
+    group_id: TCGA_patient_barcode_first_three_fields
+    batch_candidates: [tissue_source_site, plate, center, platform]
+    feasibility_gate: >-
+      The exact matched RNA-methylation subset and clinical ER labels must pass the
+      class and outer-test-fold floors; feasibility remains pending until that audit.
+
+  TCGA_BRCA_PAM50:
+    priority: 4
+    analysis_role: secondary_positive_control
+    feasibility_status: pending_matched_feasibility
+    cohort: TCGA_Breast_Invasive_Carcinoma
+    source_records:
+      project:
+        accession: TCGA-BRCA
+        url: https://portal.gdc.cancer.gov/projects/TCGA-BRCA
+      subtype_annotation:
+        source: TCGA_published_PAM50_or_intrinsic_subtype_annotation
+        version_rule: record_exact_annotation_file_release_and_SHA256_at_harmonization
+    population:
+      include: primary_tumour_subjects_with_published_PAM50_label_and_matched_predictors
+      exclude: [missing_PAM50_label, duplicate_aliquots]
+    endpoint:
+      registry_id: TCGA_BRCA_PAM50_POSITIVE_CONTROL
+      labels: [Basal-like, HER2-enriched, Luminal_A, Luminal_B, Normal-like]
+      definition_source: published_expression_derived_PAM50_annotation
+      predictor_derived: true
+    required_modalities:
+      candidates: [RNA, DNA_methylation]
+      RNA_circularity_acknowledged: true
+    group_id: TCGA_patient_barcode_first_three_fields
+    permitted_use: secondary_pipeline_positive_control_only
+    forbidden_uses:
+      - predictive_adequacy_claim
+      - primary_method_ranking
+      - evidence_of_external_generalization
+      - selection_of_thresholds_or_hyperparameters_for_primary_endpoints
+
+fold_assignment:
+  rule_ref: benchmark_protocol.yaml#real_cohorts.outer_cv
+  k_choice_ref: benchmark_protocol.yaml#real_cohorts.dataset_rules.outer_fold_choice
+  unit_of_stratification: subject_level_outcome
+  unit_of_grouping: dataset_specific_group_id
+  repeated_measurements_policy: all_rows_from_one_subject_remain_in_one_fold
+  freeze_outputs:
+    pattern: benchmarks/splits/{dataset_id}/repeat_{repeat_index}/outer_folds.json
+    include: [subject_hash, repeat_index, fold_index, class_counts, group_counts, split_seed, SHA256]
+  failed_k_search_disposition: dataset_ineligible
+
+provenance:
+  required_per_input_file: [source_URL, stable_accession, release_or_download_date, byte_size, SHA256, licence_or_access_terms]
+  raw_subject_identifiers_in_record: false
+  subject_identifier_storage: local_only
+  manifest_identifier_form: salted_subject_hash
+  exclusion_log: benchmarks/results/harmonized/exclusions.csv

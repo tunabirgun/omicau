@@ -1,0 +1,193 @@
+schema_version: "1.0"
+protocol_id: omicau-independent-benchmark-protocol
+protocol_version: "1.0.0"
+parameter_source: benchmark_record/benchmark_protocol.yaml#simulation
+status: prospective_not_run
+
+principles:
+  independent_unit: one_generated_dataset_replicate
+  generated_rows_within_a_unit_are_not_independent_replicates: true
+  cv_rule_ref: benchmark_protocol.yaml#simulation.outer_cv
+  split_sharing: all_methods_receive_the_same_single_five_fold_partition_per_unit
+  pilot_data_or_random_streams_permitted: false
+  aggregate_counts_stored: false
+
+role_vocabulary:
+  predictive_additive:
+    definition: modality_contains_outcome_signal_and_adds_signal_beyond_the_other_modalities
+  informative_nonadditive:
+    definition: modality_contains_outcome_signal_but_is_redundant_given_a_stronger_correlated_modality
+  control_like:
+    definition: modality_contains_no_outcome_signal_beyond_finite_sample_variation
+  batch_confounded_risk:
+    definition: modality_is_batch_structured_while_batch_is_associated_with_outcome
+    interpretation: risk_flag_not_causal_proof
+
+scenarios:
+  S1:
+    label: single_informative_modality
+    latent_target: additive_main_effect
+    ground_truth_roles:
+      rna_like: predictive_additive
+      methyl_like: control_like
+      protein_like: control_like
+    expected_ordering_constraint: rna_like_standalone_exceeds_control_like_modalities_in_population
+  S2:
+    label: complementary_modalities
+    latent_target: two_additive_independent_main_effects
+    ground_truth_roles:
+      rna_like: predictive_additive
+      methyl_like: control_like
+      protein_like: predictive_additive
+    expected_ordering_constraint: fusion_exceeds_each_single_modality_in_population
+  S3:
+    label: redundant_modalities
+    latent_target: one_shared_main_effect
+    ground_truth_roles:
+      rna_like: predictive_additive
+      methyl_like: informative_nonadditive
+      protein_like: control_like
+    expected_ordering_constraint: methyl_like_is_informative_alone_but_has_no_population_leave_one_out_gain
+  S4:
+    label: batch_associated_apparent_signal
+    latent_target: one_additive_main_effect_plus_prespecified_batch_outcome_association
+    ground_truth_roles:
+      rna_like: predictive_additive
+      methyl_like: control_like
+      protein_like: batch_confounded_risk
+    expected_ordering_constraint: protein_like_apparent_signal_attenuates_under_group_or_batch_blocked_evaluation
+  S5:
+    label: independent_noninformative_modality
+    latent_target: one_additive_main_effect
+    ground_truth_roles:
+      rna_like: predictive_additive
+      methyl_like: control_like
+      protein_like: control_like
+    expected_ordering_constraint: adding_independent_protein_like_noise_does_not_improve_population_discrimination
+  S6:
+    label: cross_modality_interaction
+    analysis_role: secondary
+    latent_target: multiplicative_interaction_without_marginal_main_effects
+    ground_truth_roles:
+      rna_like: predictive_additive
+      methyl_like: control_like
+      protein_like: predictive_additive
+    expected_ordering_constraint: interaction_capable_fusion_may_exceed_additive_linear_fusion
+
+role_recovery_design:
+  cells_ref: benchmark_protocol.yaml#simulation.families.role_recovery
+  scoring_unit: modality_within_independent_dataset_replicate
+  primary_metric_ref: OUTCOME_AND_METRIC_REGISTRY.yaml#metrics.ROLE_MACRO_F1
+  no_oracle_role_information_available_to_models: true
+
+batch_risk_flag_design:
+  cells_ref: benchmark_protocol.yaml#simulation.families.batch_risk_flags
+  numeric_severity_ref: benchmark_protocol.yaml#simulation_parameters.risk_flag_severity.batch
+  pairing:
+    clean_and_severe_share_latent_draws: false
+    reason: operating_characteristic_units_must_be_independent
+  positive_condition: severe
+  negative_condition: clean
+  intermediate_condition_role: descriptive_monotonicity_check
+  outputs:
+    - batch_structure_warning
+    - batch_outcome_confounding_warning
+    - batch_blocked_minus_standard_performance_delta
+  interpretation: risk_flags_only_not_causal_batch_identification
+
+missingness_risk_flag_design:
+  cells_ref: benchmark_protocol.yaml#simulation.families.missingness_risk_flags
+  numeric_severity_ref: benchmark_protocol.yaml#simulation_parameters.risk_flag_severity.missingness
+  mechanisms_evaluated_separately: true
+  positive_condition: severe
+  negative_condition: clean
+  intermediate_condition_role: descriptive_monotonicity_check
+  outputs:
+    - target_associated_missingness_warning
+    - batch_associated_missingness_warning
+    - masked_minus_median_imputed_performance_delta
+  interpretation: risk_flags_only_not_causal_missingness_mechanism_identification
+
+group_leakage_design:
+  cells_ref: benchmark_protocol.yaml#simulation.families.group_leakage
+  numeric_generation_ref: benchmark_protocol.yaml#simulation_parameters.group_leakage
+  paired_unit: same_generated_subjects_and_measurements_evaluated_with_safe_and_unsafe_splitters
+  primary_outputs:
+    - grouping_warning
+    - naive_minus_group_aware_AUROC_gap
+  positive_condition: unsafe
+  negative_condition: safe
+  null_control_results_used_for_group_leakage_classification: false
+
+null_control_design:
+  cells_ref: benchmark_protocol.yaml#simulation.families.null_control_specificity
+  construction:
+    outcome: independent_bernoulli_draw_with_preserved_class_prevalence_target
+    modalities: generated_without_target_signal
+    groups: valid_subject_groups
+  controls:
+    - target_permutation_within_outer_training_fold
+    - independent_random_features
+    - permuted_feature_rows_within_modality_and_outer_training_fold
+  primary_output: fraction_of_units_without_a_pipeline_sanity_check_failure
+  permitted_interpretation: pipeline_sanity_check_specificity
+  forbidden_interpretation: universal_leakage_detection_specificity
+
+predictive_performance_design:
+  cells_ref: benchmark_protocol.yaml#simulation.families.predictive_performance
+  methods_ref: benchmark_protocol.yaml#methods
+  paired_unit: identical_generated_dataset_and_frozen_split_across_methods
+  primary_metric_ref: OUTCOME_AND_METRIC_REGISTRY.yaml#metrics.AUROC
+  external_method_subset_ref: benchmark_protocol.yaml#simulation.external_comparator_subset
+  subset_selection_rule: first_contiguous_replicate_indices_before_results_exist
+  comparisons_outside_subset_for_external_methods_permitted: false
+
+nonlinear_secondary_design:
+  cells_ref: benchmark_protocol.yaml#simulation.families.nonlinear_secondary
+  primary_claim_eligible: false
+  metric_ref: OUTCOME_AND_METRIC_REGISTRY.yaml#metrics.AUROC
+
+semi_synthetic_design:
+  cells_ref: benchmark_protocol.yaml#simulation.families.semi_synthetic_robustness
+  parameter_ref: benchmark_protocol.yaml#simulation_parameters.semi_synthetic
+  structures:
+    acute_infection_like:
+      template_selection: first_eligible_COVID_ICU_harmonized_predictor_matrix
+      fallback_if_ineligible: prespecified_synthetic_template_matching_manifest_dimension_and_missingness_targets
+    solid_tumour_like:
+      template_selection: first_eligible_of_CPTAC_UCEC_MSIH_VS_CNVL_then_TCGA_BRCA_ER
+      fallback_if_ineligible: prespecified_synthetic_template_matching_manifest_dimension_and_missingness_targets
+  perturbations:
+    covariate_shift:
+      operation: shift_one_latent_nonoutcome_factor_between_training_and_test_groups
+    blockwise_missingness:
+      operation: remove_prespecified_feature_blocks_with_group_dependent_probability
+    batch_prevalence_shift:
+      operation: alter_batch_prevalence_between_training_and_test_without_changing_conditional_outcome_model
+  real_outcome_used: false
+  role_in_inference: secondary_robustness_only
+
+seed_registry:
+  generation_ref: benchmark_protocol.yaml#simulation.seed_generation
+  required_key_columns:
+    - unit_id
+    - family
+    - scenario_or_structure
+    - condition_or_perturbation
+    - sample_size
+    - replicate_index
+    - stream_label
+    - uint32_seed
+  invariants:
+    - every_unit_key_is_unique
+    - every_unit_stream_seed_is_unique_within_this_protocol
+    - no_seed_overlaps_any_known_pilot_seed
+    - registry_is_generated_before_any_definitive_simulation
+  audit_ref: benchmark_protocol.yaml#independence.seed_audit
+
+machine_summary:
+  derive_cells_by: cartesian_product_of_each_family_dimension_after_applying_explicit_cell_rows
+  derive_units_by: sum_over_cells_of_replicates_per_cell
+  derive_method_evaluations_by: join_units_to_eligible_methods_and_applicable_arms
+  derive_fold_fits_by: expand_method_evaluations_using_the_referenced_outer_and_inner_split_manifests
+  hardcoded_aggregate_totals_forbidden: true

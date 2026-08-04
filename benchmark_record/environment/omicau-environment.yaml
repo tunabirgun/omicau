@@ -1,0 +1,61 @@
+accelerator:
+  cuda_available: false
+  cuda_compiled: false
+  device_used_by_protocol: cpu
+  torch_installed: true
+  torch_version: 2.12.1+cpu
+captured_utc: '2026-08-03T21:05:04.901186+00:00'
+cpu:
+  logical_cores: 28
+  physical_cores: 20
+  total_memory_gib: 79.72
+environment_lock_sha256: b3b5f76a4cc89dcb65b23c64f74feab5b58c8858af731917ae264c02384bb2db
+excluded_by_policy:
+- hostname
+- user
+- absolute_paths
+- credentials
+- data_locations
+- subject_identifiers
+interpreter:
+  implementation: CPython
+  version: 3.12.10
+operating_system:
+  machine: AMD64
+  release: '11'
+  system: Windows
+  version: 10.0.26200
+packages:
+  anthropic: not_installed
+  click: 8.4.1
+  cptac: not_installed
+  fastapi: 0.139.0
+  google-cloud-storage: not_installed
+  jinja2: 3.1.6
+  numpy: 2.5.0
+  openai: not_installed
+  pandas: 3.0.3
+  plotly: 6.8.0
+  psutil: 7.2.2
+  pytest: 9.1.1
+  pytest-cov: not_installed
+  python-multipart: 0.0.32
+  pyyaml: 6.0.3
+  requests: 2.34.2
+  scikit-learn: 1.9.0
+  scipy: 1.18.0
+  tomli: not_installed
+  torch: 2.12.1
+  tqdm: 4.68.3
+  uvicorn: 0.50.2
+protocol_version: 1.0.0
+role: system_under_test
+schema_version: '1.0'
+thread_environment:
+  CUBLAS_WORKSPACE_CONFIG: null
+  MKL_NUM_THREADS: null
+  NUMEXPR_NUM_THREADS: null
+  OMP_NUM_THREADS: null
+  OPENBLAS_NUM_THREADS: null
+  TOKENIZERS_PARALLELISM: null
+  VECLIB_MAXIMUM_THREADS: null

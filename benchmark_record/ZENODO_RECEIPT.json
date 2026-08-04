@@ -1,0 +1,30 @@
+{
+  "schema_version": "1.0",
+  "verified_at_utc": "2026-08-03T19:36:10Z",
+  "record_status": "published",
+  "concept_doi": "10.5281/zenodo.21779750",
+  "concept_doi_url": "https://doi.org/10.5281/zenodo.21779750",
+  "version_doi": "10.5281/zenodo.21779751",
+  "version_doi_url": "https://doi.org/10.5281/zenodo.21779751",
+  "record_id": 21779751,
+  "publication_date": "2026-08-03",
+  "version": "1.0.0",
+  "deposited_file": {
+    "name": "omicau-benchmark-v1.0.0.zip",
+    "size_bytes": 63903,
+    "zenodo_md5": "589b6fa6df24c8e8cb4066639f9880c8",
+    "local_md5_verified": "589b6fa6df24c8e8cb4066639f9880c8",
+    "local_sha256": "610ec082bf572f389a03787e261540bd8dbd2f835cf45b55fb6a31a3e2ea5004",
+    "identity_check": "pass"
+  },
+  "metadata_verification": {
+    "title_match": true,
+    "version_match": true,
+    "orcid_match": true,
+    "creator_name_match": true,
+    "creator_affiliations_match_author_profile": false,
+    "zenodo_creator_affiliation": "Istanbul Yeni Yüzyıl University"
+  },
+  "citation_rule": "Cite the immutable version DOI for v1.0.0; use the concept DOI to refer to all versions.",
+  "archive_mutation_after_publication": false
+}

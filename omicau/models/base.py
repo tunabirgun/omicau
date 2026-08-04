@@ -378,10 +378,15 @@ def bootstrap_ci(result: CVResult, n_boot: int = 1000, seed: int = 42,
             float(np.percentile(vals, 100 * (1 - alpha / 2))))
 
 
-def attach_cis(results: list[CVResult], n_boot: int = 1000, seed: int = 42) -> list[CVResult]:
-    """Compute and cache a bootstrap CI on each result's primary metric."""
+def attach_cis(results: list[CVResult], n_boot: int = 1000, seed: int = 42,
+               alpha: float = 0.05) -> list[CVResult]:
+    """Compute and cache a bootstrap CI on each result's primary metric.
+
+    `alpha` is exposed so a caller testing a family of results can request a
+    corrected interval; the control baselines use it for exactly that.
+    """
     for r in results:
-        lo, hi = bootstrap_ci(r, n_boot=n_boot, seed=seed)
+        lo, hi = bootstrap_ci(r, n_boot=n_boot, seed=seed, alpha=alpha)
         r.extra["ci_low"] = lo
         r.extra["ci_high"] = hi
     return results

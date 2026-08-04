@@ -1,0 +1,58 @@
+{
+  "declarations": {
+    "active_output_directories_empty": true,
+    "definitive_pilot_seed_overlap": 0,
+    "prior_pilot_outputs_excluded": true,
+    "prior_runs_are_pilot_only": true,
+    "threshold_mirror_verified": true
+  },
+  "doi": {
+    "status": "pending_pre_upload",
+    "value": "PENDING"
+  },
+  "freeze_kind": "prospective_pre_upload",
+  "frozen_at_utc": "2026-08-03T19:10:42+00:00",
+  "git": {
+    "allow_dirty_used": true,
+    "commit": "5f947cf99ff2be1cbfdbc8ca4a5f7bad0965cfb1",
+    "working_tree_dirty": true
+  },
+  "pilot_seed_audit": {
+    "definitive_seed_count": 1,
+    "overlap": [],
+    "overlap_count": 0,
+    "pilot_seed_count": 2401,
+    "pilot_source_count": 1,
+    "status": "pass"
+  },
+  "protocol_version": "1.0.0",
+  "record_content_sha256": "346dc6f86afcdf951f2770839d0c75883e98d83ddbd9498d977840477348c744",
+  "record_format": "omicau-benchmark-freeze-v1",
+  "source_commit": "5f947cf99ff2be1cbfdbc8ca4a5f7bad0965cfb1",
+  "source_files": {
+    "BENCHMARK_PROTOCOL.md": "cb6c29c7d7ec8e5a1aac37796d867e7be3f56d07f8571991acf5945d40f896d6",
+    "CITATION.cff": "aee24d6ca737ba34e87150903e2326d6eba41e6901b119a23709264a558ed33c",
+    "CLAIM_REGISTRY.md": "7fc2a424ce78ab123a3931c7aa2e930eb0cc64ac8fd41880783c4596d6be63f0",
+    "COMPARATOR_ELIGIBILITY_RULES.md": "f4da72f284b65bb713a491ba1413f34881b8f1e0b78a98a65a381bf822b67a74",
+    "COMPARATOR_MANIFEST.yaml": "7d5af6ee55d04ca343f8f64c266a2003546a74988b5a83a3b2799aba3ac76eee",
+    "COMPUTE_PLAN.md": "bf91ec39a99d9cd7f0af3ac57f45ac834b596440b645281097fdd4c75cb4eaed",
+    "DATASET_MANIFEST.yaml": "ad5a5974d67a603d358ee0296d3fef47872fe29f906f59361696c63bca2212ef",
+    "DEVIATIONS.md": "559f4faa803ff24ce0ed547383ad01b0aa7b0fd6bd5f682e099383d1839b4fa4",
+    "DEVIATION_POLICY.md": "3f00be3925b694cdeb9204fa2bbbe543f855436f24882e88933563379d892973",
+    "EXCLUSION_CRITERIA.md": "495ee0191b2b43a07bcd3ac9d930fa5bbe70d68ae37aa9df8a97659244a27dce",
+    "EXPECTED_OUTPUTS.md": "7ed549d2c6ae393c4a8f52f0f0cfb88859dd7663ef61ad961074d442194f586a",
+    "FAILURE_REPORTING_POLICY.md": "9b652c618a982555a0b2bdcd04c93a989d063393972bdf25f34ccf867c9e48a9",
+    "HYPOTHESES.md": "3a57d1deaca8462f3916d4aef642bb3f671ea5114ceb997e31677d2f3d3e1932",
+    "LICENSE": "9ba9550ad48438d0836ddab3da480b3b69ffa0aac7b7878b5a0039e7ab429411",
+    "OUTCOME_AND_METRIC_REGISTRY.yaml": "f6ef20e0a4f7cd2e22e968abd372c3333a799cb60e2fd213ecd515d90fac01d5",
+    "PILOT_DISCLOSURE.md": "05a1f4a1c7836d2fbe1238b2dcd5c43aa63251db4736271ffacf2da8b94f0743",
+    "PREPROCESSING_RULES.md": "931e2c8c858cae398456c01075e9eece19d3aa84e71aaff9d7bd49f9888cacd5",
+    "README.md": "bf5f62d49214342b8cc8fa3b514231534d9b56f78c0f97f63e3501b9c3f801c8",
+    "REFERENCES.md": "3e7a684e3fe76c564056f6f0848eb8e18aa10b0d8c3b77a4cd4ec50adacf7ee3",
+    "RESAMPLING_AND_SPLIT_SPECIFICATION.md": "ed0d4a434f8ed0f3fc836c065eac8ce59889ff36e4789db8b0cce2048f60db0d",
+    "SIMULATION_DESIGN.yaml": "aa31e268d03961b58b790f318614579bd522141ecec83714f8e344b8b6bd5751",
+    "STATISTICAL_ANALYSIS_PLAN.md": "eb4d3cb9d879553bbe1dcec61c220ab4c75a59aa4bf158ca8e38792ef83e1426",
+    "benchmark_protocol.yaml": "a445c66f6ffb1913969746f17879a5439f5f236f2a1c183263a1aad854661730",
+    "environment/README.md": "8989b8a4e87d90973b5a61cbf5e84d7299b8f19e31eb3e09633c8935d0a2fb22"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "omicau failed benchmark task",
+  "type": "object",
+  "required": ["run_id", "protocol_version", "dataset_id", "method_id", "task", "disposition", "error_class", "error_message", "recovery_attempts", "timestamp_utc"],
+  "properties": {
+    "run_id": {"type": "string", "minLength": 1},
+    "protocol_version": {"type": "string", "const": "1.0.0"},
+    "dataset_id": {"type": "string", "minLength": 1},
+    "method_id": {"type": "string", "minLength": 1},
+    "task": {"type": "string", "minLength": 1},
+    "profile": {"type": "string"},
+    "split_id": {"type": "string"},
+    "software": {"type": "object"},
+    "disposition": {"type": "string", "enum": ["unsupported_task", "implementation_unsuccessful", "resource_exhausted", "numerical_failure", "harness_defect"]},
+    "error_class": {"type": "string", "minLength": 1},
+    "error_message": {"type": "string"},
+    "resource_limits": {"type": "object"},
+    "wall_time_seconds": {"type": "number", "minimum": 0},
+    "recovery_attempts": {"type": "array"},
+    "timestamp_utc": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": true
+}

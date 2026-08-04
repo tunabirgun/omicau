@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "omicau protocol deviation record",
+  "type": "object",
+  "required": ["deviation_id", "date", "protocol_version", "protocol_section", "specified", "implemented", "reason", "decided_by", "affected_runs", "results_seen_before_change", "timestamp_utc"],
+  "properties": {
+    "deviation_id": {"type": "string", "minLength": 1},
+    "date": {"type": "string", "minLength": 1},
+    "protocol_version": {"type": "string", "const": "1.0.0"},
+    "protocol_section": {"type": "string", "minLength": 1},
+    "specified": {"type": "string", "minLength": 1},
+    "implemented": {"type": "string", "minLength": 1},
+    "reason": {"type": "string", "minLength": 1},
+    "decided_by": {"type": "string", "minLength": 1},
+    "affected_runs": {"type": "array"},
+    "results_seen_before_change": {"type": "string", "enum": ["yes", "no", "unclear"]},
+    "unclear_explanation": {"type": "string"},
+    "rerun_plan": {"type": "string"},
+    "timestamp_utc": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": true
+}

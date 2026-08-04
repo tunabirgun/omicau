@@ -1,0 +1,145 @@
+# --- omicau .gitignore ---
+# Policy: the repository tracks the package, its tests, its docs, its packaging and
+# the prospective benchmark record. Everything else — working material, data, run
+# outputs, generated artefacts, credentials — stays local. When in doubt it is
+# ignored, and an exception is added deliberately.
+#
+# --- agent / editor workspaces -------------------------------------------------
+.claude/
+**/.claude/
+scratchpad/
+**/scratchpad/
+outdated/
+tmp/
+temp/
+*.tmp
+*.bak
+*.orig
+*.rej
+
+# --- private authoring and local working material -------------------------------
+manuscript/
+local/
+# derived Zenodo deposit set, produced from benchmark_record/
+upload/
+HACKATHON_ANIMATION_BRIEF.txt
+tests_real/
+**/tests_real/
+design_assets/
+**/design_assets/
+demo/
+**/demo/
+demo_vid/
+**/demo_vid/
+example_output/
+**/example_output/
+
+# --- benchmark execution tree ---------------------------------------------------
+# Runs, results, logs, splits, simulated and derived data stay local. Restricted-access
+# material (e.g. ROSMAP-derived) must never reach a public remote. Only the small text
+# scaffolding is trackable. benchmark_record/ is deliberately NOT ignored: the
+# prospective protocol is meant to be public and is archived to Zenodo.
+benchmarks/*
+!benchmarks/README.md
+!benchmarks/configs/
+!benchmarks/datasets/
+benchmarks/datasets/*
+!benchmarks/datasets/manifests/
+!benchmarks/datasets/download_scripts/
+!benchmarks/harness/
+!benchmarks/harness/*.py
+!benchmarks/simulations/
+benchmarks/simulations/*
+!benchmarks/simulations/*.py
+
+# --- run outputs and caches -----------------------------------------------------
+omicau_output/
+**/omicau_output/
+.omicau_cache/
+**/.omicau_cache/
+*.log
+logs/
+
+# --- data: never tracked --------------------------------------------------------
+*.csv
+*.tsv
+*.txt.gz
+*.gz
+*.bz2
+*.xz
+*.zip
+*.7z
+*.tar
+*.parquet
+*.feather
+*.h5
+*.hdf5
+*.npy
+*.npz
+*.pkl
+*.pickle
+*.joblib
+*.sqlite
+*.db
+*.RData
+*.rds
+*.mtx
+*.bam
+*.sam
+*.cram
+*.vcf
+*.fastq
+*.fq
+*.bed
+# Small tracked text data may be re-included explicitly, e.g.:
+# !packaging/example.csv
+
+# --- generated documents --------------------------------------------------------
+*.docx
+*.xlsx
+*.pptx
+*.pdf
+
+# --- credentials and machine-local settings -------------------------------------
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*
+secrets*
+.synapseConfig
+.netrc
+*.token
+
+# --- Python build / cache artefacts ---------------------------------------------
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+.coverage
+htmlcov/
+
+# --- virtual environments -------------------------------------------------------
+.venv/
+venv/
+env/
+ENV/
+renv/library/
+renv/staging/
+
+# --- editor / OS cruft ----------------------------------------------------------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+~$*

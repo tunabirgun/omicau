@@ -1,0 +1,36 @@
+{
+  "title": "omicau: independent benchmark protocol",
+  "upload_type": "dataset",
+  "description": "Prospective v1.0.0 protocol for an independent, compute-efficient evaluation of omicau's multi-omics audit diagnostics and predictive benchmarking workflow. Simulations are independent units; real cohorts use repeated nested group-aware cross-validation. External methods are restricted to a prespecified simulation subset. Every run made before the successful freeze is pilot-only and excluded from definitive evidence.",
+  "creators": [
+    {
+      "name": "Tuna Birgün",
+      "orcid": "0009-0009-1827-7933",
+      "affiliation": "Istanbul Technical University, Graduate School, Department of Molecular Biology - Genetics and Biotechnology, Türkiye"
+    }
+  ],
+  "version": "1.0.0",
+  "doi": "PENDING",
+  "publication_date": "PENDING",
+  "access_right": "open",
+  "license": "cc-by-4.0",
+  "language": "eng",
+  "keywords": [
+    "multi-omics",
+    "benchmark protocol",
+    "group-aware cross-validation",
+    "data leakage",
+    "batch effects",
+    "missingness",
+    "reproducibility",
+    "machine learning"
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/tunabirgun/omicau",
+      "relation": "isSupplementTo",
+      "scheme": "url"
+    }
+  ],
+  "notes": "This is a brand-new independent record. No prior Zenodo record, pilot output, pilot seed, or pre-freeze result is part of the definitive evidence package. DOI and publication date must be replaced from the new Zenodo record before freeze."
+}

@@ -1,0 +1,354 @@
+schema_version: "1.0"
+record:
+  id: omicau-independent-benchmark-protocol
+  title: "omicau: independent benchmark protocol"
+  version: "1.0.0"
+  status: draft_pending_zenodo_archive
+  doi: PENDING
+  publication_date: PENDING
+  licence: CC-BY-4.0
+  canonical_parameter_file: benchmark_record/benchmark_protocol.yaml
+
+independence:
+  new_record: true
+  prior_zenodo_records: excluded_deleted_records
+  prior_runs_designation: pilot_only
+  prior_results_eligible_for_analysis: false
+  prior_outputs_eligible_for_parameter_selection: false
+  prior_seeds_eligible_for_reuse: false
+  historical_identifiers_must_not_appear: true
+  seed_audit:
+    required_before_freeze: true
+    comparison_scope: all_known_pilot_seed_inventories
+    required_overlap_count: 0
+    failure_action: rekey_protocol_seed_namespace_and_regenerate_before_any_definitive_run
+    archived_output: benchmark_record/checksums/seed_overlap_audit.json
+
+scientific_scope:
+  objective: >-
+    Evaluate omicau's diagnostic role assignments, risk flags, and predictive
+    benchmarking behavior with a prospectively fixed, compute-efficient design.
+  evidence_labels:
+    definitive: generated_or_acquired_only_after_successful_protocol_freeze
+    pilot: every_run_started_before_successful_protocol_freeze
+  primary_claims:
+    - id: role_recovery
+      estimand: macro_averaged_modality_role_classification_per_independent_simulation
+    - id: predictive_discrimination
+      estimand: paired_difference_in_binary_classification_AUROC
+    - id: real_cohort_generalization
+      estimand: repeated_group_aware_outer_CV_AUROC_within_each_eligible_primary_cohort
+  secondary_claims:
+    - nonlinear_interaction_performance
+    - diagnostic_risk_flag_operating_characteristics
+    - calibration_and_class_imbalance_metrics
+    - semi_synthetic_robustness
+    - computational_resource_use
+  excluded_claims:
+    - primary_interval_coverage
+    - causal_identification_of_batch_effects
+    - causal_identification_of_missingness_mechanisms
+    - null_controls_as_general_leakage_detectors
+    - PAM50_as_predictive_adequacy_evidence
+    - XAI_as_feature_discovery_or_causal_evidence
+
+simulation:
+  analysis_unit: independently_generated_dataset_replicate
+  split_reuse: one_frozen_partition_shared_by_all_methods_and_arms_for_that_unit
+  outer_cv:
+    folds: 5
+    repeats: 1
+    splitter: stratified_group_k_fold
+    group_definition: simulated_subject_id
+    shuffle: true
+  families:
+    role_recovery:
+      scenarios: [S1, S2, S3, S4, S5]
+      sample_sizes: [50, 150, 500]
+      independent_replicates_per_cell: 100
+    batch_risk_flags:
+      base_scenario: S4
+      cells:
+        - severity: clean
+          sample_sizes: [50, 150, 500]
+          independent_replicates_per_cell: 100
+        - severity: intermediate
+          sample_sizes: [150]
+          independent_replicates_per_cell: 50
+        - severity: severe
+          sample_sizes: [50, 150, 500]
+          independent_replicates_per_cell: 100
+    missingness_risk_flags:
+      base_scenario: S5
+      cells:
+        - severity: clean
+          sample_sizes: [50, 150, 500]
+          independent_replicates_per_cell: 100
+        - severity: intermediate
+          sample_sizes: [150]
+          independent_replicates_per_cell: 50
+        - severity: severe
+          sample_sizes: [50, 150, 500]
+          independent_replicates_per_cell: 100
+    group_leakage:
+      base_scenario: S2
+      paired_conditions: [safe, unsafe]
+      sample_sizes: [50, 150, 500]
+      paired_replicates_per_cell: 50
+    null_control_specificity:
+      base_scenario: S1
+      condition: no_predictive_signal
+      sample_sizes: [50, 150, 500]
+      independent_replicates_per_cell: 100
+    predictive_performance:
+      scenarios: [S1, S2, S3, S5]
+      sample_sizes: [150, 500]
+      paired_replicates_per_cell: 50
+    nonlinear_secondary:
+      scenarios: [S6]
+      sample_sizes: [150, 500]
+      paired_replicates_per_cell: 30
+    semi_synthetic_robustness:
+      cohort_structures: [acute_infection_like, solid_tumour_like]
+      perturbations: [covariate_shift, blockwise_missingness, batch_prevalence_shift]
+      independent_replicates_per_cell: 30
+  external_comparator_subset:
+    source_family: predictive_performance
+    scenarios: [S1, S2, S3, S5]
+    sample_sizes: [150, 500]
+    replicate_indices:
+      start_inclusive: 0
+      stop_exclusive: 30
+    selection_depends_on_results: false
+  seed_generation:
+    namespace: omicau-independent-benchmark-v1.0.0
+    master_seed: 3471906231
+    unit_key_fields: [family, scenario_or_structure, condition_or_perturbation, sample_size, replicate_index]
+    algorithm: sha256
+    encoding: utf-8
+    extraction: first_4_digest_bytes_as_unsigned_big_endian_uint32
+    collision_policy: append_zero_based_collision_counter_and_rehash
+    separate_stream_labels: [data_generation, fold_assignment, model_initialization, bootstrap]
+    seed_table_output: benchmark_record/checksums/definitive_seed_registry.json
+    zero_overlap_audit_ref: independence.seed_audit
+
+simulation_parameters:
+  task: binary_classification
+  class_generation: bernoulli_logistic_from_latent_signal
+  modalities:
+    - id: rna_like
+      feature_count: 1000
+      measurement_family: continuous_log_abundance
+    - id: methyl_like
+      feature_count: 500
+      measurement_family: bounded_beta_like
+    - id: protein_like
+      feature_count: 200
+      measurement_family: continuous_log_abundance
+  latent_structure:
+    shared_factors: 4
+    modality_specific_factors_per_modality: 2
+    feature_blocks_per_modality: 10
+    within_block_correlation: 0.5
+    noise_feature_fraction: 0.8
+  target_bayes_AUROC_range: [0.72, 0.82]
+  risk_flag_severity:
+    batch:
+      clean_outcome_assignment_probability: 0.0
+      intermediate_outcome_assignment_probability: 0.5
+      severe_outcome_assignment_probability: 0.8
+      batch_count: 4
+    missingness:
+      clean_additional_missing_probability: 0.0
+      intermediate_additional_missing_probability: 0.2
+      severe_additional_missing_probability: 0.4
+      mechanisms: [MCAR, MAR, MNAR, batch_associated, whole_modality_absence]
+  group_leakage:
+    repeated_measurements_per_subject: 2
+    unsafe_splitter: stratified_k_fold_ignoring_subject
+    safe_splitter: stratified_group_k_fold
+    paired_generation: identical_dataset_and_seed_with_only_splitter_changed
+  semi_synthetic:
+    preserve_from_template: [marginal_distributions, within_modality_correlation, cross_modality_correlation, missingness_mask_geometry]
+    outcome_generation: planted_logistic_signal_independent_of_observed_real_outcome
+    template_outcomes_accessed: false
+
+real_cohorts:
+  primary_candidate_ids: [COVID_ICU, CPTAC_UCEC_MSIH_VS_CNVL, TCGA_BRCA_ER]
+  secondary_positive_control_ids: [TCGA_BRCA_PAM50]
+  outer_cv:
+    folds_requested: 5
+    repeats: 3
+    splitter: repeated_stratified_group_k_fold
+    shuffle: true
+    partition_reuse: identical_frozen_partitions_for_every_method_and_arm
+  inner_cv:
+    folds: 3
+    splitter: stratified_group_k_fold
+    purpose: hyperparameter_and_training_only_selection
+  dataset_rules:
+    minimum_modalities: 2
+    minimum_subjects_per_class: 40
+    minimum_minority_class_subjects_per_outer_test_fold: 10
+    minimum_outer_folds: 3
+    maximum_outer_folds: 5
+    outer_fold_choice: >-
+      largest integer k not exceeding maximum_outer_folds for which every frozen
+      outer test fold contains at least the minimum minority-class subject count;
+      k must not be below minimum_outer_folds
+    subject_level_group_required: true
+    externally_defined_primary_outcome_required: true
+    outcome_derived_from_predictors_forbidden: true
+    eligibility_decided_before_model_results: true
+    ineligible_candidate_disposition: retained_in_manifest_with_reason
+
+preprocessing:
+  policy_ref: benchmark_record/PREPROCESSING_RULES.md
+  fit_scope: outer_training_data_only
+  inner_validation_access: tuning_only
+  outer_test_access: final_scoring_only
+  sequence:
+    - training_fold_median_imputation_or_prespecified_masked_path
+    - training_fold_zero_variance_filter
+    - training_fold_standardization
+    - optional_training_fold_feature_selection
+  batch_adjustment_default: false
+  outcome_aware_global_preprocessing_forbidden: true
+
+methods:
+  system_under_test: omicau_masked_fusion
+  primary_comparator_ids:
+    - nested_best_single
+    - early_elastic_net
+    - random_forest_early_fusion
+    - fully_nested_stacking
+    - DIABLO
+    - additional_supervised_eligibility_slot
+  secondary_comparator_ids: [MOFA_plus]
+  external_method_ids: [DIABLO, additional_supervised_eligibility_slot, MOFA_plus]
+  external_method_scope: simulation.external_comparator_subset
+  external_methods_on_real_cohorts: false
+
+tuning:
+  arms:
+    default:
+      rule: documented_out_of_box_defaults_without_search
+      cross_arm_ranking_allowed: false
+    matched_tuned:
+      rule: used_only_when_required_for_valid_operation_or_a_prespecified_matched_tuned_contrast
+      cross_arm_ranking_allowed: false
+  maximum_configurations_per_method_per_outer_training_set: 12
+  search_spaces:
+    omicau_masked_fusion:
+      combination_rule: cartesian_product
+      latent_dimension: [16, 32]
+      hidden_dimension: [32, 64]
+      dropout_probability: [0.1, 0.3]
+      all_other_parameters: package_defaults
+    early_elastic_net:
+      combination_rule: cartesian_product
+      inverse_regularization_strength: [0.01, 0.1, 1.0]
+      l1_ratio: [0.0, 0.5, 0.9, 1.0]
+      solver: saga
+    random_forest_early_fusion:
+      combination_rule: cartesian_product
+      tree_count: [300]
+      maximum_features: [sqrt, 0.2, 0.5]
+      minimum_samples_per_leaf: [1, 5, 10, 20]
+    fully_nested_stacking:
+      combination_rule: cartesian_product
+      base_learner_inverse_regularization_strength: [0.1, 1.0, 10.0]
+      meta_learner_inverse_regularization_strength: [0.1, 1.0]
+    DIABLO:
+      combination_rule: cartesian_product
+      component_count: [1, 2, 3]
+      features_retained_per_block_per_component: [10, 50, 100]
+      design_matrix: full
+    additional_supervised_eligibility_slot:
+      combination_rule: cartesian_product_if_MOGONET_is_eligible
+      graph_neighbour_count: [5, 10, 20]
+      learning_rate: [0.001, 0.01]
+      hidden_dimension: [64, 128]
+    MOFA_plus:
+      combination_rule: cartesian_product
+      factor_count: [5, 10, 20]
+      automatic_relevance_determination: [true, false]
+  selection_metric_ref: OUTCOME_AND_METRIC_REGISTRY.yaml#metrics.AUROC
+  tie_break_order: [lower_inner_score_variance, lower_fit_time, lexicographic_configuration_id]
+  resource_budget:
+    cpu_threads_per_fit: 4
+    memory_gib_per_fit: 16
+    wall_minutes_per_configuration: 60
+    wall_minutes_per_method_outer_fold: 180
+    accelerators_required: false
+    observed_fields: [wall_seconds, peak_rss_mib, cpu_seconds, configuration_count, recovery_attempts]
+    exceedance_disposition: resource_exhausted_failure_record
+
+diagnostic_interpretation:
+  null_controls:
+    role: pipeline_sanity_checks
+    permitted_conclusion: no_sanity_check_failure_detected_or_sanity_check_failed
+    forbidden_conclusion: absence_or_presence_of_arbitrary_data_leakage
+  group_leakage:
+    assessed_by: [grouping_warning, naive_minus_group_aware_AUROC_gap]
+    null_controls_substitute_for_group_assessment: false
+  batch_outputs:
+    interpretation: risk_flags_not_causal_proof
+  missingness_outputs:
+    interpretation: risk_flags_not_causal_proof
+
+xai:
+  default: false
+  permitted_case_studies: 1
+  case_study_dataset_selection:
+    rule: first_eligible_primary_real_cohort_in_manifest_priority_order
+    priority_order: [COVID_ICU, CPTAC_UCEC_MSIH_VS_CNVL, TCGA_BRCA_ER]
+    selection_uses_model_results: false
+  method: held_out_permutation_importance
+  model: omicau_masked_fusion
+  role_in_inference: descriptive_only
+
+audit_thresholds:
+  source_module: omicau.interpretation.utility
+  USEFUL_MARGIN: 0.05
+  GAIN_EPS: 0.01
+  GAIN_STRONG: 0.03
+  GAIN_ALPHA: 0.05
+  CKA_REDUNDANT: 0.5
+  CONTROL_MARGIN: 0.12
+  CONTROL_FAMILY_ALPHA: 0.05
+  SUBGROUP_MIN_N: 20
+
+statistical_analysis:
+  analysis_population: all_eligible_units_including_documented_failures
+  alpha_two_sided: 0.05
+  confidence_level: 0.95
+  simulation_pairing_key: [family, scenario, condition, sample_size, replicate_index, split_id]
+  real_pairing_key: [dataset_id, repeat_index, outer_fold_index, split_id]
+  primary_interval_coverage_analysis: false
+  missing_scores_from_failures:
+    imputation: forbidden
+    reporting: method_by_condition_failure_counts_and_denominators
+  multiplicity:
+    method_comparisons_within_each_claim_family: holm
+    exploratory_metrics: labelled_secondary_no_confirmatory_language
+
+freeze_gates:
+  - doi_and_publication_date_not_pending
+  - no_definitive_result_directory_contains_files
+  - all_machine_readable_files_parse
+  - all_cross_references_resolve
+  - audit_thresholds_match_imported_code_constants
+  - comparator_eligibility_statuses_resolved
+  - dataset_eligibility_statuses_resolved
+  - frozen_split_manifests_exist_for_eligible_real_cohorts
+  - definitive_seed_registry_exists
+  - seed_overlap_audit_reports_zero
+  - no_prior_identifier_or_pilot_output_is_included
+
+machine_summary:
+  generation_rule: >-
+    Derive cell counts, independent-unit counts, fit counts, and expected result-row
+    counts from the family definitions, eligible method sets, tuning arms, and split
+    manifests at runtime; no aggregate total is canonical or stored in this protocol.
+  aggregate_counts_hardcoded: false

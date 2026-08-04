@@ -1,0 +1,154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tunabirgun/omicau/benchmark_record/schemas/dataset-manifest.schema.json",
+  "title": "omicau benchmark real-cohort dataset manifest",
+  "description": "Structure of benchmark_record/DATASET_MANIFEST.yaml. The manifest registers every candidate real cohort, its externally defined endpoint and its grouping variable before eligibility is assessed, so an ineligible candidate stays in the record with its reason instead of disappearing.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "protocol_id",
+    "protocol_version",
+    "status",
+    "eligibility_workflow",
+    "datasets",
+    "fold_assignment",
+    "provenance"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"type": "string"},
+    "protocol_id": {"type": "string"},
+    "protocol_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+    "eligibility_parameter_source": {"type": "string"},
+    "status": {"type": "string"},
+    "eligibility_workflow": {
+      "type": "object",
+      "description": "When eligibility is decided and what is visible while deciding it.",
+      "required": [
+        "timing",
+        "outcome_blind_predictor_harmonization",
+        "required_checks",
+        "model_results_visible_during_eligibility",
+        "output"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "timing": {"type": "string"},
+        "outcome_blind_predictor_harmonization": {"const": true},
+        "required_checks": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string"}
+        },
+        "model_results_visible_during_eligibility": {
+          "const": false,
+          "description": "Eligibility must be decided blind to model results; the protocol forbids selecting a cohort on favourable performance."
+        },
+        "output": {"type": "string"},
+        "aggregate_subject_counts": {"type": "string"}
+      }
+    },
+    "datasets": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {"$ref": "#/$defs/dataset"}
+    },
+    "fold_assignment": {
+      "type": "object",
+      "required": ["rule_ref", "k_choice_ref", "unit_of_stratification", "unit_of_grouping",
+                   "repeated_measurements_policy", "freeze_outputs", "failed_k_search_disposition"],
+      "additionalProperties": true,
+      "properties": {
+        "rule_ref": {"type": "string"},
+        "k_choice_ref": {"type": "string"},
+        "unit_of_stratification": {"type": "string"},
+        "unit_of_grouping": {"type": "string"},
+        "repeated_measurements_policy": {"type": "string"},
+        "freeze_outputs": {
+          "type": "object",
+          "required": ["pattern", "include"],
+          "additionalProperties": false,
+          "properties": {
+            "pattern": {"type": "string"},
+            "include": {"type": "array", "minItems": 1, "items": {"type": "string"}}
+          }
+        },
+        "failed_k_search_disposition": {"type": "string"}
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["required_per_input_file", "raw_subject_identifiers_in_record",
+                   "subject_identifier_storage", "manifest_identifier_form"],
+      "additionalProperties": true,
+      "properties": {
+        "required_per_input_file": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "raw_subject_identifiers_in_record": {"const": false},
+        "subject_identifier_storage": {"type": "string"},
+        "manifest_identifier_form": {"type": "string"},
+        "exclusion_log": {"type": "string"}
+      }
+    }
+  },
+  "$defs": {
+    "dataset": {
+      "type": "object",
+      "required": ["priority", "analysis_role", "feasibility_status", "cohort",
+                   "source_records", "population", "endpoint", "required_modalities", "group_id"],
+      "additionalProperties": false,
+      "properties": {
+        "priority": {"type": "integer", "minimum": 1},
+        "analysis_role": {
+          "type": "string",
+          "enum": ["primary_candidate", "secondary_positive_control"]
+        },
+        "feasibility_status": {"type": "string"},
+        "cohort": {"type": "string"},
+        "source_records": {
+          "type": "object",
+          "minProperties": 1,
+          "description": "Each entry names a resolvable accession, DOI or project record for one input.",
+          "additionalProperties": {"type": ["object", "string"]}
+        },
+        "population": {
+          "type": "object",
+          "required": ["include"],
+          "additionalProperties": true,
+          "properties": {
+            "include": {"type": "string"},
+            "exclude": {"type": "array", "items": {"type": "string"}},
+            "retain_subtypes": {"type": "array", "items": {"type": "string"}},
+            "exclude_subtypes": {"type": "array", "items": {"type": "string"}}
+          }
+        },
+        "endpoint": {"$ref": "#/$defs/endpoint"},
+        "required_modalities": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": true
+        },
+        "group_id": {"type": "string"},
+        "batch_candidates": {"type": "array", "items": {"type": "string"}},
+        "feasibility_gate": {"type": "string"},
+        "permitted_use": {"type": "string"},
+        "forbidden_uses": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "endpoint": {
+      "type": "object",
+      "required": ["registry_id", "definition_source", "predictor_derived"],
+      "additionalProperties": false,
+      "properties": {
+        "registry_id": {"type": "string"},
+        "positive_label": {"type": "string"},
+        "negative_label": {"type": "string"},
+        "labels": {"type": "array", "minItems": 2, "items": {"type": "string"}},
+        "definition_source": {"type": "string"},
+        "predictor_derived": {
+          "type": "boolean",
+          "description": "True only for the secondary positive control, whose label is expression-derived; a primary endpoint derived from its own predictors would be circular."
+        }
+      }
+    }
+  }
+}
