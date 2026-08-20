@@ -8,6 +8,7 @@ import json
 import math
 from numbers import Integral, Real
 import random
+import re
 from typing import Any
 
 import numpy as np
@@ -79,6 +80,16 @@ def _sha256_text(value: Any, invariant: str) -> str:
 
 
 _PENDING_REGISTRY_STATUS = "unavailable_pending_frozen_registry"
+_TECHNICAL_NODE_ID_RE = re.compile(r"[a-z][a-z0-9]*(?:_[a-z0-9]+)*\Z")
+_SENSITIVE_NODE_ID_TOKENS = (
+    "api_key",
+    "apikey",
+    "credential",
+    "passwd",
+    "password",
+    "secret",
+    "token",
+)
 
 
 def _validate_private_registry_binding(value: Any, purpose: str) -> str:
@@ -144,6 +155,23 @@ def _contract_sha256(value: Any, invariant: str) -> str:
 
     inspect(value)
     return _canonical_sha256(value, invariant)
+
+
+def _technical_node_id(value: Any, invariant: str) -> str:
+    if (
+        not isinstance(value, str)
+        or len(value) > 64
+        or _TECHNICAL_NODE_ID_RE.fullmatch(value) is None
+        or any(
+            value == token
+            or value.startswith(f"{token}_")
+            or value.endswith(f"_{token}")
+            or f"_{token}_" in value
+            for token in _SENSITIVE_NODE_ID_TOKENS
+        )
+    ):
+        _fail("c07_fit_ancestry_invalid", invariant)
+    return value
 
 
 def _identifier(value: Any, invariant: str) -> str | int:
@@ -619,10 +647,15 @@ def validate_target_fit_ancestry(
     registry: Mapping[str, Any], *, permuted_target_node: str, contract: Mapping[str, Any]
 ) -> dict[str, Any]:
     """Require every registered target-dependent node to descend from the permuted target."""
-    if not isinstance(registry, Mapping) or set(registry) != {"nodes"}:
+    if not isinstance(registry, Mapping) or set(registry) != {
+        "nodes",
+        "private_registry_binding",
+    }:
         _fail("c07_fit_ancestry_invalid", "registry_schema")
-    if not isinstance(permuted_target_node, str) or not permuted_target_node:
-        _fail("c07_fit_ancestry_invalid", "permuted_target_node")
+    registry_status = _validate_private_registry_binding(
+        registry["private_registry_binding"], "fit_ancestry"
+    )
+    permuted_target_node = _technical_node_id(permuted_target_node, "permuted_target_node")
     nodes = registry["nodes"]
     if not isinstance(nodes, list) or not nodes:
         _fail("c07_fit_ancestry_invalid", "nodes_type")
@@ -631,16 +664,17 @@ def validate_target_fit_ancestry(
     for node in nodes:
         if not isinstance(node, Mapping) or set(node) != {"node_id", "parents", "target_dependent"}:
             _fail("c07_fit_ancestry_invalid", "node_schema")
-        node_id = node["node_id"]
-        if not isinstance(node_id, str) or not node_id or node_id in parents:
+        node_id = _technical_node_id(node["node_id"], "node_id")
+        if node_id in parents:
             _fail("c07_fit_ancestry_invalid", "node_id")
-        if not isinstance(node["parents"], list) or any(
-            not isinstance(parent, str) or not parent for parent in node["parents"]
-        ):
+        if not isinstance(node["parents"], list):
             _fail("c07_fit_ancestry_invalid", "parent_schema")
+        node_parents = [
+            _technical_node_id(parent, "parent_schema") for parent in node["parents"]
+        ]
         if type(node["target_dependent"]) is not bool:
             _fail("c07_fit_ancestry_invalid", "target_dependent_type")
-        parents[node_id] = list(node["parents"])
+        parents[node_id] = node_parents
         if node["target_dependent"]:
             dependent.add(node_id)
     if permuted_target_node not in parents:
@@ -679,7 +713,8 @@ def validate_target_fit_ancestry(
         "decision": "valid",
         "fit_ancestry_status": "all_target_dependent_nodes_descend_from_permuted_target",
         "node_count": len(parents),
-        "registry_sha256": _canonical_sha256(registry, "fit_registry_canonical"),
+        "registry_sha256": None,
+        "registry_status": registry_status,
         "target_dependent_node_count": len(dependent),
         "contract_sha256": _contract_sha256(contract, "fit_contract_canonical"),
     }

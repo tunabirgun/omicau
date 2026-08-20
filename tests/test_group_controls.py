@@ -224,18 +224,59 @@ def test_assessment_mutation_is_detected() -> None:
 
 
 def _fit_registry() -> dict:
-    return {"nodes": [
-        {"node_id": "x", "parents": [], "target_dependent": False},
-        {"node_id": "p", "parents": [], "target_dependent": False},
-        {"node_id": "select", "parents": ["x", "p"], "target_dependent": True},
-        {"node_id": "fit", "parents": ["select"], "target_dependent": True},
-    ]}
+    return {
+        "private_registry_binding": _private_registry("fit_ancestry"),
+        "nodes": [
+            {"node_id": "x", "parents": [], "target_dependent": False},
+            {"node_id": "p", "parents": [], "target_dependent": False},
+            {"node_id": "select", "parents": ["x", "p"], "target_dependent": True},
+            {"node_id": "fit", "parents": ["select"], "target_dependent": True},
+        ],
+    }
 
 
 def test_fit_ancestry_passes_and_emits_only_aggregates() -> None:
     receipt = validate_target_fit_ancestry(_fit_registry(), permuted_target_node="p", contract=CONTRACT)
     assert receipt["target_dependent_node_count"] == 2
+    assert receipt["registry_sha256"] is None
+    assert receipt["registry_status"] == "unavailable_pending_frozen_registry"
     assert "select" not in json.dumps(receipt)
+
+
+def test_fit_ancestry_small_registry_cannot_be_enumerated_from_receipt() -> None:
+    first = _fit_registry()
+    second = _fit_registry()
+    replacements = {"x": "data", "p": "target", "select": "screen", "fit": "model"}
+    for node in second["nodes"]:
+        node["node_id"] = replacements[node["node_id"]]
+        node["parents"] = [replacements[parent] for parent in node["parents"]]
+    first_receipt = validate_target_fit_ancestry(first, permuted_target_node="p", contract=CONTRACT)
+    second_receipt = validate_target_fit_ancestry(
+        second, permuted_target_node="target", contract=CONTRACT
+    )
+    assert first_receipt == second_receipt
+    assert first_receipt["registry_sha256"] is None
+
+
+@pytest.mark.parametrize(
+    "hostile_id",
+    ["password", "api_key", "C:private", "user@example.com", "../private", "private-id"],
+)
+def test_hostile_fit_ancestry_node_ids_fail_without_reflection(hostile_id: str) -> None:
+    registry = _fit_registry()
+    registry["nodes"][0]["node_id"] = hostile_id
+    with pytest.raises(GroupControlError, match="c07_fit_ancestry_invalid") as caught:
+        validate_target_fit_ancestry(registry, permuted_target_node="p", contract=CONTRACT)
+    assert hostile_id not in str(caught.value)
+
+
+def test_hostile_fit_ancestry_parent_and_target_ids_fail() -> None:
+    registry = _fit_registry()
+    registry["nodes"][2]["parents"] = ["api_key"]
+    with pytest.raises(GroupControlError, match="c07_fit_ancestry_invalid"):
+        validate_target_fit_ancestry(registry, permuted_target_node="p", contract=CONTRACT)
+    with pytest.raises(GroupControlError, match="c07_fit_ancestry_invalid"):
+        validate_target_fit_ancestry(_fit_registry(), permuted_target_node="C:private", contract=CONTRACT)
 
 
 @pytest.mark.parametrize("defect", ["reuse", "unregistered", "cycle", "bool"])

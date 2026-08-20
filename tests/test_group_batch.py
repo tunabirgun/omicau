@@ -253,6 +253,51 @@ def test_primary_holm_rejects_unregistered_status_without_reflection(hostile_sta
     assert "synthetic-secret-marker" not in message.lower()
 
 
+@pytest.mark.parametrize(
+    "hostile_name",
+    [
+        "subject_001",
+        "sample_17",
+        "credential_token",
+        "users_private_batch_tsv",
+        r"C:\private\batch.tsv",
+        "Authorization: Bearer synthetic-marker",
+        7,
+    ],
+)
+def test_primary_holm_rejects_unregistered_name_without_reflection(hostile_name):
+    components = {
+        "structure": {"status": "tested", "p_value": 0.5},
+        hostile_name: {"status": "tested", "p_value": 0.5},
+    }
+    with pytest.raises(ValueError, match="registered public token") as captured:
+        gb.apply_primary_holm(components, alpha=0.05)
+    message = str(captured.value)
+    assert str(hostile_name) not in message
+    assert "credential" not in message.lower()
+    assert "synthetic-marker" not in message.lower()
+
+
+def test_primary_holm_output_keys_are_closed_registered_tokens():
+    components = {
+        "structure": {"status": "tested", "p_value": 0.4},
+        "outcome": {"status": "tested", "p_value": 0.3},
+        "event": {"status": "not_applicable"},
+        "censoring": {"status": "not_applicable"},
+    }
+    decisions = gb.apply_primary_holm(components, alpha=0.05)
+    assert set(decisions) == {"structure", "outcome", "event", "censoring"}
+
+
+def test_primary_holm_rejects_string_subclass_keys():
+    class CallerLabel(str):
+        pass
+
+    components = {CallerLabel("structure"): {"status": "tested", "p_value": 0.5}}
+    with pytest.raises(ValueError, match="registered public token"):
+        gb.apply_primary_holm(components, alpha=0.05)
+
+
 def test_public_summary_is_aggregate_seed_private_and_hostile_values_do_not_escape():
     groups = np.repeat([f"private-{i}" for i in range(10)], 2)
     batch = np.repeat([r"C:\private\batch.tsv"] * 5 + ["hostile-subject-label"] * 5, 2)

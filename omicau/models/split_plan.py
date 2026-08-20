@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Hashable, Mapping, Sequence
+from collections.abc import Hashable, Iterator, Mapping, Sequence
 import hashlib
 import json
 import math
@@ -10,6 +10,9 @@ from numbers import Integral, Real
 from typing import Any
 
 import numpy as np
+
+
+_VALIDATED_SPLIT_PLAN_TOKEN = object()
 
 
 class SplitValidationError(ValueError):
@@ -28,6 +31,78 @@ class SplitValidationError(ValueError):
         self.code = code
         self.invariant = invariant
         super().__init__(code)
+
+
+class ValidatedSplitPlan:
+    """Private split indices with a public aggregate validation receipt."""
+
+    __slots__ = ("__inner", "__locked", "__outer", "__receipt_json")
+
+    def __init__(
+        self,
+        outer: Sequence[tuple[np.ndarray, np.ndarray]],
+        inner: Sequence[Sequence[tuple[np.ndarray, np.ndarray]]],
+        receipt: Mapping[str, Any],
+        *,
+        _validation_token: object,
+    ) -> None:
+        if _validation_token is not _VALIDATED_SPLIT_PLAN_TOKEN:
+            raise TypeError("validated_split_plan_requires_validation")
+        frozen_outer = tuple(self._frozen_pair(train, assessment) for train, assessment in outer)
+        frozen_inner = tuple(
+            tuple(self._frozen_pair(train, assessment) for train, assessment in folds)
+            for folds in inner
+        )
+        receipt_json = json.dumps(
+            receipt, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
+        )
+        object.__setattr__(self, "_ValidatedSplitPlan__outer", frozen_outer)
+        object.__setattr__(self, "_ValidatedSplitPlan__inner", frozen_inner)
+        object.__setattr__(self, "_ValidatedSplitPlan__receipt_json", receipt_json)
+        object.__setattr__(self, "_ValidatedSplitPlan__locked", True)
+
+    @staticmethod
+    def _frozen_pair(
+        train: np.ndarray, assessment: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
+        train_copy = np.array(train, dtype=np.int64, copy=True)
+        assessment_copy = np.array(assessment, dtype=np.int64, copy=True)
+        train_copy.flags.writeable = False
+        assessment_copy.flags.writeable = False
+        return train_copy, assessment_copy
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if getattr(self, "_ValidatedSplitPlan__locked", False):
+            raise AttributeError("validated_split_plan_immutable")
+        object.__setattr__(self, name, value)
+
+    def __repr__(self) -> str:
+        return "ValidatedSplitPlan(validated=True)"
+
+    def __getstate__(self) -> None:
+        raise TypeError("validated_split_plan_private_serialization_forbidden")
+
+    def __reduce_ex__(self, protocol: int) -> None:
+        raise TypeError("validated_split_plan_private_serialization_forbidden")
+
+    def outer_splits(self) -> Iterator[tuple[np.ndarray, np.ndarray]]:
+        """Yield copy-safe outer training and assessment index arrays."""
+        for train, assessment in self.__outer:
+            yield train.copy(), assessment.copy()
+
+    def inner_splits(self, outer_fold: int) -> Iterator[tuple[np.ndarray, np.ndarray]]:
+        """Yield copy-safe inner index arrays for one validated outer fold."""
+        if isinstance(outer_fold, (bool, np.bool_)) or not isinstance(outer_fold, Integral):
+            raise TypeError("outer_fold_type")
+        fold = int(outer_fold)
+        if fold < 0 or fold >= len(self.__inner):
+            raise IndexError("outer_fold_range")
+        for train, assessment in self.__inner[fold]:
+            yield train.copy(), assessment.copy()
+
+    def receipt(self) -> dict[str, Any]:
+        """Return a detached aggregate-only validation receipt."""
+        return json.loads(self.__receipt_json)
 
 
 def _fail(invariant: str, code: str = "c06_split_manifest_invalid") -> None:
@@ -238,6 +313,8 @@ def validate_split_manifest(
     task: str,
     requested_outer_k: int,
     requested_inner_k: int,
+    minimum_training_groups: int,
+    minimum_assessment_groups: int,
     y: Sequence[Any] | None = None,
     time: Sequence[float] | None = None,
     event: Sequence[int] | None = None,
@@ -247,11 +324,17 @@ def validate_split_manifest(
     minimum_regression_assessment_variance: float | None = None,
     minimum_survival_training_event_groups: int | None = None,
     minimum_survival_assessment_comparable_pairs: int | None = None,
-) -> dict[str, Any]:
-    """Verify exact realized nested folds and return an aggregate-only C06 receipt."""
+) -> ValidatedSplitPlan:
+    """Verify exact realized nested folds and return a private runtime plan."""
     n = _integer(n_samples, "n_samples", 2)
     outer_k = _integer(requested_outer_k, "requested_outer_k", 2)
     inner_k = _integer(requested_inner_k, "requested_inner_k", 2)
+    minimum_train_groups = _integer(
+        minimum_training_groups, "minimum_training_groups", 1
+    )
+    minimum_assess_groups = _integer(
+        minimum_assessment_groups, "minimum_assessment_groups", 1
+    )
     if task not in {"classification", "regression", "survival"}:
         _fail("task")
 
@@ -347,17 +430,27 @@ def validate_split_manifest(
     universe = set(range(n))
     outer_assessments: list[set[int]] = []
     observed: list[tuple[int | float, int | float]] = []
+    observed_group_counts: list[tuple[int, int]] = []
+    validated_outer: list[tuple[np.ndarray, np.ndarray]] = []
+    validated_inner: list[list[tuple[np.ndarray, np.ndarray]]] = []
     for fold in outer_folds:
         outer_train, outer_assessment = _partition(
             fold["train"], fold["assessment"], universe, n, "outer"
         )
         _check_group_disjoint(group_array, outer_train, outer_assessment, "outer")
         outer_assessments.append(outer_assessment)
+        validated_outer.append(
+            (
+                np.asarray(sorted(outer_train), dtype=np.int64),
+                np.asarray(sorted(outer_assessment), dtype=np.int64),
+            )
+        )
         if len(fold["inner_folds"]) != inner_k:
             _fail("inner_fold_count_exact")
 
         partitions = [(outer_train, outer_assessment)]
         inner_assessments: list[set[int]] = []
+        current_inner: list[tuple[np.ndarray, np.ndarray]] = []
         for inner in fold["inner_folds"]:
             inner_train, inner_assessment = _partition(
                 inner["train"], inner["assessment"], outer_train, n, "inner"
@@ -365,12 +458,27 @@ def validate_split_manifest(
             _check_group_disjoint(group_array, inner_train, inner_assessment, "inner")
             inner_assessments.append(inner_assessment)
             partitions.append((inner_train, inner_assessment))
+            current_inner.append(
+                (
+                    np.asarray(sorted(inner_train), dtype=np.int64),
+                    np.asarray(sorted(inner_assessment), dtype=np.int64),
+                )
+            )
+        validated_inner.append(current_inner)
         if set().union(*inner_assessments) != outer_train or sum(
             len(indices) for indices in inner_assessments
         ) != len(outer_train):
             _fail("inner_assessment_exact_coverage")
 
         for train_indices, assessment_indices in partitions:
+            train_group_count = len(_group_set(group_array, train_indices))
+            assessment_group_count = len(_group_set(group_array, assessment_indices))
+            if (
+                train_group_count < minimum_train_groups
+                or assessment_group_count < minimum_assess_groups
+            ):
+                _fail("partition_group_support", "c06_metric_support_insufficient")
+            observed_group_counts.append((train_group_count, assessment_group_count))
             if task == "classification":
                 observed.append(
                     _classification_support(
@@ -427,7 +535,7 @@ def validate_split_manifest(
             "minimum_realized_training_event_groups": int(min(value[0] for value in observed)),
         }
 
-    return {
+    receipt = {
         "claim_id": "C06",
         "decision": "eligible",
         "eligibility_reason": "exact_requested_plan_verified",
@@ -435,6 +543,20 @@ def validate_split_manifest(
         "inner_fold_count": inner_k,
         "outer_fold_count": outer_k,
         "split_manifest_sha256": canonical_split_manifest_sha256(manifest),
-        "support_summary": support_summary,
+        "support_summary": {
+            **support_summary,
+            "minimum_realized_assessment_group_count": min(
+                value[1] for value in observed_group_counts
+            ),
+            "minimum_realized_training_group_count": min(
+                value[0] for value in observed_group_counts
+            ),
+        },
         "verifier_status": "verified",
     }
+    return ValidatedSplitPlan(
+        validated_outer,
+        validated_inner,
+        receipt,
+        _validation_token=_VALIDATED_SPLIT_PLAN_TOKEN,
+    )

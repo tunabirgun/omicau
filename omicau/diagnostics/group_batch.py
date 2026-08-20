@@ -8,7 +8,6 @@ benchmark contract can be frozen prospectively.
 from __future__ import annotations
 
 from collections.abc import Hashable, Mapping, Sequence
-import re
 from typing import Any, Literal
 import warnings
 
@@ -28,6 +27,7 @@ Reducer = Literal["mean", "median"]
 Standardization = Literal["global_zscore", "global_median_iqr"]
 RepresentationDistance = Literal["normalized_euclidean"]
 _PRIMARY_COMPONENT_STATUSES = frozenset({"tested", "not_applicable"})
+_PRIMARY_COMPONENT_IDS = frozenset({"structure", "outcome", "event", "censoring"})
 
 
 def _integer(value: int, name: str, *, minimum: int) -> int:
@@ -517,8 +517,8 @@ def apply_primary_holm(
     p_values: list[float] = []
     statuses: dict[str, str] = {}
     for name, component in primary_components.items():
-        if not isinstance(name, str) or re.fullmatch(r"[a-z][a-z0-9_]*", name) is None:
-            raise ValueError("primary component names must be public-safe identifiers")
+        if type(name) is not str or name not in _PRIMARY_COMPONENT_IDS:
+            raise ValueError("primary component name must be a registered public token")
         status = component.get("status", "tested")
         if not isinstance(status, str) or status not in _PRIMARY_COMPONENT_STATUSES:
             raise ValueError("primary component status must be a registered public token")

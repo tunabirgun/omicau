@@ -4,12 +4,14 @@ from contextlib import contextmanager
 from copy import deepcopy
 from itertools import product
 import json
+import pickle
 
 import numpy as np
 import pytest
 
 from omicau.models.split_plan import (
     SplitValidationError,
+    ValidatedSplitPlan,
     canonical_split_manifest_sha256,
     harrell_comparable_group_pair_count,
     validate_split_manifest,
@@ -83,6 +85,8 @@ def _classification_kwargs() -> dict:
         "y": [0, 0, 0, 0, 1, 1, 1, 1],
         "requested_outer_k": 2,
         "requested_inner_k": 2,
+        "minimum_training_groups": 2,
+        "minimum_assessment_groups": 2,
         "minimum_training_groups_per_class": 1,
         "minimum_assessment_groups_per_class": 1,
     }
@@ -96,6 +100,8 @@ def _regression_kwargs() -> dict:
         "y": [0.0, 2.0, 1.0, 3.0, 4.0, 6.0, 5.0, 7.0],
         "requested_outer_k": 2,
         "requested_inner_k": 2,
+        "minimum_training_groups": 2,
+        "minimum_assessment_groups": 2,
         "minimum_regression_assessment_groups": 2,
         "minimum_regression_assessment_variance": 0.2,
     }
@@ -110,6 +116,8 @@ def _survival_kwargs() -> dict:
         "event": [1, 1, 1, 1, 1, 1, 0, 0],
         "requested_outer_k": 2,
         "requested_inner_k": 2,
+        "minimum_training_groups": 2,
+        "minimum_assessment_groups": 2,
         "minimum_survival_training_event_groups": 1,
         "minimum_survival_assessment_comparable_pairs": 1,
     }
@@ -118,7 +126,9 @@ def _survival_kwargs() -> dict:
 @pytest.mark.parametrize("kwargs", [_classification_kwargs(), _regression_kwargs(), _survival_kwargs()])
 def test_valid_exact_nested_plan_emits_only_public_safe_aggregates(kwargs: dict) -> None:
     manifest = _manifest()
-    receipt = validate_split_manifest(manifest, **kwargs)
+    plan = validate_split_manifest(manifest, **kwargs)
+    assert isinstance(plan, ValidatedSplitPlan)
+    receipt = plan.receipt()
     assert set(receipt) == {
         "claim_id", "decision", "eligibility_reason", "group_count", "inner_fold_count",
         "outer_fold_count", "split_manifest_sha256", "support_summary", "verifier_status",
@@ -199,7 +209,7 @@ def test_small_fixture_exhaustive_assignment_oracle_agrees_on_feasibility() -> N
     assert witness is not None
     kwargs = _classification_kwargs()
     kwargs["groups"] = list(range(8))
-    assert validate_split_manifest(witness, **kwargs)["verifier_status"] == "verified"
+    assert validate_split_manifest(witness, **kwargs).receipt()["verifier_status"] == "verified"
     assert _exhaustive_classification_witness(labels, 3, 3) is None
 
 
@@ -252,7 +262,7 @@ def test_mixed_class_label_within_group_fails() -> None:
 
 @pytest.mark.parametrize("kwargs", [_classification_kwargs(), _regression_kwargs(), _survival_kwargs()])
 def test_valid_repeated_row_groups_preserve_one_outcome_object(kwargs: dict) -> None:
-    receipt = validate_split_manifest(_expanded_manifest(), **_repeat_rows(kwargs))
+    receipt = validate_split_manifest(_expanded_manifest(), **_repeat_rows(kwargs)).receipt()
     assert receipt["verifier_status"] == "verified"
     assert receipt["group_count"] == 8
 
@@ -413,3 +423,90 @@ def test_hostile_values_never_enter_public_error_text(kind: str) -> None:
 def test_error_code_allowlist_is_closed() -> None:
     with pytest.raises(ValueError, match="unsupported_c06_refusal_code"):
         SplitValidationError("hostile_code", "manifest_schema")
+
+
+def test_runtime_plan_iterators_are_copy_safe_and_fold_scoped() -> None:
+    plan = validate_split_manifest(_manifest(), **_classification_kwargs())
+    outer = list(plan.outer_splits())
+    assert [(train.tolist(), assessment.tolist()) for train, assessment in outer] == [
+        ([1, 3, 5, 7], [0, 2, 4, 6]),
+        ([0, 2, 4, 6], [1, 3, 5, 7]),
+    ]
+    outer[0][0][0] = 0
+    assert next(plan.outer_splits())[0].tolist() == [1, 3, 5, 7]
+
+    inner = list(plan.inner_splits(0))
+    assert [(train.tolist(), assessment.tolist()) for train, assessment in inner] == [
+        ([3, 7], [1, 5]),
+        ([1, 5], [3, 7]),
+    ]
+    inner[0][1][0] = 7
+    assert next(plan.inner_splits(0))[1].tolist() == [1, 5]
+
+
+def test_runtime_plan_is_immutable_and_private_serialization_fails() -> None:
+    plan = validate_split_manifest(_manifest(), **_classification_kwargs())
+    with pytest.raises(AttributeError, match="validated_split_plan_immutable"):
+        plan.extra = "private"  # type: ignore[attr-defined]
+    with pytest.raises(TypeError):
+        json.dumps(plan)
+    with pytest.raises(TypeError, match="validated_split_plan_private_serialization_forbidden"):
+        pickle.dumps(plan)
+    assert repr(plan) == "ValidatedSplitPlan(validated=True)"
+
+
+def test_runtime_plan_cannot_be_constructed_without_validation() -> None:
+    with pytest.raises(TypeError, match="validated_split_plan_requires_validation"):
+        ValidatedSplitPlan([], [], {}, _validation_token=object())
+
+
+def test_runtime_plan_rejects_invalid_outer_fold_selector() -> None:
+    plan = validate_split_manifest(_manifest(), **_classification_kwargs())
+    with pytest.raises(TypeError, match="outer_fold_type"):
+        list(plan.inner_splits(True))
+    with pytest.raises(IndexError, match="outer_fold_range"):
+        list(plan.inner_splits(2))
+
+
+def test_generic_partition_group_minima_are_explicit_and_watched() -> None:
+    kwargs = _classification_kwargs()
+    kwargs["minimum_training_groups"] = 3
+    with _failure("partition_group_support", "c06_metric_support_insufficient"):
+        validate_split_manifest(_manifest(), **kwargs)
+
+    kwargs = _classification_kwargs()
+    kwargs["minimum_assessment_groups"] = True
+    with _failure("minimum_assessment_groups_type"):
+        validate_split_manifest(_manifest(), **kwargs)
+
+    kwargs = _classification_kwargs()
+    del kwargs["minimum_training_groups"]
+    with pytest.raises(TypeError, match="minimum_training_groups"):
+        validate_split_manifest(_manifest(), **kwargs)
+
+
+def test_aggregate_receipt_is_exact_deterministic_and_detached() -> None:
+    plan = validate_split_manifest(_manifest(), **_classification_kwargs())
+    expected = {
+        "claim_id": "C06",
+        "decision": "eligible",
+        "eligibility_reason": "exact_requested_plan_verified",
+        "group_count": 8,
+        "inner_fold_count": 2,
+        "outer_fold_count": 2,
+        "split_manifest_sha256": "8db50ea2b9a30871a84d4a1441285f77d0e117c48e69a20886aeb2768cf8e88a",
+        "support_summary": {
+            "minimum_realized_assessment_group_count": 2,
+            "minimum_realized_assessment_groups_per_class": 1,
+            "minimum_realized_training_group_count": 2,
+            "minimum_realized_training_groups_per_class": 1,
+        },
+        "verifier_status": "verified",
+    }
+    assert plan.receipt() == expected
+    assert plan.receipt() == validate_split_manifest(
+        _manifest(), **_classification_kwargs()
+    ).receipt()
+    detached = plan.receipt()
+    detached["support_summary"]["minimum_realized_training_group_count"] = 999
+    assert plan.receipt() == expected
