@@ -23,7 +23,15 @@ from sklearn.ensemble import (
 from sklearn.linear_model import LogisticRegression, Ridge
 
 from omicau.interpretation.utility import CONTROL_FAMILY_ALPHA
-from omicau.models.base import CVResult, PRIMARY_METRIC, attach_cis, cross_validate_estimator
+from omicau.models.base import (
+    CVResult,
+    PRIMARY_METRIC,
+    attach_cis,
+    cross_validate_estimator,
+    make_pipeline,
+    resolve_validated_cv_splits,
+    score_predictions,
+)
 
 
 def resolve_cores(config) -> int:
@@ -63,7 +71,112 @@ def _reference_key(keys: list[str]) -> str:
     return keys[0]
 
 
-def _run_stacking(aligned, results, ref_key, config, groups, n_jobs, seed):
+def _predict_for_stacking(pipe, X, task: str, n_classes: int) -> np.ndarray:
+    if task == "classification":
+        proba = pipe.predict_proba(X)
+        if n_classes == 2:
+            return proba[:, 1 if proba.shape[1] > 1 else 0].reshape(-1, 1)
+        return proba
+    return np.asarray(pipe.predict(X), dtype=float).reshape(-1, 1)
+
+
+def _run_nested_stacking(aligned, ref_key, config, groups, n_jobs, seed, validated_plan):
+    """Evaluate stacking with base-level inner OOF features in every outer fold."""
+    mods = aligned.modality_names
+    task = aligned.task
+    y = aligned.y.to_numpy()
+    X_reference, _ = aligned.concat_matrix(mods)
+    outer, inner, receipt = resolve_validated_cv_splits(
+        validated_plan, X_reference, y, groups, task, config.cv.n_splits
+    )
+    n = len(y)
+    n_classes = len(np.unique(y)) if task == "classification" else 0
+    width = n_classes if n_classes > 2 else 1
+    oof_score = np.full((n, n_classes), np.nan) if n_classes > 2 else np.full(n, np.nan)
+    oof_pred = np.full(n, np.nan)
+    per_fold: list[dict[str, float]] = []
+    fold_primary: list[float] = []
+    names = [
+        m if width == 1 else f"{m}[{column}]"
+        for m in mods
+        for column in range(width)
+    ]
+    factory = _estimator_factory(ref_key, task, seed, n_jobs)
+    meta_factory = _estimator_factory("linear", task, seed, n_jobs)
+
+    for fold, (outer_train, outer_assessment) in enumerate(outer):
+        meta_train = np.full((len(outer_train), len(names)), np.nan)
+        meta_assessment = np.full((len(outer_assessment), len(names)), np.nan)
+        local_row = {int(row): position for position, row in enumerate(outer_train)}
+        for modality_index, modality in enumerate(mods):
+            X_modality, _ = aligned.concat_matrix([modality])
+            start = modality_index * width
+            stop = start + width
+            for inner_train, inner_assessment in inner[fold]:
+                pipe = make_pipeline(
+                    factory(), task, X_modality.shape[1], config.classical.max_features, seed
+                )
+                pipe.fit(X_modality[inner_train], y[inner_train])
+                prediction = _predict_for_stacking(
+                    pipe, X_modality[inner_assessment], task, n_classes
+                )
+                positions = [local_row[int(row)] for row in inner_assessment]
+                meta_train[np.asarray(positions), start:stop] = prediction
+            base = make_pipeline(
+                factory(), task, X_modality.shape[1], config.classical.max_features, seed
+            )
+            base.fit(X_modality[outer_train], y[outer_train])
+            meta_assessment[:, start:stop] = _predict_for_stacking(
+                base, X_modality[outer_assessment], task, n_classes
+            )
+
+        if not np.isfinite(meta_train).all() or not np.isfinite(meta_assessment).all():
+            raise ValueError("validated_split_plan_stacking_inner_coverage_invalid")
+        meta = make_pipeline(meta_factory(), task, len(names), None, seed)
+        meta.fit(meta_train, y[outer_train])
+        if task == "classification":
+            proba = meta.predict_proba(meta_assessment)
+            classes = meta.named_steps["estimator"].classes_.astype(int)
+            if n_classes > 2:
+                oof_score[np.ix_(outer_assessment, classes)] = proba
+                score = proba
+            else:
+                score = proba[:, 1] if proba.shape[1] > 1 else proba[:, 0]
+                oof_score[outer_assessment] = score
+            pred = classes[proba.argmax(axis=1)]
+        else:
+            pred = meta.predict(meta_assessment)
+            score = pred
+            oof_score[outer_assessment] = pred
+        oof_pred[outer_assessment] = pred
+        metrics = score_predictions(y[outer_assessment], score, pred, task)
+        per_fold.append(metrics)
+        fold_primary.append(metrics.get(PRIMARY_METRIC[task], float("nan")))
+
+    pooled_score = oof_score if n_classes > 2 else oof_score
+    pooled = score_predictions(y, pooled_score, oof_pred.astype(int) if task == "classification" else oof_pred, task)
+    return CVResult(
+        name="stacking::FUSION",
+        task=task,
+        metrics=pooled,
+        per_fold=per_fold,
+        fold_primary=[float(value) for value in fold_primary],
+        n_features=len(names),
+        modalities=list(mods),
+        extra={
+            "n_splits": len(outer),
+            "split_plan_status": "validated_development_plan",
+            "split_plan_receipt": receipt,
+            "stacking_status": "nested_inner_oof",
+        },
+        oof_true=y,
+        oof_score=pooled_score,
+        oof_pred=oof_pred,
+        oof_groups=groups,
+    )
+
+
+def _run_stacking(aligned, results, ref_key, config, groups, n_jobs, seed, validated_plan=None):
     """Late-integration stacking: cross-validate a meta-learner over the
     single-modality out-of-fold predictions. A meta-test sample's meta-features
     are base predictions from models that excluded its fold (base and meta CV
@@ -75,6 +188,10 @@ def _run_stacking(aligned, results, ref_key, config, groups, n_jobs, seed):
     mods = aligned.modality_names
     if len(mods) < 2:
         return None
+    if validated_plan is not None:
+        return _run_nested_stacking(
+            aligned, ref_key, config, groups, n_jobs, seed, validated_plan
+        )
     task = aligned.task
     y = aligned.y.to_numpy()
     cl = {r.name: r for r in results}
@@ -89,29 +206,54 @@ def _run_stacking(aligned, results, ref_key, config, groups, n_jobs, seed):
         names += [m] if s.shape[1] == 1 else [f"{m}[{j}]" for j in range(s.shape[1])]
     meta_X = np.hstack(cols)
     factory = _estimator_factory("linear", task, seed, n_jobs)
-    return cross_validate_estimator(
+    result = cross_validate_estimator(
         "stacking::FUSION", meta_X, y, groups, task, factory,
         feature_names=names, modalities=list(mods),
         n_splits=config.cv.n_splits, seed=seed, shuffle=config.cv.shuffle,
         max_features=None, compute_importance=False,
     )
+    result.extra["stacking_status"] = "legacy_nonnested_non_benchmark"
+    return result
 
 
-def _run_batch_adjusted_fusion(aligned, config, X_all, feats_all, mods, ref_key, y, groups, n_jobs, seed):
+class _FixedSplitter:
+    def __init__(self, splits):
+        self._splits = splits
+
+    def split(self, *args):
+        yield from self._splits
+
+
+def _run_batch_adjusted_fusion(
+    aligned, config, X_all, feats_all, mods, ref_key, y, groups, n_jobs, seed,
+    validated_plan=None,
+):
     """In-fold batch-centering sensitivity probe: re-CV the reference fusion with
     per-batch location offsets fit on train and applied to val. Returns a CVResult
     named sensitivity::batch-adjusted-FUSION, or None if the fold-straddle/min-count
     guard fails (offsets would leak or be noise). Emits no corrected dataset."""
-    from omicau.models.base import make_cv_splitter, make_pipeline, safe_n_splits, score_predictions
+    from omicau.models.base import make_cv_splitter, safe_n_splits
     from omicau.diagnostics.batch_adjust import (
         apply_batch_centering, can_correct_in_fold, fit_batch_centering)
     task = aligned.task
     batch_codes = np.unique(aligned.batch.astype("string").to_numpy(), return_inverse=True)[1]
-    k = safe_n_splits(task, y, groups, config.cv.n_splits)
-    splitter = make_cv_splitter(task, k, seed, config.cv.shuffle, groups)
-    ok, _reason = can_correct_in_fold(splitter, X_all, y, groups, batch_codes,
+    if validated_plan is None:
+        k = safe_n_splits(task, y, groups, config.cv.n_splits)
+        splitter = make_cv_splitter(task, k, seed, config.cv.shuffle, groups)
+        splits = tuple(splitter.split(X_all, y, groups))
+        split_status = "legacy_generated_non_benchmark"
+        split_receipt = None
+    else:
+        splits, _, split_receipt = resolve_validated_cv_splits(
+            validated_plan, X_all, y, groups, task, config.cv.n_splits
+        )
+        k = len(splits)
+        split_status = "validated_development_plan"
+    ok, _reason = can_correct_in_fold(_FixedSplitter(splits), X_all, y, groups, batch_codes,
                                       config.cv.batch_adjust_min_per_batch)
     if not ok:
+        if validated_plan is not None:
+            raise ValueError("validated_split_plan_batch_adjustment_ineligible")
         return None
     factory = _estimator_factory(ref_key, task, seed, n_jobs)
     n = len(y)
@@ -120,8 +262,7 @@ def _run_batch_adjusted_fusion(aligned, config, X_all, feats_all, mods, ref_key,
     oof_score = np.full((n, n_classes), np.nan) if multiclass else np.full(n, np.nan)
     oof_pred = np.full(n, np.nan)
     fold_primary: list[float] = []
-    split_args = (X_all, y, groups) if groups is not None else (X_all, y)
-    for tr, va in splitter.split(*split_args):
+    for tr, va in splits:
         _, offsets = fit_batch_centering(X_all[tr], batch_codes[tr])   # train-only offsets
         Xtr = apply_batch_centering(X_all[tr], batch_codes[tr], offsets)
         Xva = apply_batch_centering(X_all[va], batch_codes[va], offsets)
@@ -150,11 +291,26 @@ def _run_batch_adjusted_fusion(aligned, config, X_all, feats_all, mods, ref_key,
         name="sensitivity::batch-adjusted-FUSION", task=task, metrics=pooled,
         fold_primary=[float(v) for v in fold_primary], n_features=int(X_all.shape[1]),
         modalities=list(mods), oof_true=y, oof_score=oof_score, oof_pred=oof_pred,
-        oof_groups=groups, extra={"n_splits": int(k)})
+        oof_groups=groups, extra={
+            "n_splits": int(k),
+            "split_plan_status": split_status,
+            "split_plan_receipt": split_receipt,
+        })
 
 
-def run_classical_benchmarks(aligned, config, batch_diag=None) -> dict[str, Any]:
+def run_classical_benchmarks(
+    aligned, config, batch_diag=None, *, validated_plan=None
+) -> dict[str, Any]:
     """Run the full classical benchmark grid over an aligned dataset."""
+    legacy_controls_requested = config.controls.enabled and any(
+        (
+            config.controls.shuffle_target,
+            config.controls.shuffle_features,
+            config.controls.random_noise,
+        )
+    )
+    if validated_plan is not None and legacy_controls_requested:
+        raise ValueError("validated_plan_controls_require_c07_integration")
     task = aligned.task
     seed = config.seed
     n_jobs = resolve_cores(config)
@@ -175,6 +331,7 @@ def run_classical_benchmarks(aligned, config, batch_diag=None) -> dict[str, Any]
             feature_names=feats, modalities=modalities,
             n_splits=n_splits, seed=seed, shuffle=shuffle, max_features=max_feat,
             compute_importance=imp, importance_repeats=config.xai.permutation_repeats,
+            validated_plan=validated_plan,
         )
 
     results: list[CVResult] = []
@@ -214,12 +371,16 @@ def run_classical_benchmarks(aligned, config, batch_diag=None) -> dict[str, Any]
             controls.append(run("control::random_noise", Xn, feats_all, mods))
 
     # -- late-integration stacking (meta-learner over per-modality OOF) ----- #
-    stack = _run_stacking(aligned, results, ref_key, config, groups, n_jobs, seed)
+    stack = _run_stacking(
+        aligned, results, ref_key, config, groups, n_jobs, seed, validated_plan
+    )
     if stack is not None:
         results.append(stack)
 
     # -- optional batch-blocked (leave-one-batch-out) generalization check --- #
     if config.cv.batch_blocked and aligned.batch is not None:
+        if validated_plan is not None:
+            raise ValueError("validated_split_plan_incompatible_with_batch_blocked_stress")
         bcodes = np.unique(aligned.batch.astype("string").to_numpy(), return_inverse=True)[1]
         n_batches = len(np.unique(bcodes))
         if n_batches >= 3:
@@ -236,7 +397,7 @@ def run_classical_benchmarks(aligned, config, batch_diag=None) -> dict[str, Any]
     if (config.cv.batch_adjust_sensitivity and aligned.batch is not None
             and not confounded and not config.cv.batch_blocked):
         ba = _run_batch_adjusted_fusion(aligned, config, X_all, feats_all, mods,
-                                        ref_key, y, groups, n_jobs, seed)
+                                        ref_key, y, groups, n_jobs, seed, validated_plan)
         if ba is not None:
             results.append(ba)
 
@@ -249,6 +410,13 @@ def run_classical_benchmarks(aligned, config, batch_diag=None) -> dict[str, Any]
         attach_cis(controls, n_boot=config.cv.n_bootstrap, seed=seed,
                    alpha=CONTROL_FAMILY_ALPHA / len(controls))
 
+    if validated_plan is None:
+        split_plan_status = "legacy_generated_non_benchmark"
+        split_plan_receipt = None
+    else:
+        split_plan_status = "validated_development_plan"
+        split_plan_receipt = validated_plan.receipt()
+
     return {
         "task": task,
         "primary_metric": PRIMARY_METRIC[task],
@@ -256,4 +424,6 @@ def run_classical_benchmarks(aligned, config, batch_diag=None) -> dict[str, Any]
         "estimator_keys": keys,
         "results": results,
         "controls": controls,
+        "split_plan_status": split_plan_status,
+        "split_plan_receipt": split_plan_receipt,
     }

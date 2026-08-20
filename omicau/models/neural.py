@@ -30,6 +30,62 @@ from omicau.models.base import (
     safe_n_splits,
     score_predictions,
 )
+from omicau.models.split_plan import ValidatedSplitPlan
+
+
+_VALIDATED_SPLIT_STATUS = "validated_c06_exact_splits"
+_LEGACY_SPLIT_STATUS = "legacy_nonbenchmark_dynamic_splits"
+
+
+def _check_partition(
+    train: np.ndarray,
+    assessment: np.ndarray,
+    parent: np.ndarray,
+    groups: np.ndarray,
+    level: str,
+) -> None:
+    train_set = set(np.asarray(train, dtype=np.int64).tolist())
+    assessment_set = set(np.asarray(assessment, dtype=np.int64).tolist())
+    parent_set = set(np.asarray(parent, dtype=np.int64).tolist())
+    if not train_set or not assessment_set:
+        raise RuntimeError(f"c06_{level}_partition_empty")
+    if train_set & assessment_set:
+        raise RuntimeError(f"c06_{level}_partition_overlap")
+    if train_set | assessment_set != parent_set:
+        raise RuntimeError(f"c06_{level}_partition_universe_mismatch")
+    if {groups[index] for index in train_set} & {groups[index] for index in assessment_set}:
+        raise RuntimeError(f"c06_{level}_group_overlap")
+
+
+def _validated_partitions(
+    validated_plan, n: int, groups: np.ndarray, task: str, y: np.ndarray
+):
+    if type(validated_plan) is not ValidatedSplitPlan:
+        raise TypeError("c06_validated_split_plan_required")
+    if groups is None or len(groups) != n:
+        raise RuntimeError("c06_runtime_groups_missing_or_misaligned")
+    validated_plan._private_validate_runtime_universe(
+        groups=groups,
+        task=task,
+        y=y,
+    )
+    receipt = validated_plan.receipt()
+    outer = tuple(validated_plan._private_outer_splits())
+    if len(outer) != receipt["outer_fold_count"]:
+        raise RuntimeError("c06_outer_fold_count_mismatch")
+    universe = np.arange(n, dtype=np.int64)
+    selected_inner = []
+    for outer_fold, (train, assessment) in enumerate(outer):
+        _check_partition(train, assessment, universe, groups, "outer")
+        inner = tuple(validated_plan._private_inner_splits(outer_fold))
+        if len(inner) != receipt["inner_fold_count"]:
+            raise RuntimeError("c06_inner_fold_count_mismatch")
+        if not inner:
+            raise RuntimeError("c06_neural_inner_partition_missing")
+        fit, early_stop = inner[0]
+        _check_partition(fit, early_stop, train, groups, "neural_inner")
+        selected_inner.append((fit, early_stop))
+    return outer, tuple(selected_inner), receipt
 
 
 # --------------------------------------------------------------------------- #
@@ -252,6 +308,7 @@ def _neural_cv(
     config,
     device: torch.device,
     compute_importance: bool,
+    validated_plan=None,
 ) -> CVResult:
     task = aligned.task
     seed = config.seed
@@ -264,8 +321,19 @@ def _neural_cv(
     feature_names = {m: aligned.modalities[m].feature_names for m in modalities}
     out_dim = int(len(np.unique(y))) if task == "classification" else 1
 
-    k = safe_n_splits(task, y, groups, config.cv.n_splits)
-    splitter = make_cv_splitter(task, k, seed, config.cv.shuffle, groups)
+    if validated_plan is not None:
+        outer_splits, inner_splits, split_receipt = _validated_partitions(
+            validated_plan, n, groups, task, y
+        )
+        k = len(outer_splits)
+        split_status = _VALIDATED_SPLIT_STATUS
+    else:
+        k = safe_n_splits(task, y, groups, config.cv.n_splits)
+        splitter = make_cv_splitter(task, k, seed, config.cv.shuffle, groups)
+        outer_splits = tuple(splitter.split(np.zeros(n), y, groups))
+        inner_splits = None
+        split_receipt = None
+        split_status = _LEGACY_SPLIT_STATUS
 
     if task == "classification":
         n_classes = out_dim
@@ -277,15 +345,17 @@ def _neural_cv(
     imp_folds = 0
 
     fold_id = 0
-    for train_idx, val_idx in splitter.split(np.zeros(n), y, groups):
-        # internal early-stopping split from the training fold (stratified-ish).
-        rng = np.random.default_rng(seed + fold_id)
-        tr = np.array(train_idx)
-        rng.shuffle(tr)
-        cut = max(1, int(0.15 * len(tr)))
-        val_internal, fit_idx = tr[:cut], tr[cut:]
-        if len(fit_idx) == 0:
-            fit_idx, val_internal = tr, tr
+    for train_idx, val_idx in outer_splits:
+        if inner_splits is not None:
+            fit_idx, val_internal = inner_splits[fold_id]
+        else:
+            rng = np.random.default_rng(seed + fold_id)
+            tr = np.array(train_idx)
+            rng.shuffle(tr)
+            cut = max(1, int(0.15 * len(tr)))
+            val_internal, fit_idx = tr[:cut], tr[cut:]
+            if len(fit_idx) == 0:
+                fit_idx, val_internal = tr, tr
 
         # masked standardization from the FIT split only.
         mod_arrays: dict[str, dict[str, np.ndarray]] = {}
@@ -342,13 +412,18 @@ def _neural_cv(
         name=name, task=task, metrics=metrics, per_fold=per_fold,
         fold_primary=[float(v) for v in fold_primary], feature_importance=importance,
         n_features=int(sum(feature_dims.values())), modalities=list(modalities),
-        extra={"n_splits": int(k), "device": device.type},
+        extra={
+            "n_splits": int(k),
+            "device": device.type,
+            "split_plan_status": split_status,
+            "split_plan_receipt": split_receipt,
+        },
         oof_true=y, oof_score=pooled, oof_pred=oof_pred,
         oof_groups=(np.asarray(groups) if groups is not None else None),
     )
 
 
-def run_neural_benchmark(aligned, config) -> dict[str, Any]:
+def run_neural_benchmark(aligned, config, validated_plan=None) -> dict[str, Any]:
     """Run the masked-pooling fusion benchmark (single, fusion, leave-one-out)."""
     if not config.neural.enabled:
         return {"enabled": False, "results": []}
@@ -360,18 +435,26 @@ def run_neural_benchmark(aligned, config) -> dict[str, Any]:
 
     # single-modality
     for m in mods:
-        results.append(_neural_cv(f"neural::{m}", aligned, [m], config, device, compute_importance=False))
+        results.append(_neural_cv(
+            f"neural::{m}", aligned, [m], config, device, compute_importance=False,
+            validated_plan=validated_plan,
+        ))
     # full fusion (with native attribution)
     results.append(
-        _neural_cv("neural::FUSION", aligned, mods, config, device,
-                   compute_importance=config.xai.enabled)
+        _neural_cv(
+            "neural::FUSION", aligned, mods, config, device,
+            compute_importance=config.xai.enabled, validated_plan=validated_plan,
+        )
     )
     # leave-one-out
     if len(mods) > 1:
         for m in mods:
             subset = [x for x in mods if x != m]
             results.append(
-                _neural_cv(f"neural::FUSION-minus-{m}", aligned, subset, config, device, compute_importance=False)
+                _neural_cv(
+                    f"neural::FUSION-minus-{m}", aligned, subset, config, device,
+                    compute_importance=False, validated_plan=validated_plan,
+                )
             )
 
     attach_cis(results, n_boot=config.cv.n_bootstrap, seed=config.seed)
@@ -380,4 +463,8 @@ def run_neural_benchmark(aligned, config) -> dict[str, Any]:
         "device": device.type,
         "primary_metric": PRIMARY_METRIC[aligned.task],
         "results": results,
+        "split_execution_status": (
+            _VALIDATED_SPLIT_STATUS if validated_plan is not None else _LEGACY_SPLIT_STATUS
+        ),
+        "split_plan_receipt": validated_plan.receipt() if validated_plan is not None else None,
     }

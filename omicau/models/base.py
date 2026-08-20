@@ -91,6 +91,8 @@ class CVResult:
             "fold_dispersion": _f(self.primary_std),
             "ci_low": self.extra.get("ci_low"),
             "ci_high": self.extra.get("ci_high"),
+            "split_plan_status": self.extra.get("split_plan_status"),
+            "split_plan_receipt": self.extra.get("split_plan_receipt"),
         }
 
 
@@ -205,6 +207,172 @@ def score_predictions(
     return out
 
 
+def resolve_validated_cv_splits(
+    validated_plan: Any,
+    X: np.ndarray,
+    y: np.ndarray,
+    groups: np.ndarray | None,
+    task: str,
+    n_splits: int,
+) -> tuple[
+    tuple[tuple[np.ndarray, np.ndarray], ...],
+    tuple[tuple[tuple[np.ndarray, np.ndarray], ...], ...],
+    dict[str, Any],
+]:
+    """Resolve and recheck one process-local C06 plan without exposing rows."""
+    from omicau.models.split_plan import (
+        ValidatedSplitPlan,
+        _partition_evidence_values,
+    )
+
+    if type(validated_plan) is not ValidatedSplitPlan:
+        raise ValueError("validated_split_plan_required")
+    if groups is None:
+        raise ValueError("validated_split_plan_requires_groups")
+    y = np.asarray(y)
+    groups = np.asarray(groups, dtype=object)
+    n = len(y)
+    if np.asarray(X).ndim != 2 or len(X) != n or groups.ndim != 1 or len(groups) != n:
+        raise ValueError("validated_split_plan_wrong_row_universe")
+    if task not in {"classification", "regression"}:
+        raise ValueError("validated_split_plan_task_unsupported")
+    validated_plan._private_validate_runtime_universe(
+        groups=groups,
+        task=task,
+        y=y,
+    )
+
+    receipt = validated_plan.receipt()
+    if receipt.get("outer_fold_count") != n_splits:
+        raise ValueError("validated_split_plan_outer_fold_count_mismatch")
+    outer = tuple(validated_plan._private_outer_splits())
+    inner = tuple(
+        tuple(validated_plan._private_inner_splits(fold))
+        for fold in range(len(outer))
+    )
+    if len(outer) != n_splits or any(
+        len(folds) != receipt.get("inner_fold_count") for folds in inner
+    ):
+        raise ValueError("validated_split_plan_fold_count_mismatch")
+
+    _, expected_outer_groups, expected_inner_groups, _, _ = (
+        _partition_evidence_values(validated_plan._private_partition_evidence())
+    )
+    universe = set(range(n))
+    outer_assessment: list[int] = []
+    partitions: list[tuple[np.ndarray, np.ndarray]] = []
+    for fold, (train, assessment) in enumerate(outer):
+        train_set = set(train.tolist())
+        assessment_set = set(assessment.tolist())
+        if (
+            not train_set
+            or not assessment_set
+            or train_set & assessment_set
+            or train_set | assessment_set != universe
+        ):
+            raise ValueError("validated_split_plan_outer_partition_invalid")
+        if set(outer_assessment) & assessment_set:
+            raise ValueError("validated_split_plan_outer_assessment_coverage_invalid")
+        if (
+            frozenset(groups[train].tolist()),
+            frozenset(groups[assessment].tolist()),
+        ) != expected_outer_groups[fold]:
+            raise ValueError("validated_split_plan_group_universe_mismatch")
+        outer_assessment.extend(assessment.tolist())
+        partitions.append((train, assessment))
+
+        inner_assessment: list[int] = []
+        for child, (inner_train, inner_validation) in enumerate(inner[fold]):
+            inner_train_set = set(inner_train.tolist())
+            inner_validation_set = set(inner_validation.tolist())
+            if (
+                not inner_train_set
+                or not inner_validation_set
+                or inner_train_set & inner_validation_set
+                or inner_train_set | inner_validation_set != train_set
+            ):
+                raise ValueError("validated_split_plan_inner_partition_invalid")
+            if set(inner_assessment) & inner_validation_set:
+                raise ValueError("validated_split_plan_inner_assessment_coverage_invalid")
+            if (
+                frozenset(groups[inner_train].tolist()),
+                frozenset(groups[inner_validation].tolist()),
+            ) != expected_inner_groups[fold][child]:
+                raise ValueError("validated_split_plan_group_universe_mismatch")
+            inner_assessment.extend(inner_validation.tolist())
+            partitions.append((inner_train, inner_validation))
+        if sorted(inner_assessment) != sorted(train.tolist()):
+            raise ValueError("validated_split_plan_inner_assessment_coverage_invalid")
+    if sorted(outer_assessment) != list(range(n)):
+        raise ValueError("validated_split_plan_outer_assessment_coverage_invalid")
+
+    if task == "classification":
+        if "minimum_realized_training_groups_per_class" not in receipt.get(
+            "support_summary", {}
+        ):
+            raise ValueError("validated_split_plan_task_mismatch")
+        classes = set(y.tolist())
+        if len(classes) < 2:
+            raise ValueError("validated_split_plan_class_support_invalid")
+        group_labels: dict[Any, Any] = {}
+        for group, label in zip(groups.tolist(), y.tolist()):
+            if group in group_labels and group_labels[group] != label:
+                raise ValueError("validated_split_plan_group_outcome_mixed")
+            group_labels[group] = label
+        required_train = receipt["support_summary"][
+            "minimum_realized_training_groups_per_class"
+        ]
+        required_assessment = receipt["support_summary"][
+            "minimum_realized_assessment_groups_per_class"
+        ]
+        for train, assessment in partitions:
+            if set(y[train].tolist()) != classes or set(y[assessment].tolist()) != classes:
+                raise ValueError("validated_split_plan_class_support_invalid")
+            train_groups = set(groups[train].tolist())
+            assessment_groups = set(groups[assessment].tolist())
+            train_min = min(
+                sum(group_labels[group] == label for group in train_groups)
+                for label in classes
+            )
+            assessment_min = min(
+                sum(group_labels[group] == label for group in assessment_groups)
+                for label in classes
+            )
+            if train_min < required_train or assessment_min < required_assessment:
+                raise ValueError("validated_split_plan_class_support_invalid")
+    elif task == "regression":
+        if "minimum_realized_assessment_variance" not in receipt.get(
+            "support_summary", {}
+        ):
+            raise ValueError("validated_split_plan_task_mismatch")
+        try:
+            outcome = np.asarray(y, dtype=float)
+        except (TypeError, ValueError) as error:
+            raise ValueError("validated_split_plan_regression_outcome_invalid") from error
+        if not np.isfinite(outcome).all():
+            raise ValueError("validated_split_plan_regression_outcome_invalid")
+        group_outcomes: dict[Any, float] = {}
+        for group, value in zip(groups.tolist(), outcome.tolist()):
+            if group in group_outcomes and group_outcomes[group] != value:
+                raise ValueError("validated_split_plan_group_outcome_mixed")
+            group_outcomes[group] = value
+        required_count = receipt["support_summary"][
+            "minimum_realized_assessment_group_count"
+        ]
+        required_variance = receipt["support_summary"][
+            "minimum_realized_assessment_variance"
+        ]
+        for _, assessment in partitions:
+            values = np.asarray(
+                [group_outcomes[group] for group in set(groups[assessment].tolist())],
+                dtype=float,
+            )
+            if len(values) < required_count or np.var(values) < required_variance:
+                raise ValueError("validated_split_plan_regression_support_invalid")
+
+    return outer, inner, receipt
+
+
 # --------------------------------------------------------------------------- #
 # Cross-validated estimator runner
 # --------------------------------------------------------------------------- #
@@ -224,12 +392,23 @@ def cross_validate_estimator(
     max_features: int | None = None,
     compute_importance: bool = False,
     importance_repeats: int = 8,
+    validated_plan: Any = None,
 ) -> CVResult:
     """Run leakage-safe CV for one estimator over feature matrix ``X``."""
     y = np.asarray(y)
     n = len(y)
-    k = safe_n_splits(task, y, groups, n_splits)
-    splitter = make_cv_splitter(task, k, seed, shuffle, groups)
+    if validated_plan is None:
+        k = safe_n_splits(task, y, groups, n_splits)
+        splitter = make_cv_splitter(task, k, seed, shuffle, groups)
+        splits = tuple(splitter.split(X, y, groups))
+        split_status = "legacy_generated_non_benchmark"
+        split_receipt = None
+    else:
+        splits, _, split_receipt = resolve_validated_cv_splits(
+            validated_plan, X, y, groups, task, n_splits
+        )
+        k = len(splits)
+        split_status = "validated_development_plan"
 
     # Out-of-fold prediction stores.
     if task == "classification":
@@ -244,7 +423,7 @@ def cross_validate_estimator(
     fold_primary: list[float] = []
     importance_stack: list[np.ndarray] = []   # per-fold permutation importances
 
-    for train_idx, val_idx in splitter.split(X, y, groups):
+    for train_idx, val_idx in splits:
         pipe = make_pipeline(estimator_factory(), task, X.shape[1], max_features, seed)
         pipe.fit(X[train_idx], y[train_idx])
 
@@ -321,7 +500,11 @@ def cross_validate_estimator(
         feature_importance_std=importance_std,
         n_features=int(X.shape[1]),
         modalities=list(modalities),
-        extra={"n_splits": int(k)},
+        extra={
+            "n_splits": int(k),
+            "split_plan_status": split_status,
+            "split_plan_receipt": split_receipt,
+        },
         oof_true=y,
         oof_score=pooled_score,
         oof_pred=oof_pred,

@@ -974,6 +974,19 @@ def validate_fit_trace(
     split_receipt = fresh_split_plan.receipt()
     if _canonical_json(caller_receipt) != _canonical_json(split_receipt):
         _fail("caller_split_receipt_exact")
+    try:
+        split_plan._private_validate_runtime_universe(
+            groups=split_validation_spec["groups"],
+            task=split_validation_spec["task"],
+            y=split_validation_spec["y"],
+            time=split_validation_spec["time"],
+            event=split_validation_spec["event"],
+        )
+    except TypeError:
+        _fail(
+            "caller_split_runtime_universe_exact",
+            "c08_assessment_ancestry_detected",
+        )
     if (
         not isinstance(split_receipt, Mapping)
         or split_receipt.get("claim_id") != "C06"

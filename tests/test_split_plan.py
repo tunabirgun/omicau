@@ -16,6 +16,7 @@ from omicau.models.split_plan import (
     SplitPartitionEvidence,
     SplitValidationError,
     ValidatedSplitPlan,
+    _canonical_runtime_universe_sha256,
     _partition_evidence_values,
     canonical_split_manifest_sha256,
     harrell_comparable_group_pair_count,
@@ -125,6 +126,16 @@ def _survival_kwargs() -> dict:
         "minimum_assessment_groups": 2,
         "minimum_survival_training_event_groups": 1,
         "minimum_survival_assessment_comparable_pairs": 1,
+    }
+
+
+def _runtime_universe_kwargs(kwargs: dict) -> dict:
+    return {
+        "event": kwargs.get("event"),
+        "groups": kwargs["groups"],
+        "task": kwargs["task"],
+        "time": kwargs.get("time"),
+        "y": kwargs.get("y"),
     }
 
 
@@ -506,6 +517,115 @@ def test_plan_public_surface_exposes_only_aggregate_receipt() -> None:
         assert group not in public
         assert hashlib.sha256(group.encode("ascii")).hexdigest() not in public
     assert canonical_split_manifest_sha256(_manifest()) not in public
+
+
+@pytest.mark.parametrize(
+    "kwargs", [_classification_kwargs(), _regression_kwargs(), _survival_kwargs()]
+)
+def test_private_runtime_universe_accepts_only_exact_ordered_rows(kwargs: dict) -> None:
+    plan = validate_split_manifest(_manifest(), **kwargs)
+    assert plan._private_validate_runtime_universe(
+        **_runtime_universe_kwargs(kwargs)
+    ) is None
+
+    shortened = deepcopy(kwargs)
+    shortened["groups"] = shortened["groups"][:-1]
+    for field in ("y", "time", "event"):
+        if field in shortened:
+            shortened[field] = shortened[field][:-1]
+    with pytest.raises(
+        TypeError, match="^validated_split_plan_runtime_universe_mismatch$"
+    ):
+        plan._private_validate_runtime_universe(
+            **_runtime_universe_kwargs(shortened)
+        )
+
+    changed_task = deepcopy(kwargs)
+    changed_task["task"] = (
+        "regression" if kwargs["task"] == "classification" else "classification"
+    )
+    with pytest.raises(
+        TypeError, match="^validated_split_plan_runtime_universe_mismatch$"
+    ):
+        plan._private_validate_runtime_universe(
+            **_runtime_universe_kwargs(changed_task)
+        )
+
+
+def test_private_runtime_universe_detects_class_and_group_reassignments() -> None:
+    kwargs = _classification_kwargs()
+    plan = validate_split_manifest(_manifest(), **kwargs)
+
+    class_swap = deepcopy(kwargs)
+    class_swap["y"][0], class_swap["y"][4] = class_swap["y"][4], class_swap["y"][0]
+    group_relabel = deepcopy(kwargs)
+    group_relabel["groups"][0] = "runtime-private-marker"
+    group_reassignment = deepcopy(kwargs)
+    group_reassignment["groups"][0], group_reassignment["groups"][1] = (
+        group_reassignment["groups"][1],
+        group_reassignment["groups"][0],
+    )
+    for changed in (class_swap, group_relabel, group_reassignment):
+        with pytest.raises(
+            TypeError, match="^validated_split_plan_runtime_universe_mismatch$"
+        ) as error:
+            plan._private_validate_runtime_universe(
+                **_runtime_universe_kwargs(changed)
+            )
+        assert "runtime-private-marker" not in str(error.value)
+
+
+def test_private_runtime_universe_detects_regression_shift() -> None:
+    kwargs = _regression_kwargs()
+    plan = validate_split_manifest(_manifest(), **kwargs)
+    shifted = deepcopy(kwargs)
+    shifted["y"] = [value + 10.0 for value in shifted["y"]]
+    with pytest.raises(
+        TypeError, match="^validated_split_plan_runtime_universe_mismatch$"
+    ):
+        plan._private_validate_runtime_universe(**_runtime_universe_kwargs(shifted))
+
+
+@pytest.mark.parametrize("field", ["time", "event"])
+def test_private_runtime_universe_detects_survival_changes(field: str) -> None:
+    kwargs = _survival_kwargs()
+    plan = validate_split_manifest(_manifest(), **kwargs)
+    changed = deepcopy(kwargs)
+    changed[field][6] = 1 if field == "event" else changed[field][6] + 0.25
+    with pytest.raises(
+        TypeError, match="^validated_split_plan_runtime_universe_mismatch$"
+    ):
+        plan._private_validate_runtime_universe(**_runtime_universe_kwargs(changed))
+
+
+def test_private_runtime_universe_detects_repeated_group_row_reordering() -> None:
+    kwargs = _repeat_rows(_classification_kwargs())
+    plan = validate_split_manifest(_expanded_manifest(), **kwargs)
+    reordered = deepcopy(kwargs)
+    order = [0, 2, 1, *range(3, len(kwargs["groups"]))]
+    reordered["groups"] = [kwargs["groups"][index] for index in order]
+    reordered["y"] = [kwargs["y"][index] for index in order]
+    with pytest.raises(
+        TypeError, match="^validated_split_plan_runtime_universe_mismatch$"
+    ):
+        plan._private_validate_runtime_universe(**_runtime_universe_kwargs(reordered))
+
+
+def test_private_runtime_universe_identity_never_enters_public_outputs() -> None:
+    kwargs = _classification_kwargs()
+    plan = validate_split_manifest(_manifest(), **kwargs)
+    identity = _canonical_runtime_universe_sha256(
+        **_runtime_universe_kwargs(kwargs)
+    )
+    changed = deepcopy(kwargs)
+    changed["groups"][0] = "runtime-private-marker"
+    with pytest.raises(TypeError) as caught:
+        plan._private_validate_runtime_universe(**_runtime_universe_kwargs(changed))
+    public = repr(plan) + json.dumps(plan.receipt(), sort_keys=True)
+    assert identity not in public
+    assert "runtime_universe" not in public
+    assert identity not in str(caught.value)
+    assert "runtime-private-marker" not in str(caught.value)
 
 
 def test_runtime_plan_cannot_be_constructed_without_validation() -> None:

@@ -210,9 +210,34 @@ def _build_validated_split_plan_type() -> tuple[type, Any]:
             """Return the sole public-safe, detached aggregate receipt."""
             return json.loads(resolve(self)[4])
 
+        def _private_validate_runtime_universe(
+            self,
+            *,
+            groups: Sequence[Hashable],
+            task: str,
+            y: Sequence[Any] | None = None,
+            time: Sequence[float] | None = None,
+            event: Sequence[int] | None = None,
+        ) -> None:
+            """Check ordered runtime rows without returning their identity."""
+            try:
+                candidate = _canonical_runtime_universe_sha256(
+                    groups=groups,
+                    task=task,
+                    y=y,
+                    time=time,
+                    event=event,
+                )
+            except Exception:
+                raise TypeError(
+                    "validated_split_plan_runtime_universe_mismatch"
+                ) from None
+            if candidate != resolve(self)[5]:
+                raise TypeError("validated_split_plan_runtime_universe_mismatch")
+
         def _private_partition_evidence(self) -> SplitPartitionEvidence:
             """Return partition evidence for trusted-process verification."""
-            outer, inner, sample_groups, split_digest, _ = resolve(self)
+            outer, inner, sample_groups, split_digest, _, _ = resolve(self)
             manifest = {
                 "outer_folds": [
                     {
@@ -281,6 +306,7 @@ def _build_validated_split_plan_type() -> tuple[type, Any]:
         sample_groups: Sequence[Hashable],
         split_digest: str,
         receipt: Mapping[str, Any],
+        runtime_universe_digest: str,
     ) -> Any:
         def frozen_pair(
             train: np.ndarray, assessment: np.ndarray
@@ -309,6 +335,7 @@ def _build_validated_split_plan_type() -> tuple[type, Any]:
             tuple(sample_groups),
             split_digest,
             receipt_json,
+            runtime_universe_digest,
         )
         return handle
 
@@ -348,6 +375,136 @@ def _missing(value: Any) -> bool:
         return bool(value != value)
     except (TypeError, ValueError):
         return True
+
+
+def _canonical_runtime_atom(value: Any) -> dict[str, Any]:
+    if isinstance(value, np.generic):
+        value = value.item()
+    if isinstance(value, bool):
+        return {"kind": "bool", "value": value}
+    if isinstance(value, Integral):
+        return {"kind": "integer", "value": str(int(value))}
+    if isinstance(value, Real):
+        return {"kind": "real", "value": float(value).hex()}
+    if isinstance(value, str):
+        return {"kind": "string", "value": value}
+    if isinstance(value, bytes):
+        return {"kind": "bytes", "value": value.hex()}
+    if isinstance(value, tuple):
+        return {
+            "kind": "tuple",
+            "value": [_canonical_runtime_atom(item) for item in value],
+        }
+    if isinstance(value, frozenset):
+        members = [_canonical_runtime_atom(item) for item in value]
+        members.sort(
+            key=lambda item: json.dumps(
+                item,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+                allow_nan=False,
+            )
+        )
+        return {"kind": "frozenset", "value": members}
+    try:
+        type_name = f"{type(value).__module__}.{type(value).__qualname__}"
+        representation = repr(value)
+    except Exception:
+        raise TypeError("runtime_universe_atom_schema") from None
+    return {
+        "kind": "hashable_repr",
+        "type": type_name,
+        "value": representation,
+    }
+
+
+def _canonical_runtime_universe_sha256(
+    *,
+    groups: Sequence[Hashable],
+    task: str,
+    y: Sequence[Any] | None = None,
+    time: Sequence[float] | None = None,
+    event: Sequence[int] | None = None,
+) -> str:
+    if task not in {"classification", "regression", "survival"} or isinstance(
+        groups, (str, bytes)
+    ):
+        raise TypeError("runtime_universe_schema")
+    group_values = tuple(groups)
+    row_count = len(group_values)
+    if not row_count or any(
+        _missing(value) or not isinstance(value, Hashable) for value in group_values
+    ):
+        raise ValueError("runtime_universe_schema")
+
+    if task == "classification":
+        if y is None or isinstance(y, (str, bytes)):
+            raise TypeError("runtime_universe_schema")
+        outcomes = tuple(y)
+        if len(outcomes) != row_count or any(
+            _missing(value) or not isinstance(value, Hashable) for value in outcomes
+        ):
+            raise ValueError("runtime_universe_schema")
+        encoded_outcomes = [_canonical_runtime_atom(value) for value in outcomes]
+    elif task == "regression":
+        if y is None:
+            raise TypeError("runtime_universe_schema")
+        values = np.asarray(y, dtype=float)
+        if values.ndim != 1 or len(values) != row_count or not np.isfinite(values).all():
+            raise ValueError("runtime_universe_schema")
+        encoded_outcomes = [
+            {"kind": "regression", "value": float(value).hex()} for value in values
+        ]
+    else:
+        if time is None or event is None:
+            raise TypeError("runtime_universe_schema")
+        times = np.asarray(time, dtype=float)
+        events = tuple(event)
+        if (
+            times.ndim != 1
+            or len(times) != row_count
+            or not np.isfinite(times).all()
+            or (times <= 0).any()
+            or len(events) != row_count
+            or any(
+                isinstance(value, (bool, np.bool_))
+                or not isinstance(value, Integral)
+                or int(value) not in {0, 1}
+                for value in events
+            )
+        ):
+            raise ValueError("runtime_universe_schema")
+        encoded_outcomes = [
+            {
+                "event": int(event_value),
+                "kind": "survival",
+                "time": float(time_value).hex(),
+            }
+            for time_value, event_value in zip(times, events, strict=True)
+        ]
+
+    payload = {
+        "row_count": row_count,
+        "rows": [
+            {
+                "group": _canonical_runtime_atom(group),
+                "outcome": encoded_outcomes[position],
+                "position": position,
+            }
+            for position, group in enumerate(group_values)
+        ],
+        "schema_version": "c06_private_ordered_runtime_universe_v1",
+        "task": task,
+    }
+    canonical = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("ascii")
+    return hashlib.sha256(canonical).hexdigest()
 
 
 def _vector(values: Sequence[Any], name: str, n_samples: int) -> np.ndarray:
@@ -658,6 +815,16 @@ def _validate_split_manifest_impl(
         )
         support_parameters = (survival_events, survival_pairs)
 
+    try:
+        runtime_universe_digest = _canonical_runtime_universe_sha256(
+            groups=tuple(group_array),
+            task=task,
+            y=labels if task == "classification" else outcome,
+            time=time_array,
+            event=event_array,
+        )
+    except (TypeError, ValueError, OverflowError):
+        _fail("runtime_universe_identity_schema")
     normalized = _normalized_manifest(manifest)
     outer_folds = normalized["outer_folds"]
     if len(outer_folds) != outer_k:
@@ -800,6 +967,7 @@ def _validate_split_manifest_impl(
         tuple(group_array),
         internal_split_digest,
         receipt,
+        runtime_universe_digest,
     )
 
 

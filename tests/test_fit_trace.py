@@ -674,7 +674,16 @@ def test_raw_split_manifest_and_validation_spec_must_match_caller_plan() -> None
     )
     with pytest.raises(FitTraceError) as spec_mismatch_error:
         validate_fit_trace(records, **kwargs)
-    assert spec_mismatch_error.value.invariant == "caller_split_partitions_exact"
+    assert spec_mismatch_error.value.invariant == "caller_split_runtime_universe_exact"
+
+    kwargs = _validation_kwargs(records, fit, assessment)
+    labels = kwargs["split_validation_spec"]["y"]
+    labels[0], labels[1] = labels[1], labels[0]
+    with pytest.raises(FitTraceError) as outcome_mismatch_error:
+        validate_fit_trace(records, **kwargs)
+    assert outcome_mismatch_error.value.invariant == (
+        "caller_split_runtime_universe_exact"
+    )
 
     kwargs = _validation_kwargs(records, fit, assessment)
     kwargs["split_validation_spec"]["unexpected"] = None
@@ -849,6 +858,7 @@ def test_closure_forged_plan_receipt_fails_independent_revalidation() -> None:
         _split_validation_spec()["groups"],
         _split_digest(),
         forged_receipt,
+        "0" * 64,
     )
     record = _node("base.imputer", canonical_state_sha256({"value": 1.0}))
     digest = str(record["node_digest"])
