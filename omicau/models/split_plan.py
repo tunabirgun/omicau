@@ -12,7 +12,8 @@ from typing import Any
 import numpy as np
 
 
-_VALIDATED_SPLIT_PLAN_TOKEN = object()
+_PARTITION_EVIDENCE_TOKEN = object()
+_SPLIT_MANIFEST_STATUS = "unavailable_pending_frozen_public_manifest"
 
 
 class SplitValidationError(ValueError):
@@ -33,76 +34,289 @@ class SplitValidationError(ValueError):
         super().__init__(code)
 
 
-class ValidatedSplitPlan:
-    """Private split indices with a public aggregate validation receipt."""
+class SplitPartitionEvidence:
+    """Process-local partition evidence bound to one validated split plan."""
 
-    __slots__ = ("__inner", "__locked", "__outer", "__receipt_json")
+    __slots__ = (
+        "__inner",
+        "__inner_index_digests",
+        "__locked",
+        "__outer",
+        "__outer_index_digests",
+        "__split_digest",
+        "__token",
+    )
 
     def __init__(
         self,
-        outer: Sequence[tuple[np.ndarray, np.ndarray]],
-        inner: Sequence[Sequence[tuple[np.ndarray, np.ndarray]]],
-        receipt: Mapping[str, Any],
+        outer: Sequence[tuple[frozenset[Hashable], frozenset[Hashable]]],
+        inner: Sequence[
+            Sequence[tuple[frozenset[Hashable], frozenset[Hashable]]]
+        ],
+        outer_index_digests: Sequence[tuple[str, str]],
+        inner_index_digests: Sequence[Sequence[tuple[str, str]]],
+        split_digest: str,
         *,
-        _validation_token: object,
+        _token: object,
     ) -> None:
-        if _validation_token is not _VALIDATED_SPLIT_PLAN_TOKEN:
-            raise TypeError("validated_split_plan_requires_validation")
-        frozen_outer = tuple(self._frozen_pair(train, assessment) for train, assessment in outer)
-        frozen_inner = tuple(
-            tuple(self._frozen_pair(train, assessment) for train, assessment in folds)
-            for folds in inner
+        if _token is not _PARTITION_EVIDENCE_TOKEN:
+            raise TypeError("split_partition_evidence_requires_validation")
+        object.__setattr__(self, "_SplitPartitionEvidence__outer", tuple(outer))
+        object.__setattr__(
+            self,
+            "_SplitPartitionEvidence__inner",
+            tuple(tuple(folds) for folds in inner),
         )
-        receipt_json = json.dumps(
-            receipt, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
+        object.__setattr__(
+            self,
+            "_SplitPartitionEvidence__outer_index_digests",
+            tuple(outer_index_digests),
         )
-        object.__setattr__(self, "_ValidatedSplitPlan__outer", frozen_outer)
-        object.__setattr__(self, "_ValidatedSplitPlan__inner", frozen_inner)
-        object.__setattr__(self, "_ValidatedSplitPlan__receipt_json", receipt_json)
-        object.__setattr__(self, "_ValidatedSplitPlan__locked", True)
-
-    @staticmethod
-    def _frozen_pair(
-        train: np.ndarray, assessment: np.ndarray
-    ) -> tuple[np.ndarray, np.ndarray]:
-        train_copy = np.array(train, dtype=np.int64, copy=True)
-        assessment_copy = np.array(assessment, dtype=np.int64, copy=True)
-        train_copy.flags.writeable = False
-        assessment_copy.flags.writeable = False
-        return train_copy, assessment_copy
+        object.__setattr__(
+            self,
+            "_SplitPartitionEvidence__inner_index_digests",
+            tuple(tuple(folds) for folds in inner_index_digests),
+        )
+        object.__setattr__(self, "_SplitPartitionEvidence__split_digest", split_digest)
+        object.__setattr__(self, "_SplitPartitionEvidence__token", _token)
+        object.__setattr__(self, "_SplitPartitionEvidence__locked", True)
 
     def __setattr__(self, name: str, value: Any) -> None:
-        if getattr(self, "_ValidatedSplitPlan__locked", False):
-            raise AttributeError("validated_split_plan_immutable")
+        if getattr(self, "_SplitPartitionEvidence__locked", False):
+            raise AttributeError("split_partition_evidence_immutable")
         object.__setattr__(self, name, value)
 
     def __repr__(self) -> str:
-        return "ValidatedSplitPlan(validated=True)"
+        return "SplitPartitionEvidence(trusted_process_development_mechanics=True)"
 
-    def __getstate__(self) -> None:
-        raise TypeError("validated_split_plan_private_serialization_forbidden")
+    def __copy__(self) -> None:
+        raise TypeError("split_partition_evidence_copy_forbidden")
+
+    def __deepcopy__(self, memo: Any) -> None:
+        raise TypeError("split_partition_evidence_copy_forbidden")
 
     def __reduce_ex__(self, protocol: int) -> None:
-        raise TypeError("validated_split_plan_private_serialization_forbidden")
+        raise TypeError("split_partition_evidence_serialization_forbidden")
 
-    def outer_splits(self) -> Iterator[tuple[np.ndarray, np.ndarray]]:
-        """Yield copy-safe outer training and assessment index arrays."""
-        for train, assessment in self.__outer:
-            yield train.copy(), assessment.copy()
+    def __getstate__(self) -> None:
+        raise TypeError("split_partition_evidence_serialization_forbidden")
 
-    def inner_splits(self, outer_fold: int) -> Iterator[tuple[np.ndarray, np.ndarray]]:
-        """Yield copy-safe inner index arrays for one validated outer fold."""
-        if isinstance(outer_fold, (bool, np.bool_)) or not isinstance(outer_fold, Integral):
-            raise TypeError("outer_fold_type")
-        fold = int(outer_fold)
-        if fold < 0 or fold >= len(self.__inner):
-            raise IndexError("outer_fold_range")
-        for train, assessment in self.__inner[fold]:
-            yield train.copy(), assessment.copy()
 
-    def receipt(self) -> dict[str, Any]:
-        """Return a detached aggregate-only validation receipt."""
-        return json.loads(self.__receipt_json)
+def _partition_evidence_values(
+    evidence: SplitPartitionEvidence,
+) -> tuple[
+    str,
+    tuple[tuple[frozenset[Hashable], frozenset[Hashable]], ...],
+    tuple[
+        tuple[tuple[frozenset[Hashable], frozenset[Hashable]], ...], ...
+    ],
+    tuple[tuple[str, str], ...],
+    tuple[tuple[tuple[str, str], ...], ...],
+]:
+    """Return process-local partition values to the fit-trace verifier."""
+    if (
+        type(evidence) is not SplitPartitionEvidence
+        or evidence._SplitPartitionEvidence__token is not _PARTITION_EVIDENCE_TOKEN
+    ):
+        raise TypeError("split_partition_evidence_invalid")
+    return (
+        evidence._SplitPartitionEvidence__split_digest,
+        evidence._SplitPartitionEvidence__outer,
+        evidence._SplitPartitionEvidence__inner,
+        evidence._SplitPartitionEvidence__outer_index_digests,
+        evidence._SplitPartitionEvidence__inner_index_digests,
+    )
+
+
+def _build_validated_split_plan_type() -> tuple[type, Any]:
+    from weakref import WeakKeyDictionary
+
+    # This process-local indirection reduces accidental disclosure only. It does
+    # not authenticate values against arbitrary same-process Python introspection.
+    core_by_handle: WeakKeyDictionary[Any, tuple[Any, ...]] = WeakKeyDictionary()
+
+    def resolve(handle: Any) -> tuple[Any, ...]:
+        try:
+            return core_by_handle[handle]
+        except KeyError:
+            raise TypeError("validated_split_plan_handle_invalid") from None
+
+    class OpaqueValidatedSplitPlan:
+        """Private trusted-process state; only receipt() is public-safe."""
+
+        __slots__ = ("__weakref__",)
+
+        def __new__(cls, *args: Any, **kwargs: Any) -> Any:
+            raise TypeError("validated_split_plan_requires_validation")
+
+        def __setattr__(self, name: str, value: Any) -> None:
+            raise AttributeError("validated_split_plan_immutable")
+
+        def __iter__(self) -> None:
+            raise TypeError("validated_split_plan_private_access_forbidden")
+
+        def __getitem__(self, key: Any) -> None:
+            raise TypeError("validated_split_plan_private_access_forbidden")
+
+        def __len__(self) -> int:
+            raise TypeError("validated_split_plan_private_access_forbidden")
+
+        def __repr__(self) -> str:
+            resolve(self)
+            return "ValidatedSplitPlan(trusted_process_development_mechanics=True)"
+
+        def __getstate__(self) -> None:
+            raise TypeError("validated_split_plan_private_serialization_forbidden")
+
+        def __copy__(self) -> None:
+            raise TypeError("validated_split_plan_private_copy_forbidden")
+
+        def __deepcopy__(self, memo: Any) -> None:
+            raise TypeError("validated_split_plan_private_copy_forbidden")
+
+        def __reduce_ex__(self, protocol: int) -> None:
+            raise TypeError("validated_split_plan_private_serialization_forbidden")
+
+        def _private_outer_splits(self) -> Iterator[tuple[np.ndarray, np.ndarray]]:
+            """Yield detached outer splits for trusted-process integration."""
+            outer = resolve(self)[0]
+            for train, assessment in outer:
+                train_array = np.asarray(train, dtype=np.int64)
+                assessment_array = np.asarray(assessment, dtype=np.int64)
+                train_array.flags.writeable = False
+                assessment_array.flags.writeable = False
+                yield train_array, assessment_array
+
+        def _private_inner_splits(
+            self, outer_fold: int
+        ) -> Iterator[tuple[np.ndarray, np.ndarray]]:
+            """Yield detached inner splits for trusted-process integration."""
+            if isinstance(outer_fold, (bool, np.bool_)) or not isinstance(
+                outer_fold, Integral
+            ):
+                raise TypeError("outer_fold_type")
+            fold = int(outer_fold)
+            inner = resolve(self)[1]
+            if fold < 0 or fold >= len(inner):
+                raise IndexError("outer_fold_range")
+            for train, assessment in inner[fold]:
+                train_array = np.asarray(train, dtype=np.int64)
+                assessment_array = np.asarray(assessment, dtype=np.int64)
+                train_array.flags.writeable = False
+                assessment_array.flags.writeable = False
+                yield train_array, assessment_array
+
+        def receipt(self) -> dict[str, Any]:
+            """Return the sole public-safe, detached aggregate receipt."""
+            return json.loads(resolve(self)[4])
+
+        def _private_partition_evidence(self) -> SplitPartitionEvidence:
+            """Return partition evidence for trusted-process verification."""
+            outer, inner, sample_groups, split_digest, _ = resolve(self)
+            manifest = {
+                "outer_folds": [
+                    {
+                        "assessment": list(assessment),
+                        "inner_folds": [
+                            {
+                                "assessment": list(child_assessment),
+                                "train": list(child_train),
+                            }
+                            for child_train, child_assessment in inner[index]
+                        ],
+                        "train": list(train),
+                    }
+                    for index, (train, assessment) in enumerate(outer)
+                ]
+            }
+            if canonical_split_manifest_sha256(manifest) != split_digest:
+                raise TypeError("validated_split_plan_manifest_binding_invalid")
+            outer_groups = tuple(
+                (
+                    frozenset(sample_groups[index] for index in train),
+                    frozenset(sample_groups[index] for index in assessment),
+                )
+                for train, assessment in outer
+            )
+            inner_groups = tuple(
+                tuple(
+                    (
+                        frozenset(sample_groups[index] for index in train),
+                        frozenset(sample_groups[index] for index in assessment),
+                    )
+                    for train, assessment in folds
+                )
+                for folds in inner
+            )
+            return SplitPartitionEvidence(
+                outer_groups,
+                inner_groups,
+                tuple(
+                    (
+                        _canonical_index_sha256(train),
+                        _canonical_index_sha256(assessment),
+                    )
+                    for train, assessment in outer
+                ),
+                tuple(
+                    tuple(
+                        (
+                            _canonical_index_sha256(train),
+                            _canonical_index_sha256(assessment),
+                        )
+                        for train, assessment in folds
+                    )
+                    for folds in inner
+                ),
+                split_digest,
+                _token=_PARTITION_EVIDENCE_TOKEN,
+            )
+
+    OpaqueValidatedSplitPlan.__name__ = "ValidatedSplitPlan"
+    OpaqueValidatedSplitPlan.__qualname__ = "ValidatedSplitPlan"
+
+    def construct(
+        outer: Sequence[tuple[np.ndarray, np.ndarray]],
+        inner: Sequence[Sequence[tuple[np.ndarray, np.ndarray]]],
+        sample_groups: Sequence[Hashable],
+        split_digest: str,
+        receipt: Mapping[str, Any],
+    ) -> Any:
+        def frozen_pair(
+            train: np.ndarray, assessment: np.ndarray
+        ) -> tuple[tuple[int, ...], tuple[int, ...]]:
+            return (
+                tuple(int(value) for value in np.asarray(train, dtype=np.int64)),
+                tuple(int(value) for value in np.asarray(assessment, dtype=np.int64)),
+            )
+
+        frozen_outer = tuple(frozen_pair(train, assessment) for train, assessment in outer)
+        frozen_inner = tuple(
+            tuple(frozen_pair(train, assessment) for train, assessment in folds)
+            for folds in inner
+        )
+        receipt_json = json.dumps(
+            receipt,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        )
+        handle = object.__new__(OpaqueValidatedSplitPlan)
+        core_by_handle[handle] = (
+            frozen_outer,
+            frozen_inner,
+            tuple(sample_groups),
+            split_digest,
+            receipt_json,
+        )
+        return handle
+
+    return OpaqueValidatedSplitPlan, construct
+
+
+ValidatedSplitPlan, _validated_plan_constructor = _build_validated_split_plan_type()
+del _build_validated_split_plan_type
 
 
 def _fail(invariant: str, code: str = "c06_split_manifest_invalid") -> None:
@@ -190,6 +404,27 @@ def canonical_split_manifest_sha256(manifest: Mapping[str, Any]) -> str:
     normalized = _normalized_manifest(manifest)
     payload = json.dumps(
         normalized, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
+    ).encode("ascii")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _canonical_index_sha256(indices: Sequence[int] | np.ndarray) -> str:
+    """Digest one ordered private row-index partition under a fixed schema."""
+    values = np.asarray(indices)
+    if values.ndim != 1 or values.dtype.kind not in "iu":
+        raise TypeError("private_index_partition_schema")
+    normalized = [int(value) for value in values]
+    if len(normalized) != len(set(normalized)) or any(value < 0 for value in normalized):
+        raise ValueError("private_index_partition_invalid")
+    payload = json.dumps(
+        {
+            "indices": sorted(normalized),
+            "schema_version": "c06_private_row_index_partition_v1",
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
     ).encode("ascii")
     return hashlib.sha256(payload).hexdigest()
 
@@ -305,7 +540,8 @@ def _survival_support(
     return training_event_groups, comparable_pairs
 
 
-def validate_split_manifest(
+def _validate_split_manifest_impl(
+    _constructor: Any,
     manifest: Mapping[str, Any],
     *,
     n_samples: int,
@@ -535,14 +771,16 @@ def validate_split_manifest(
             "minimum_realized_training_event_groups": int(min(value[0] for value in observed)),
         }
 
+    internal_split_digest = canonical_split_manifest_sha256(manifest)
     receipt = {
         "claim_id": "C06",
-        "decision": "eligible",
-        "eligibility_reason": "exact_requested_plan_verified",
+        "decision": "development_only",
+        "eligibility_reason": "trusted_process_development_mechanics",
         "group_count": group_count,
         "inner_fold_count": inner_k,
         "outer_fold_count": outer_k,
-        "split_manifest_sha256": canonical_split_manifest_sha256(manifest),
+        "split_manifest_sha256": None,
+        "split_manifest_status": _SPLIT_MANIFEST_STATUS,
         "support_summary": {
             **support_summary,
             "minimum_realized_assessment_group_count": min(
@@ -552,11 +790,36 @@ def validate_split_manifest(
                 value[0] for value in observed_group_counts
             ),
         },
-        "verifier_status": "verified",
+        "verifier_status": (
+            "trusted_process_development_mechanics_pending_frozen_public_manifest"
+        ),
     }
-    return ValidatedSplitPlan(
+    return _constructor(
         validated_outer,
         validated_inner,
+        tuple(group_array),
+        internal_split_digest,
         receipt,
-        _validation_token=_VALIDATED_SPLIT_PLAN_TOKEN,
     )
+
+
+def _bind_split_validator(constructor: Any, implementation: Any) -> Any:
+    from inspect import signature
+
+    def validate_split_manifest(*args: Any, **kwargs: Any) -> Any:
+        return implementation(constructor, *args, **kwargs)
+
+    validate_split_manifest.__name__ = "validate_split_manifest"
+    validate_split_manifest.__qualname__ = "validate_split_manifest"
+    validate_split_manifest.__doc__ = implementation.__doc__
+    parameters = tuple(signature(implementation).parameters.values())[1:]
+    validate_split_manifest.__signature__ = signature(implementation).replace(
+        parameters=parameters
+    )
+    return validate_split_manifest
+
+
+validate_split_manifest = _bind_split_validator(
+    _validated_plan_constructor, _validate_split_manifest_impl
+)
+del _bind_split_validator, _validated_plan_constructor, _validate_split_manifest_impl

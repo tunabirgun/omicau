@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from copy import deepcopy
+from copy import copy, deepcopy
+from dataclasses import asdict
+import hashlib
 from itertools import product
 import json
 import pickle
@@ -9,9 +11,12 @@ import pickle
 import numpy as np
 import pytest
 
+import omicau.models.split_plan as split_plan_module
 from omicau.models.split_plan import (
+    SplitPartitionEvidence,
     SplitValidationError,
     ValidatedSplitPlan,
+    _partition_evidence_values,
     canonical_split_manifest_sha256,
     harrell_comparable_group_pair_count,
     validate_split_manifest,
@@ -131,11 +136,14 @@ def test_valid_exact_nested_plan_emits_only_public_safe_aggregates(kwargs: dict)
     receipt = plan.receipt()
     assert set(receipt) == {
         "claim_id", "decision", "eligibility_reason", "group_count", "inner_fold_count",
-        "outer_fold_count", "split_manifest_sha256", "support_summary", "verifier_status",
+        "outer_fold_count", "split_manifest_sha256", "split_manifest_status",
+        "support_summary", "verifier_status",
     }
-    assert receipt["decision"] == "eligible"
+    assert receipt["decision"] == "development_only"
     assert receipt["outer_fold_count"] == receipt["inner_fold_count"] == 2
-    assert receipt["split_manifest_sha256"] == canonical_split_manifest_sha256(manifest)
+    assert receipt["split_manifest_sha256"] is None
+    assert receipt["split_manifest_status"] == "unavailable_pending_frozen_public_manifest"
+    assert canonical_split_manifest_sha256(manifest) not in repr(receipt)
     serialized = json.dumps(receipt, sort_keys=True)
     for forbidden in ("g0", '"train":', '"assessment":', "indices", "labels", "subject", "path"):
         assert forbidden not in serialized
@@ -154,6 +162,19 @@ def test_hash_is_canonical_for_mapping_and_index_order() -> None:
             "train": list(reversed(fold["train"])),
         })
     assert canonical_split_manifest_sha256(manifest) == canonical_split_manifest_sha256(reordered)
+
+
+def test_candidate_manifests_have_no_public_pre_freeze_commitment() -> None:
+    first = _manifest()
+    second = deepcopy(first)
+    second["outer_folds"].reverse()
+    assert canonical_split_manifest_sha256(first) != canonical_split_manifest_sha256(second)
+    first_receipt = validate_split_manifest(first, **_classification_kwargs()).receipt()
+    second_receipt = validate_split_manifest(second, **_classification_kwargs()).receipt()
+    assert first_receipt == second_receipt
+    assert first_receipt["split_manifest_sha256"] is None
+    assert canonical_split_manifest_sha256(first) not in repr(first_receipt)
+    assert canonical_split_manifest_sha256(second) not in repr(second_receipt)
 
 
 def _exhaustive_classification_witness(labels: list[int], outer_k: int, inner_k: int) -> dict | None:
@@ -209,7 +230,9 @@ def test_small_fixture_exhaustive_assignment_oracle_agrees_on_feasibility() -> N
     assert witness is not None
     kwargs = _classification_kwargs()
     kwargs["groups"] = list(range(8))
-    assert validate_split_manifest(witness, **kwargs).receipt()["verifier_status"] == "verified"
+    assert validate_split_manifest(witness, **kwargs).receipt()["verifier_status"] == (
+        "trusted_process_development_mechanics_pending_frozen_public_manifest"
+    )
     assert _exhaustive_classification_witness(labels, 3, 3) is None
 
 
@@ -263,7 +286,9 @@ def test_mixed_class_label_within_group_fails() -> None:
 @pytest.mark.parametrize("kwargs", [_classification_kwargs(), _regression_kwargs(), _survival_kwargs()])
 def test_valid_repeated_row_groups_preserve_one_outcome_object(kwargs: dict) -> None:
     receipt = validate_split_manifest(_expanded_manifest(), **_repeat_rows(kwargs)).receipt()
-    assert receipt["verifier_status"] == "verified"
+    assert receipt["verifier_status"] == (
+        "trusted_process_development_mechanics_pending_frozen_public_manifest"
+    )
     assert receipt["group_count"] == 8
 
 
@@ -427,21 +452,25 @@ def test_error_code_allowlist_is_closed() -> None:
 
 def test_runtime_plan_iterators_are_copy_safe_and_fold_scoped() -> None:
     plan = validate_split_manifest(_manifest(), **_classification_kwargs())
-    outer = list(plan.outer_splits())
+    outer = list(plan._private_outer_splits())
     assert [(train.tolist(), assessment.tolist()) for train, assessment in outer] == [
         ([1, 3, 5, 7], [0, 2, 4, 6]),
         ([0, 2, 4, 6], [1, 3, 5, 7]),
     ]
+    assert not outer[0][0].flags.writeable
+    outer[0][0].flags.writeable = True
     outer[0][0][0] = 0
-    assert next(plan.outer_splits())[0].tolist() == [1, 3, 5, 7]
+    assert next(plan._private_outer_splits())[0].tolist() == [1, 3, 5, 7]
 
-    inner = list(plan.inner_splits(0))
+    inner = list(plan._private_inner_splits(0))
     assert [(train.tolist(), assessment.tolist()) for train, assessment in inner] == [
         ([3, 7], [1, 5]),
         ([1, 5], [3, 7]),
     ]
+    assert not inner[0][1].flags.writeable
+    inner[0][1].flags.writeable = True
     inner[0][1][0] = 7
-    assert next(plan.inner_splits(0))[1].tolist() == [1, 5]
+    assert next(plan._private_inner_splits(0))[1].tolist() == [1, 5]
 
 
 def test_runtime_plan_is_immutable_and_private_serialization_fails() -> None:
@@ -452,20 +481,125 @@ def test_runtime_plan_is_immutable_and_private_serialization_fails() -> None:
         json.dumps(plan)
     with pytest.raises(TypeError, match="validated_split_plan_private_serialization_forbidden"):
         pickle.dumps(plan)
-    assert repr(plan) == "ValidatedSplitPlan(validated=True)"
+    with pytest.raises(TypeError, match="validated_split_plan_private_copy_forbidden"):
+        copy(plan)
+    with pytest.raises(TypeError, match="validated_split_plan_private_copy_forbidden"):
+        deepcopy(plan)
+    with pytest.raises(TypeError):
+        asdict(plan)
+    with pytest.raises(TypeError):
+        vars(plan)
+    assert not hasattr(plan, "__dict__")
+    assert repr(plan) == "ValidatedSplitPlan(trusted_process_development_mechanics=True)"
+
+
+def test_plan_public_surface_exposes_only_aggregate_receipt() -> None:
+    plan = validate_split_manifest(_manifest(), **_classification_kwargs())
+    assert [name for name in dir(plan) if not name.startswith("_")] == ["receipt"]
+    for old_name in ("outer_splits", "inner_splits", "partition_evidence"):
+        assert not hasattr(plan, old_name)
+        with pytest.raises(AttributeError):
+            getattr(plan, old_name)
+    assert "only receipt() is public-safe" in (ValidatedSplitPlan.__doc__ or "")
+    public = json.dumps(plan.receipt(), sort_keys=True)
+    for group in (f"g{index}" for index in range(8)):
+        assert group not in public
+        assert hashlib.sha256(group.encode("ascii")).hexdigest() not in public
+    assert canonical_split_manifest_sha256(_manifest()) not in public
 
 
 def test_runtime_plan_cannot_be_constructed_without_validation() -> None:
     with pytest.raises(TypeError, match="validated_split_plan_requires_validation"):
-        ValidatedSplitPlan([], [], {}, _validation_token=object())
+        ValidatedSplitPlan([], [], [], "0" * 64, {}, _validation_token=object())
+
+
+def test_validated_plan_is_opaque_noncontainer_without_writable_state() -> None:
+    plan = validate_split_manifest(_manifest(), **_classification_kwargs())
+    assert not isinstance(plan, tuple)
+    for operation in (
+        lambda: tuple.__getitem__(plan, 0),
+        lambda: tuple.__iter__(plan),
+        lambda: tuple.__repr__(plan),
+        lambda: iter(plan),
+        lambda: len(plan),
+        lambda: plan[0],
+    ):
+        with pytest.raises(TypeError):
+            operation()
+    with pytest.raises(AttributeError):
+        object.__getattribute__(plan, "_ValidatedSplitPlan__inner")
+    for name, value in (
+        ("_ValidatedSplitPlan__inner", (((1,), (2,)),)),
+        ("_ValidatedSplitPlan__split_digest", "0" * 64),
+        ("_ValidatedSplitPlan__core", ((((1,), (2,)),), "0" * 64)),
+    ):
+        with pytest.raises(AttributeError):
+            object.__setattr__(plan, name, value)
+    assert plan.receipt()["inner_fold_count"] == 2
+
+
+def test_ordinary_module_api_exposes_no_plan_registry_or_constructor_binding() -> None:
+    forbidden_names = {
+        "_validated_plan_constructor",
+        "_bind_split_validator",
+        "_validate_split_manifest_impl",
+        "core_by_handle",
+    }
+    assert forbidden_names.isdisjoint(vars(split_plan_module))
+    with pytest.raises(TypeError, match="validated_split_plan_requires_validation"):
+        ValidatedSplitPlan()
+    forged_core = ((((), ()),), (), (), "0" * 64, '{"inner_fold_count":999}')
+    with pytest.raises(TypeError):
+        tuple.__new__(ValidatedSplitPlan, forged_core)
+
+
+def test_partition_evidence_is_opaque_fixed_and_nonserializable() -> None:
+    plan = validate_split_manifest(_manifest(), **_classification_kwargs())
+    evidence = plan._private_partition_evidence()
+    assert isinstance(evidence, SplitPartitionEvidence)
+    assert repr(evidence) == (
+        "SplitPartitionEvidence(trusted_process_development_mechanics=True)"
+    )
+    assert "g0" not in repr(evidence)
+    with pytest.raises(TypeError, match="split_partition_evidence_copy_forbidden"):
+        copy(evidence)
+    with pytest.raises(TypeError, match="split_partition_evidence_copy_forbidden"):
+        deepcopy(evidence)
+    with pytest.raises(TypeError, match="split_partition_evidence_serialization_forbidden"):
+        pickle.dumps(evidence)
+    with pytest.raises(TypeError):
+        asdict(evidence)
+    with pytest.raises(TypeError, match="split_partition_evidence_requires_validation"):
+        SplitPartitionEvidence([], [], [], [], "0" * 64, _token=object())
+    with pytest.raises(AttributeError, match="split_partition_evidence_immutable"):
+        evidence._SplitPartitionEvidence__outer = ()
+
+
+def test_partition_evidence_detaches_from_mutated_group_input() -> None:
+    kwargs = _classification_kwargs()
+    groups = kwargs["groups"]
+    plan = validate_split_manifest(_manifest(), **kwargs)
+    groups[:] = [f"changed{index}" for index in range(len(groups))]
+    evidence = plan._private_partition_evidence()
+    assert repr(evidence) == (
+        "SplitPartitionEvidence(trusted_process_development_mechanics=True)"
+    )
+    _, outer, inner, _, _ = _partition_evidence_values(evidence)
+    assert outer[0] == (
+        frozenset({"g1", "g3", "g5", "g7"}),
+        frozenset({"g0", "g2", "g4", "g6"}),
+    )
+    assert inner[0][0] == (frozenset({"g3", "g7"}), frozenset({"g1", "g5"}))
+    serialized = json.dumps(plan.receipt(), sort_keys=True)
+    assert "changed" not in serialized
 
 
 def test_runtime_plan_rejects_invalid_outer_fold_selector() -> None:
     plan = validate_split_manifest(_manifest(), **_classification_kwargs())
     with pytest.raises(TypeError, match="outer_fold_type"):
-        list(plan.inner_splits(True))
+        list(plan._private_inner_splits(True))
     with pytest.raises(IndexError, match="outer_fold_range"):
-        list(plan.inner_splits(2))
+        list(plan._private_inner_splits(2))
 
 
 def test_generic_partition_group_minima_are_explicit_and_watched() -> None:
@@ -489,19 +623,22 @@ def test_aggregate_receipt_is_exact_deterministic_and_detached() -> None:
     plan = validate_split_manifest(_manifest(), **_classification_kwargs())
     expected = {
         "claim_id": "C06",
-        "decision": "eligible",
-        "eligibility_reason": "exact_requested_plan_verified",
+        "decision": "development_only",
+        "eligibility_reason": "trusted_process_development_mechanics",
         "group_count": 8,
         "inner_fold_count": 2,
         "outer_fold_count": 2,
-        "split_manifest_sha256": "8db50ea2b9a30871a84d4a1441285f77d0e117c48e69a20886aeb2768cf8e88a",
+        "split_manifest_sha256": None,
+        "split_manifest_status": "unavailable_pending_frozen_public_manifest",
         "support_summary": {
             "minimum_realized_assessment_group_count": 2,
             "minimum_realized_assessment_groups_per_class": 1,
             "minimum_realized_training_group_count": 2,
             "minimum_realized_training_groups_per_class": 1,
         },
-        "verifier_status": "verified",
+        "verifier_status": (
+            "trusted_process_development_mechanics_pending_frozen_public_manifest"
+        ),
     }
     assert plan.receipt() == expected
     assert plan.receipt() == validate_split_manifest(

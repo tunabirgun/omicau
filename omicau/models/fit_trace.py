@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Hashable, Iterable, Mapping, Sequence
+from collections.abc import Hashable, Mapping, Sequence
 import hashlib
 import json
 import math
@@ -13,13 +13,22 @@ from typing import Any
 
 import numpy as np
 
-from omicau.models.split_plan import ValidatedSplitPlan
+from omicau.models.split_plan import (
+    SplitValidationError,
+    ValidatedSplitPlan,
+    _SPLIT_MANIFEST_STATUS,
+    _partition_evidence_values,
+    validate_split_manifest,
+)
 
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _IDENTIFIER_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 _SEMVER_RE = re.compile(r"^[0-9]+\.[0-9]+(?:\.[0-9]+)?$")
-_FOLD_RE = re.compile(r"^outer-[0-9]+(?:\.inner-[0-9]+)?$")
+_OUTER_FOLD_RE = re.compile(r"^outer-(0|[1-9][0-9]*)$")
+_INNER_FOLD_RE = re.compile(
+    r"^outer-(0|[1-9][0-9]*)\.inner-(0|[1-9][0-9]*)$"
+)
 _COMPONENTS = {
     "batch_adjuster",
     "calibrator",
@@ -138,12 +147,39 @@ _PRIVATE_NODE_INPUT_FIELDS = (_NODE_FIELDS - {"seed_registry_status"}) | {
     "private_seed_registry"
 }
 _PENDING_SEED_REGISTRY = "unavailable_pending_frozen_registry"
-_POISON_TEST_STATUS = "feature_outcome_sentinel_verified"
-_POISON_KINDS = frozenset({"assessment_feature", "assessment_outcome"})
-_POISON_EVIDENCE_TOKEN = object()
+_POISON_CASE_STATUS = "mechanics_checked_from_supplied_cases_pending_production_binding"
+_POISON_CASES = frozenset({"assessment_feature", "assessment_outcome"})
+_POISON_COMMON_FIELDS = {
+    "baseline_predictions",
+    "baseline_state_digest",
+    "poisoned_predictions",
+    "poisoned_state_digest",
+}
+_POISON_FEATURE_FIELDS = _POISON_COMMON_FIELDS | {
+    "baseline_sentinel_predictions",
+    "poisoned_sentinel_predictions",
+}
 _CACHE_STATUSES = frozenset({"loaded", "reused", "unused"})
 _CACHE_EVIDENCE_TOKEN = object()
 _STACKING_EVIDENCE_TOKEN = object()
+_SPLIT_VALIDATION_SPEC_FIELDS = {
+    "event",
+    "groups",
+    "minimum_assessment_groups",
+    "minimum_assessment_groups_per_class",
+    "minimum_regression_assessment_groups",
+    "minimum_regression_assessment_variance",
+    "minimum_survival_assessment_comparable_pairs",
+    "minimum_survival_training_event_groups",
+    "minimum_training_groups",
+    "minimum_training_groups_per_class",
+    "n_samples",
+    "requested_inner_k",
+    "requested_outer_k",
+    "task",
+    "time",
+    "y",
+}
 _CACHE_IDENTITY_FIELDS = {
     "assessment_digest",
     "callsite_id",
@@ -284,7 +320,7 @@ def _version(value: Any) -> str:
 
 def _fold(value: Any) -> str:
     result = _label(value, "fold")
-    if _FOLD_RE.fullmatch(result) is None:
+    if _OUTER_FOLD_RE.fullmatch(result) is None and _INNER_FOLD_RE.fullmatch(result) is None:
         _fail("fold_schema")
     return result
 
@@ -294,6 +330,18 @@ def _stage(value: Any) -> str:
     if result not in _STAGES:
         _fail("stage_unregistered")
     return result
+
+
+def _fold_selector(stage: str, fold: str) -> tuple[int, int | None]:
+    outer_match = _OUTER_FOLD_RE.fullmatch(fold)
+    inner_match = _INNER_FOLD_RE.fullmatch(fold)
+    if stage in {"outer-training", "stacking-training"}:
+        if outer_match is None:
+            _fail("stage_fold_selector_exact")
+        return int(outer_match.group(1)), None
+    if inner_match is None:
+        _fail("stage_fold_selector_exact")
+    return int(inner_match.group(1)), int(inner_match.group(2))
 
 
 def _support(value: Any) -> dict[str, int]:
@@ -364,6 +412,9 @@ def _normalize_node(node: Any) -> dict[str, Any]:
     component = _component(node["component"], "component")
     if _CALLSITE_COMPONENTS[callsite_id] != component:
         _fail("callsite_component_exact", "c08_callsite_unregistered")
+    stage = _stage(node["stage"])
+    fold = _fold(node["fold"])
+    _fold_selector(stage, fold)
     return {
         "assessment_digest": _sha256(node["assessment_digest"], "assessment_digest"),
         "callsite_id": callsite_id,
@@ -374,7 +425,7 @@ def _normalize_node(node: Any) -> dict[str, Any]:
             node["environment_digest"], "environment_digest"
         ),
         "fit_digest": _sha256(node["fit_digest"], "fit_digest"),
-        "fold": _fold(node["fold"]),
+        "fold": fold,
         "input_schema_digest": _sha256(node["input_schema_digest"], "input_schema_digest"),
         "learned_state_digest": _sha256(
             node["learned_state_digest"], "learned_state_digest"
@@ -390,7 +441,7 @@ def _normalize_node(node: Any) -> dict[str, Any]:
             if node["seed_registry_status"] == _PENDING_SEED_REGISTRY
             else _fail("seed_registry_status")
         ),
-        "stage": _stage(node["stage"]),
+        "stage": stage,
         "state_schema_digest": _sha256(
             node["state_schema_digest"], "state_schema_digest"
         ),
@@ -506,7 +557,13 @@ def canonical_state_sha256(
 class StackingPredictionEvidence:
     """Opaque private evidence; group identities are never rendered or serialized."""
 
-    __slots__ = ("__fit_groups", "__node_digest", "__predicted_group", "__token")
+    __slots__ = (
+        "__fit_groups",
+        "__locked",
+        "__node_digest",
+        "__predicted_group",
+        "__token",
+    )
 
     def __init__(
         self,
@@ -518,13 +575,21 @@ class StackingPredictionEvidence:
     ) -> None:
         if _token is not _STACKING_EVIDENCE_TOKEN:
             raise TypeError("stacking_evidence_requires_verification")
-        self.__node_digest = node_digest
-        self.__predicted_group = predicted_group
-        self.__fit_groups = fit_groups
-        self.__token = _token
+        object.__setattr__(self, "_StackingPredictionEvidence__node_digest", node_digest)
+        object.__setattr__(
+            self, "_StackingPredictionEvidence__predicted_group", predicted_group
+        )
+        object.__setattr__(self, "_StackingPredictionEvidence__fit_groups", fit_groups)
+        object.__setattr__(self, "_StackingPredictionEvidence__token", _token)
+        object.__setattr__(self, "_StackingPredictionEvidence__locked", True)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if getattr(self, "_StackingPredictionEvidence__locked", False):
+            raise AttributeError("stacking_prediction_evidence_immutable")
+        object.__setattr__(self, name, value)
 
     def __repr__(self) -> str:
-        return "StackingPredictionEvidence(verified=True)"
+        return "StackingPredictionEvidence(mechanics_declared=True)"
 
     def __copy__(self) -> None:
         raise TypeError("private_evidence_copy_forbidden")
@@ -542,19 +607,25 @@ class StackingPredictionEvidence:
 class CacheUseEvidence:
     """Opaque private cache-use evidence that cannot render its identity."""
 
-    __slots__ = ("__identity", "__status", "__token")
+    __slots__ = ("__identity", "__locked", "__status", "__token")
 
     def __init__(
         self, status: str, identity: Mapping[str, Any] | None, *, _token: object
     ) -> None:
         if _token is not _CACHE_EVIDENCE_TOKEN:
             raise TypeError("cache_evidence_requires_verification")
-        self.__status = status
-        self.__identity = identity
-        self.__token = _token
+        object.__setattr__(self, "_CacheUseEvidence__status", status)
+        object.__setattr__(self, "_CacheUseEvidence__identity", identity)
+        object.__setattr__(self, "_CacheUseEvidence__token", _token)
+        object.__setattr__(self, "_CacheUseEvidence__locked", True)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if getattr(self, "_CacheUseEvidence__locked", False):
+            raise AttributeError("cache_use_evidence_immutable")
+        object.__setattr__(self, name, value)
 
     def __repr__(self) -> str:
-        return "CacheUseEvidence(verified=True)"
+        return "CacheUseEvidence(mechanics_checked=True)"
 
     def __copy__(self) -> None:
         raise TypeError("private_evidence_copy_forbidden")
@@ -604,26 +675,6 @@ def _stacking_evidence_values(
     )
 
 
-class PoisonEvidence:
-    """Opaque evidence created only after one poison check succeeds."""
-
-    __slots__ = ("__kind", "__token")
-
-    def __init__(self, kind: str, *, _token: object) -> None:
-        if _token is not _POISON_EVIDENCE_TOKEN or kind not in _POISON_KINDS:
-            raise TypeError("poison_evidence_requires_verification")
-        self.__kind = kind
-        self.__token = _token
-
-    def __repr__(self) -> str:
-        return "PoisonEvidence(verified=True)"
-
-    def _verified_kind(self) -> str:
-        if self.__token is not _POISON_EVIDENCE_TOKEN:
-            _fail("poison_evidence_token")
-        return self.__kind
-
-
 def _validate_dag(records: Sequence[dict[str, Any]]) -> None:
     by_digest = {record["node_digest"]: record["node"] for record in records}
     if len(by_digest) != len(records):
@@ -670,22 +721,118 @@ def _normalize_records(records: Any) -> list[dict[str, Any]]:
     return sorted(preliminary, key=lambda item: item["node_digest"])
 
 
-def _private_sets(
-    values: Mapping[str, Iterable[Hashable]], node_digests: set[str], name: str
-) -> dict[str, set[Hashable]]:
-    if not isinstance(values, Mapping) or set(values) != node_digests:
-        _fail(f"{name}_coverage")
-    result: dict[str, set[Hashable]] = {}
-    for digest, members in values.items():
-        if isinstance(members, (str, bytes)):
-            _fail(f"{name}_set")
-        try:
-            result[digest] = set(members)
-        except TypeError:
-            _fail(f"{name}_hashable")
-        if not result[digest]:
-            _fail(f"{name}_nonempty")
-    return result
+def _validated_partitions(
+    split_plan: ValidatedSplitPlan,
+) -> tuple[
+    str,
+    tuple[tuple[frozenset[Hashable], frozenset[Hashable]], ...],
+    tuple[
+        tuple[tuple[frozenset[Hashable], frozenset[Hashable]], ...], ...
+    ],
+    tuple[tuple[str, str], ...],
+    tuple[tuple[tuple[str, str], ...], ...],
+]:
+    try:
+        split_digest, outer, inner, outer_digests, inner_digests = (
+            _partition_evidence_values(split_plan._private_partition_evidence())
+        )
+    except (AttributeError, TypeError):
+        _fail("validated_split_partition_evidence")
+    if (
+        len(outer) != len(inner)
+        or len(outer) != len(outer_digests)
+        or len(inner) != len(inner_digests)
+        or not outer
+    ):
+        _fail("validated_split_partition_shape")
+    group_universe = outer[0][0] | outer[0][1]
+    outer_assessment_coverage: set[Hashable] = set()
+    for outer_index, ((outer_fit, outer_assessment), inner_folds) in enumerate(
+        zip(outer, inner)
+    ):
+        if (
+            not outer_fit
+            or not outer_assessment
+            or outer_fit & outer_assessment
+            or outer_fit | outer_assessment != group_universe
+            or outer_assessment_coverage & outer_assessment
+        ):
+            _fail("validated_outer_group_partition")
+        outer_assessment_coverage.update(outer_assessment)
+        if not inner_folds:
+            _fail("validated_inner_group_partition")
+        if len(inner_folds) != len(inner_digests[outer_index]):
+            _fail("validated_inner_digest_partition_shape")
+        covered: set[Hashable] = set()
+        for inner_fit, inner_assessment in inner_folds:
+            if (
+                not inner_fit
+                or not inner_assessment
+                or inner_fit & inner_assessment
+                or not inner_fit <= outer_fit
+                or not inner_assessment <= outer_fit
+                or inner_fit | inner_assessment != outer_fit
+                or covered & inner_assessment
+            ):
+                _fail(
+                    f"validated_inner_group_partition_{outer_index}",
+                    "c08_assessment_ancestry_detected",
+                )
+            covered.update(inner_assessment)
+        if covered != set(outer_fit):
+            _fail(
+                f"validated_inner_group_coverage_{outer_index}",
+                "c08_assessment_ancestry_detected",
+            )
+    if outer_assessment_coverage != set(group_universe):
+        _fail("validated_outer_group_coverage")
+    for fit_digest, assessment_digest in outer_digests:
+        _sha256(fit_digest, "outer_fit_index")
+        _sha256(assessment_digest, "outer_assessment_index")
+    for folds in inner_digests:
+        for fit_digest, assessment_digest in folds:
+            _sha256(fit_digest, "inner_fit_index")
+            _sha256(assessment_digest, "inner_assessment_index")
+    return split_digest, outer, inner, outer_digests, inner_digests
+
+
+def _node_partition(
+    node: Mapping[str, Any],
+    outer: tuple[tuple[frozenset[Hashable], frozenset[Hashable]], ...],
+    inner: tuple[
+        tuple[tuple[frozenset[Hashable], frozenset[Hashable]], ...], ...
+    ],
+    outer_digests: tuple[tuple[str, str], ...],
+    inner_digests: tuple[tuple[tuple[str, str], ...], ...],
+) -> tuple[
+    frozenset[Hashable],
+    frozenset[Hashable],
+    int,
+    int | None,
+    str,
+    str,
+]:
+    outer_index, inner_index = _fold_selector(node["stage"], node["fold"])
+    if outer_index >= len(outer):
+        _fail("node_outer_fold_range", "c08_assessment_ancestry_detected")
+    if inner_index is None:
+        fit_groups, assessment_groups = outer[outer_index]
+        fit_digest, assessment_digest = outer_digests[outer_index]
+    else:
+        if inner_index >= len(inner[outer_index]):
+            _fail("node_inner_fold_range", "c08_assessment_ancestry_detected")
+        fit_groups, assessment_groups = inner[outer_index][inner_index]
+        fit_digest, assessment_digest = inner_digests[outer_index][inner_index]
+    if fit_groups & assessment_groups:
+        _fail("node_partition_disjoint", "c08_assessment_ancestry_detected")
+    return (
+        fit_groups,
+        assessment_groups,
+        outer_index,
+        inner_index,
+        fit_digest,
+        assessment_digest,
+    )
 
 
 def _cache_identity(node: Mapping[str, Any]) -> dict[str, Any]:
@@ -737,16 +884,19 @@ def _cache_evidence_values(
     )
 
 
-def _validate_poison_suite(value: Any) -> None:
-    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
-        _fail("poison_evidence_suite")
-    kinds: list[str] = []
-    for evidence in value:
-        if type(evidence) is not PoisonEvidence:
-            _fail("poison_evidence_schema")
-        kinds.append(evidence._verified_kind())
-    if len(kinds) != len(set(kinds)) or set(kinds) != _POISON_KINDS:
-        _fail("poison_evidence_complete")
+def _validate_poison_cases(value: Any) -> None:
+    if not isinstance(value, Mapping) or set(value) != _POISON_CASES:
+        _fail("poison_case_coverage")
+    for kind in sorted(_POISON_CASES):
+        case = value[kind]
+        expected = (
+            _POISON_FEATURE_FIELDS
+            if kind == "assessment_feature"
+            else _POISON_COMMON_FIELDS
+        )
+        if not isinstance(case, Mapping) or set(case) != expected:
+            _fail("poison_case_schema")
+        _verify_poison_case(kind, case)
 
 
 def _validate_cache_evidence(
@@ -774,19 +924,33 @@ def _validate_cache_evidence(
             )
 
 
+def _independently_validated_split(
+    split_manifest: Mapping[str, Any], split_validation_spec: Mapping[str, Any]
+) -> ValidatedSplitPlan:
+    if (
+        not isinstance(split_validation_spec, Mapping)
+        or set(split_validation_spec) != _SPLIT_VALIDATION_SPEC_FIELDS
+    ):
+        _fail("split_validation_spec_exact")
+    try:
+        return validate_split_manifest(split_manifest, **dict(split_validation_spec))
+    except (SplitValidationError, TypeError, ValueError):
+        _fail("independent_split_revalidation")
+
+
 def validate_fit_trace(
     records: Sequence[Mapping[str, Any]],
     *,
     execution_profile: Mapping[str, Any],
-    fit_ancestry: Mapping[str, Iterable[Hashable]],
-    assessment_ancestry: Mapping[str, Iterable[Hashable]],
     private_seed_registries: Mapping[str, Mapping[str, Any]],
+    split_manifest: Mapping[str, Any],
     split_plan: ValidatedSplitPlan,
-    poison_evidence: Sequence[PoisonEvidence],
+    split_validation_spec: Mapping[str, Any],
+    poison_cases: Mapping[str, Mapping[str, Any]],
     cache_evidence: Mapping[str, CacheUseEvidence],
     stacking_predictions: Sequence[StackingPredictionEvidence] = (),
 ) -> dict[str, Any]:
-    """Validate a trace with private ancestry and return aggregate-only evidence."""
+    """Bind traced fits to validated private partitions and return aggregates."""
     normalized = _normalize_records(records)
     node_digests = {record["node_digest"] for record in normalized}
     planned_counts = _normalize_execution_profile(execution_profile)
@@ -800,36 +964,79 @@ def validate_fit_trace(
 
     if type(split_plan) is not ValidatedSplitPlan:
         _fail("validated_split_plan_required")
-    split_receipt = split_plan.receipt()
+    fresh_split_plan = _independently_validated_split(
+        split_manifest, split_validation_spec
+    )
+    try:
+        caller_receipt = split_plan.receipt()
+    except TypeError:
+        _fail("validated_split_plan_receipt")
+    split_receipt = fresh_split_plan.receipt()
+    if _canonical_json(caller_receipt) != _canonical_json(split_receipt):
+        _fail("caller_split_receipt_exact")
     if (
         not isinstance(split_receipt, Mapping)
         or split_receipt.get("claim_id") != "C06"
-        or split_receipt.get("decision") != "eligible"
-        or split_receipt.get("verifier_status") != "verified"
+        or split_receipt.get("decision") != "development_only"
+        or split_receipt.get("split_manifest_sha256") is not None
+        or split_receipt.get("split_manifest_status") != _SPLIT_MANIFEST_STATUS
+        or split_receipt.get("verifier_status")
+        != "trusted_process_development_mechanics_pending_frozen_public_manifest"
     ):
         _fail("validated_split_plan_receipt")
-    split_digest = _sha256(
-        split_receipt.get("split_manifest_sha256"), "split_manifest"
-    )
+    fresh_partitions = _validated_partitions(fresh_split_plan)
+    try:
+        caller_partitions = _validated_partitions(split_plan)
+    except FitTraceError:
+        raise
+    if caller_partitions != fresh_partitions:
+        _fail("caller_split_partitions_exact", "c08_assessment_ancestry_detected")
+    (
+        split_digest,
+        outer_partitions,
+        inner_partitions,
+        outer_index_digests,
+        inner_index_digests,
+    ) = fresh_partitions
+    if len(outer_partitions) != split_receipt.get("outer_fold_count") or any(
+        len(folds) != split_receipt.get("inner_fold_count")
+        for folds in inner_partitions
+    ):
+        _fail("split_partition_receipt_counts")
     if any(
         record["node"]["parent_split_digest"] != split_digest
         for record in normalized
     ):
         _fail("node_split_manifest_exact")
-    _validate_poison_suite(poison_evidence)
-
-    fit_sets = _private_sets(fit_ancestry, node_digests, "fit_ancestry")
-    assessment_sets = _private_sets(
-        assessment_ancestry, node_digests, "assessment_ancestry"
-    )
-    if any(fit_sets[digest] & assessment_sets[digest] for digest in node_digests):
-        _fail("fit_assessment_group_disjoint", "c08_assessment_ancestry_detected")
+    _validate_poison_cases(poison_cases)
 
     if not isinstance(private_seed_registries, Mapping) or set(
         private_seed_registries
     ) != node_digests:
         _fail("private_seed_registry_coverage")
     by_digest = {record["node_digest"]: record["node"] for record in normalized}
+    node_partitions = {
+        digest: _node_partition(
+            node,
+            outer_partitions,
+            inner_partitions,
+            outer_index_digests,
+            inner_index_digests,
+        )
+        for digest, node in by_digest.items()
+    }
+    for digest, node in by_digest.items():
+        expected_fit = node_partitions[digest][4]
+        expected_assessment = node_partitions[digest][5]
+        if (
+            node["fit_digest"] != expected_fit
+            or node["assessment_digest"] != expected_assessment
+            or expected_fit == expected_assessment
+        ):
+            _fail(
+                "node_index_partition_digest_exact",
+                "c08_assessment_ancestry_detected",
+            )
     for private_registry in private_seed_registries.values():
         _validate_private_seed_registry(private_registry)
 
@@ -852,8 +1059,19 @@ def validate_fit_trace(
         digest, predicted_group, fit_groups = _stacking_evidence_values(evidence)
         if digest not in stacking_nodes:
             _fail("stacking_node_missing", "c08_stacking_in_group_fit")
-        if fit_groups != frozenset(fit_sets[digest]):
-            _fail("stacking_fit_ancestry_exact", "c08_stacking_in_group_fit")
+        _, _, outer_index, inner_index, _, _ = node_partitions[digest]
+        if inner_index is not None:
+            _fail("stacking_fold_selector", "c08_stacking_in_group_fit")
+        predicted_partitions = [
+            partition
+            for partition in inner_partitions[outer_index]
+            if predicted_group in partition[1]
+        ]
+        if len(predicted_partitions) != 1:
+            _fail("stacking_predicted_group_plan", "c08_stacking_in_group_fit")
+        expected_fit_groups = predicted_partitions[0][0]
+        if fit_groups != expected_fit_groups:
+            _fail("stacking_fit_partition_exact", "c08_stacking_in_group_fit")
         try:
             hash(predicted_group)
             if predicted_group in fit_groups:
@@ -866,10 +1084,15 @@ def validate_fit_trace(
             _fail("stacking_predicted_group_hashable", "c08_stacking_in_group_fit")
         evidence_by_node[digest].append(evidence)
     for digest, node in stacking_nodes.items():
+        outer_fit_groups, _, _, _, _, _ = node_partitions[digest]
         expected = node["output_support"].get("group_count")
-        if expected is None or expected < 1:
+        if expected != len(outer_fit_groups):
             _fail("stacking_output_group_count", "c08_stacking_in_group_fit")
-        if len(evidence_by_node[digest]) != expected:
+        observed_groups = {
+            _stacking_evidence_values(evidence)[1]
+            for evidence in evidence_by_node[digest]
+        }
+        if observed_groups != set(outer_fit_groups):
             _fail("stacking_prediction_evidence_complete", "c08_stacking_in_group_fit")
 
     inventory_sha256 = hashlib.sha256(
@@ -883,18 +1106,32 @@ def validate_fit_trace(
             }
         )
     ).hexdigest()
-    trace_sha256 = hashlib.sha256(_canonical_json(normalized)).hexdigest()
+    redacted_trace = []
+    for record in normalized:
+        node = dict(record["node"])
+        node["assessment_digest"] = "private_partition_digest_checked"
+        node["fit_digest"] = "private_partition_digest_checked"
+        node["parent_node_digests"] = [
+            "private_parent_node_digest" for _ in node["parent_node_digests"]
+        ]
+        node["parent_split_digest"] = "private_manifest_binding_checked"
+        redacted_trace.append({"node": node, "node_digest": "private_node_digest"})
+    redacted_trace.sort(key=_canonical_json)
+    trace_sha256 = hashlib.sha256(_canonical_json(redacted_trace)).hexdigest()
     return {
         "callsite_inventory_sha256": inventory_sha256,
         "claim_id": "C08",
         "decision": "development_only",
-        "fit_trace_sha256": trace_sha256,
+        "redacted_fit_trace_sha256": trace_sha256,
         "node_count": len(normalized),
-        "poison_test_status": _POISON_TEST_STATUS,
+        "poison_case_status": _POISON_CASE_STATUS,
         "seed_registry_status": _PENDING_SEED_REGISTRY,
-        "split_manifest_sha256": split_digest,
+        "split_manifest_sha256": None,
+        "split_manifest_status": _SPLIT_MANIFEST_STATUS,
         "state_digest_count": len(normalized),
-        "verifier_status": "development_pending_production_inventory_and_ancestry_binding",
+        "verifier_status": (
+            "trusted_process_development_mechanics_pending_production_inventory"
+        ),
     }
 
 
@@ -908,39 +1145,25 @@ def _prediction_array(value: Any, name: str) -> np.ndarray:
     return array
 
 
-def verify_poison_result(
-    poison_kind: str,
-    *,
-    baseline_state_digest: str,
-    poisoned_state_digest: str,
-    baseline_predictions: Any,
-    poisoned_predictions: Any,
-    baseline_sentinel_predictions: Any | None = None,
-    poisoned_sentinel_predictions: Any | None = None,
-) -> PoisonEvidence:
-    """Apply the fixed C08 feature, outcome, and sentinel poison semantics."""
-    baseline_state = _sha256(baseline_state_digest, "baseline_state_digest")
-    poisoned_state = _sha256(poisoned_state_digest, "poisoned_state_digest")
+def _verify_poison_case(poison_kind: str, case: Mapping[str, Any]) -> None:
+    baseline_state = _sha256(case["baseline_state_digest"], "baseline_state_digest")
+    poisoned_state = _sha256(case["poisoned_state_digest"], "poisoned_state_digest")
     if baseline_state != poisoned_state:
         _fail("poison_learned_state_invariance")
-    baseline = _prediction_array(baseline_predictions, "baseline_predictions")
-    poisoned = _prediction_array(poisoned_predictions, "poisoned_predictions")
+    baseline = _prediction_array(case["baseline_predictions"], "baseline_predictions")
+    poisoned = _prediction_array(case["poisoned_predictions"], "poisoned_predictions")
     if baseline.shape != poisoned.shape:
         _fail("poison_prediction_shape")
 
     if poison_kind == "assessment_outcome":
         if not np.array_equal(baseline, poisoned, equal_nan=False):
             _fail("assessment_outcome_prediction_invariance")
-        if baseline_sentinel_predictions is not None or poisoned_sentinel_predictions is not None:
-            _fail("assessment_outcome_sentinel_not_applicable")
     elif poison_kind == "assessment_feature":
-        if baseline_sentinel_predictions is None or poisoned_sentinel_predictions is None:
-            _fail("assessment_feature_sentinel_required")
         sentinel_before = _prediction_array(
-            baseline_sentinel_predictions, "baseline_sentinel_predictions"
+            case["baseline_sentinel_predictions"], "baseline_sentinel_predictions"
         )
         sentinel_after = _prediction_array(
-            poisoned_sentinel_predictions, "poisoned_sentinel_predictions"
+            case["poisoned_sentinel_predictions"], "poisoned_sentinel_predictions"
         )
         if sentinel_before.shape != sentinel_after.shape or not np.array_equal(
             sentinel_before, sentinel_after, equal_nan=False
@@ -948,4 +1171,3 @@ def verify_poison_result(
             _fail("assessment_feature_sentinel_prediction_invariance")
     else:
         _fail("poison_kind")
-    return PoisonEvidence(poison_kind, _token=_POISON_EVIDENCE_TOKEN)

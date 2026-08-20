@@ -13,17 +13,20 @@ import omicau.models.fit_trace as fit_trace_module
 from omicau.models.fit_trace import (
     CacheUseEvidence,
     FitTraceError,
-    PoisonEvidence,
     StackingPredictionEvidence,
     _cache_identity,
     _make_private_fit_node,
     canonical_state_sha256,
     validate_fit_trace,
     verify_cache_use,
-    verify_poison_result,
     verify_stacking_prediction,
 )
-from omicau.models.split_plan import ValidatedSplitPlan, validate_split_manifest
+from omicau.models.split_plan import (
+    ValidatedSplitPlan,
+    _canonical_index_sha256,
+    canonical_split_manifest_sha256,
+    validate_split_manifest,
+)
 
 
 _CALLSITE_COMPONENTS = {
@@ -74,7 +77,7 @@ def _registries(records: list[dict[str, object]]) -> dict[str, dict[str, object]
     return {str(record["node_digest"]): _seed_registry() for record in records}
 
 
-def _split_plan(*, alternate: bool = False) -> ValidatedSplitPlan:
+def _split_manifest(*, alternate: bool = False) -> dict[str, object]:
     manifest = {
         "outer_folds": [
             {
@@ -116,44 +119,59 @@ def _split_plan(*, alternate: bool = False) -> ValidatedSplitPlan:
                 },
             ]
         }
+    return manifest
+
+
+def _split_plan(*, alternate: bool = False) -> ValidatedSplitPlan:
     return validate_split_manifest(
-        manifest,
-        n_samples=8,
-        groups=[f"g{index}" for index in range(8)],
-        task="classification",
-        requested_outer_k=2,
-        requested_inner_k=2,
-        minimum_training_groups=2,
-        minimum_assessment_groups=2,
-        y=[0, 1, 0, 1, 0, 1, 0, 1],
-        minimum_training_groups_per_class=1,
-        minimum_assessment_groups_per_class=1,
+        _split_manifest(alternate=alternate),
+        **_split_validation_spec(),
     )
 
 
-def _split_digest() -> str:
-    return str(_split_plan().receipt()["split_manifest_sha256"])
+def _split_validation_spec() -> dict[str, object]:
+    return {
+        "event": None,
+        "groups": [f"g{index}" for index in range(8)],
+        "minimum_assessment_groups": 2,
+        "minimum_assessment_groups_per_class": 1,
+        "minimum_regression_assessment_groups": None,
+        "minimum_regression_assessment_variance": None,
+        "minimum_survival_assessment_comparable_pairs": None,
+        "minimum_survival_training_event_groups": None,
+        "minimum_training_groups": 2,
+        "minimum_training_groups_per_class": 1,
+        "n_samples": 8,
+        "requested_inner_k": 2,
+        "requested_outer_k": 2,
+        "task": "classification",
+        "time": None,
+        "y": [0, 1, 0, 1, 0, 1, 0, 1],
+    }
 
 
-def _poison_suite() -> tuple[PoisonEvidence, PoisonEvidence]:
+def _split_digest(*, alternate: bool = False) -> str:
+    return canonical_split_manifest_sha256(_split_manifest(alternate=alternate))
+
+
+def _poison_cases() -> dict[str, dict[str, object]]:
     state = _digest("poison-state")
-    feature = verify_poison_result(
-        "assessment_feature",
-        baseline_state_digest=state,
-        poisoned_state_digest=state,
-        baseline_predictions=np.array([1.0, 2.0]),
-        poisoned_predictions=np.array([3.0, 2.0]),
-        baseline_sentinel_predictions=np.array([2.0]),
-        poisoned_sentinel_predictions=np.array([2.0]),
-    )
-    outcome = verify_poison_result(
-        "assessment_outcome",
-        baseline_state_digest=state,
-        poisoned_state_digest=state,
-        baseline_predictions=np.array([1.0, 2.0]),
-        poisoned_predictions=np.array([1.0, 2.0]),
-    )
-    return feature, outcome
+    return {
+        "assessment_feature": {
+            "baseline_predictions": np.array([1.0, 2.0]),
+            "baseline_sentinel_predictions": np.array([2.0]),
+            "baseline_state_digest": state,
+            "poisoned_predictions": np.array([3.0, 2.0]),
+            "poisoned_sentinel_predictions": np.array([2.0]),
+            "poisoned_state_digest": state,
+        },
+        "assessment_outcome": {
+            "baseline_predictions": np.array([1.0, 2.0]),
+            "baseline_state_digest": state,
+            "poisoned_predictions": np.array([1.0, 2.0]),
+            "poisoned_state_digest": state,
+        },
+    }
 
 
 def _private_node_fields(record: dict[str, object]) -> dict[str, object]:
@@ -163,30 +181,53 @@ def _private_node_fields(record: dict[str, object]) -> dict[str, object]:
     return fields
 
 
+def _partition_digests(
+    fold: str, *, alternate: bool = False
+) -> tuple[str, str]:
+    outer_text, *inner_text = fold.split(".inner-")
+    outer_index = int(outer_text.removeprefix("outer-"))
+    outer = _split_manifest(alternate=alternate)["outer_folds"][outer_index]
+    partition = outer if not inner_text else outer["inner_folds"][int(inner_text[0])]
+    return (
+        _canonical_index_sha256(partition["train"]),
+        _canonical_index_sha256(partition["assessment"]),
+    )
+
+
 def _node(
     callsite_id: str,
     learned_state_digest: str,
     *,
+    alternate_split: bool = False,
+    assessment_digest: str | None = None,
     fit_digest: str | None = None,
+    fold: str = "outer-0.inner-0",
     parents: list[str] | None = None,
+    stage: str = "inner-training",
 ) -> dict[str, object]:
+    if fit_digest is not None and assessment_digest is not None:
+        expected_fit, expected_assessment = fit_digest, assessment_digest
+    else:
+        expected_fit, expected_assessment = _partition_digests(
+            fold, alternate=alternate_split
+        )
     return _make_private_fit_node(
-        assessment_digest=_digest("assessment"),
+        assessment_digest=assessment_digest or expected_assessment,
         callsite_id=callsite_id,
         code_digest=_digest("source-code"),
         component=_CALLSITE_COMPONENTS[callsite_id],
         component_version="1.0",
         environment_digest=_digest("environment-lock"),
-        fit_digest=fit_digest or _digest("training"),
-        fold="outer-0.inner-0",
+        fit_digest=fit_digest or expected_fit,
+        fold=fold,
         input_schema_digest=_digest("schema"),
         learned_state_digest=learned_state_digest,
         output_support={"feature_count": 3, "group_count": 4},
         parameters_digest=_digest("parameters"),
         parent_node_digests=[] if parents is None else parents,
-        parent_split_digest=_split_digest(),
+        parent_split_digest=_split_digest(alternate=alternate_split),
         private_seed_registry=_seed_registry(),
-        stage="inner-training",
+        stage=stage,
         state_schema_digest=_digest("state-schema"),
         target_use_flag=False,
         validation_digest=_digest("validation"),
@@ -219,13 +260,13 @@ def _validation_kwargs(
     assessment: dict[str, set[str]],
 ) -> dict[str, object]:
     return {
-        "assessment_ancestry": assessment,
         "cache_evidence": _unused_cache(records),
         "execution_profile": _execution_profile(records),
-        "fit_ancestry": fit,
-        "poison_evidence": _poison_suite(),
+        "poison_cases": _poison_cases(),
         "private_seed_registries": _registries(records),
+        "split_manifest": _split_manifest(),
         "split_plan": _split_plan(),
+        "split_validation_spec": _split_validation_spec(),
     }
 
 
@@ -284,23 +325,30 @@ def test_independent_refits_trace_and_poison_semantics() -> None:
     assert receipt["decision"] == "development_only"
     assert receipt["seed_registry_status"] == "unavailable_pending_frozen_registry"
     assert receipt["verifier_status"] == (
-        "development_pending_production_inventory_and_ancestry_binding"
+        "trusted_process_development_mechanics_pending_production_inventory"
     )
     assert receipt["node_count"] == 4
     assert set(receipt) == {
         "callsite_inventory_sha256",
         "claim_id",
         "decision",
-        "fit_trace_sha256",
+        "redacted_fit_trace_sha256",
         "node_count",
-        "poison_test_status",
+        "poison_case_status",
         "seed_registry_status",
         "split_manifest_sha256",
+        "split_manifest_status",
         "state_digest_count",
         "verifier_status",
     }
-    assert receipt["poison_test_status"] == "feature_outcome_sentinel_verified"
-    assert receipt["split_manifest_sha256"] == _split_digest()
+    assert receipt["poison_case_status"] == (
+        "mechanics_checked_from_supplied_cases_pending_production_binding"
+    )
+    assert receipt["split_manifest_sha256"] is None
+    assert receipt["split_manifest_status"] == (
+        "unavailable_pending_frozen_public_manifest"
+    )
+    assert _split_digest() not in repr(receipt)
     assert "held-out" not in repr(receipt)
 
     train = np.array(
@@ -319,28 +367,27 @@ def test_independent_refits_trace_and_poison_semantics() -> None:
     ).sum(axis=1)
     state_digest = canonical_state_sha256(scaler)
     assert not np.array_equal(baseline_predictions, poisoned_predictions)
-    assert isinstance(
-        verify_poison_result(
-            "assessment_feature",
-            baseline_state_digest=state_digest,
-            poisoned_state_digest=canonical_state_sha256(_independent_states(train)[1]),
-            baseline_predictions=baseline_predictions,
-            poisoned_predictions=poisoned_predictions,
-            baseline_sentinel_predictions=baseline_predictions[1:],
-            poisoned_sentinel_predictions=poisoned_predictions[1:],
-        ),
-        PoisonEvidence,
-    )
-    assert isinstance(
-        verify_poison_result(
-            "assessment_outcome",
-            baseline_state_digest=state_digest,
-            poisoned_state_digest=state_digest,
-            baseline_predictions=baseline_predictions,
-            poisoned_predictions=baseline_predictions.copy(),
-        ),
-        PoisonEvidence,
-    )
+    poison_cases = {
+        "assessment_feature": {
+            "baseline_predictions": baseline_predictions,
+            "baseline_sentinel_predictions": baseline_predictions[1:],
+            "baseline_state_digest": state_digest,
+            "poisoned_predictions": poisoned_predictions,
+            "poisoned_sentinel_predictions": poisoned_predictions[1:],
+            "poisoned_state_digest": canonical_state_sha256(
+                _independent_states(train)[1]
+            ),
+        },
+        "assessment_outcome": {
+            "baseline_predictions": baseline_predictions,
+            "baseline_state_digest": state_digest,
+            "poisoned_predictions": baseline_predictions.copy(),
+            "poisoned_state_digest": state_digest,
+        },
+    }
+    kwargs = _validation_kwargs(records, fit, assessment)
+    kwargs["poison_cases"] = poison_cases
+    assert validate_fit_trace(records, **kwargs)["decision"] == "development_only"
 
 
 def test_state_digest_is_mapping_order_independent_and_exact() -> None:
@@ -435,35 +482,31 @@ def test_duplicate_runtime_callsite_and_planned_count_drift_fail() -> None:
 def test_empty_trace_fails() -> None:
     with pytest.raises(FitTraceError, match="c08_fit_trace_incomplete"):
         validate_fit_trace([], **{
-            "assessment_ancestry": {},
             "cache_evidence": {},
             "execution_profile": _execution_profile([]),
-            "fit_ancestry": {},
-            "poison_evidence": _poison_suite(),
+            "poison_cases": _poison_cases(),
             "private_seed_registries": {},
+            "split_manifest": _split_manifest(),
             "split_plan": _split_plan(),
+            "split_validation_spec": _split_validation_spec(),
         })
 
 
-def test_assessment_group_in_fit_ancestry_fails() -> None:
-    records, fit, assessment = _trace_fixture()
-    fit[str(records[0]["node_digest"])].add("held-out")
-    with pytest.raises(FitTraceError) as error:
-        validate_fit_trace(
-            records,
-            **_validation_kwargs(records, fit, assessment),
-        )
-    assert error.value.code == "c08_assessment_ancestry_detected"
-
-
-@pytest.mark.parametrize("ancestry_name", ["fit_ancestry", "assessment_ancestry"])
-def test_every_node_requires_nonempty_ancestry(ancestry_name: str) -> None:
+def test_caller_supplied_ancestry_is_rejected() -> None:
     records, fit, assessment = _trace_fixture()
     kwargs = _validation_kwargs(records, fit, assessment)
-    kwargs[ancestry_name][str(records[0]["node_digest"])] = set()
-    with pytest.raises(FitTraceError) as error:
+    kwargs["fit_ancestry"] = {str(records[0]["node_digest"]): {"forged"}}
+    with pytest.raises(TypeError, match="fit_ancestry"):
+        validate_fit_trace(
+            records,
+            **kwargs,
+        )
+    kwargs = _validation_kwargs(records, fit, assessment)
+    kwargs["assessment_ancestry"] = {
+        str(records[0]["node_digest"]): {"forged"}
+    }
+    with pytest.raises(TypeError, match="assessment_ancestry"):
         validate_fit_trace(records, **kwargs)
-    assert error.value.invariant == f"{ancestry_name}_nonempty"
 
 
 def test_cached_state_wrong_training_digest_fails() -> None:
@@ -531,6 +574,19 @@ def test_private_evidence_objects_fail_closed_under_object_protocols() -> None:
             assert "private-" not in str(error.value)
 
 
+def test_cache_evidence_is_immutable_and_remains_valid_after_attacks() -> None:
+    record = _node("base.imputer", canonical_state_sha256({"value": 1.0}))
+    digest = str(record["node_digest"])
+    kwargs = _validation_kwargs([record], {digest: {"unused"}}, {digest: {"unused"}})
+    evidence = kwargs["cache_evidence"][digest]
+    marker = "credential-private-marker"
+    for name in ("_CacheUseEvidence__status", "extra"):
+        with pytest.raises(AttributeError, match="cache_use_evidence_immutable") as error:
+            setattr(evidence, name, marker)
+        assert marker not in str(error.value)
+    assert validate_fit_trace([record], **kwargs)["decision"] == "development_only"
+
+
 def test_private_evidence_constructors_and_hostile_cache_identity_fail_closed() -> None:
     marker = "credential-private-marker"
     with pytest.raises(TypeError) as stacking_error:
@@ -583,7 +639,10 @@ def test_cache_identity_field_drift_fails(field: str, changed: object) -> None:
     assert error.value.code == "c08_cache_training_digest_mismatch"
 
 
-@pytest.mark.parametrize("omitted", ["split_plan", "poison_evidence"])
+@pytest.mark.parametrize(
+    "omitted",
+    ["split_manifest", "split_plan", "split_validation_spec", "poison_cases"],
+)
 def test_split_or_poison_receipt_input_omission_fails(omitted: str) -> None:
     records, fit, assessment = _trace_fixture()
     kwargs = _validation_kwargs(records, fit, assessment)
@@ -596,9 +655,208 @@ def test_split_manifest_drift_fails() -> None:
     records, fit, assessment = _trace_fixture()
     kwargs = _validation_kwargs(records, fit, assessment)
     kwargs["split_plan"] = _split_plan(alternate=True)
-    with pytest.raises(FitTraceError, match="c08_fit_trace_incomplete") as error:
+    with pytest.raises(FitTraceError) as error:
         validate_fit_trace(records, **kwargs)
-    assert error.value.invariant == "node_split_manifest_exact"
+    assert error.value.invariant == "caller_split_partitions_exact"
+
+
+def test_raw_split_manifest_and_validation_spec_must_match_caller_plan() -> None:
+    records, fit, assessment = _trace_fixture()
+    kwargs = _validation_kwargs(records, fit, assessment)
+    kwargs["split_manifest"] = _split_manifest(alternate=True)
+    with pytest.raises(FitTraceError) as manifest_error:
+        validate_fit_trace(records, **kwargs)
+    assert manifest_error.value.invariant == "caller_split_partitions_exact"
+
+    kwargs = _validation_kwargs(records, fit, assessment)
+    kwargs["split_validation_spec"]["groups"] = list(
+        reversed(kwargs["split_validation_spec"]["groups"])
+    )
+    with pytest.raises(FitTraceError) as spec_mismatch_error:
+        validate_fit_trace(records, **kwargs)
+    assert spec_mismatch_error.value.invariant == "caller_split_partitions_exact"
+
+    kwargs = _validation_kwargs(records, fit, assessment)
+    kwargs["split_validation_spec"]["unexpected"] = None
+    with pytest.raises(FitTraceError) as spec_error:
+        validate_fit_trace(records, **kwargs)
+    assert spec_error.value.invariant == "split_validation_spec_exact"
+
+
+def test_candidate_manifests_leave_no_public_trace_commitment() -> None:
+    state = canonical_state_sha256({"value": 1.0})
+    first = _node("base.imputer", state)
+    second = _node("base.imputer", state, alternate_split=True)
+    first_digest = str(first["node_digest"])
+    second_digest = str(second["node_digest"])
+    first_receipt = validate_fit_trace(
+        [first],
+        **_validation_kwargs(
+            [first], {first_digest: {"unused"}}, {first_digest: {"unused"}}
+        ),
+    )
+    second_kwargs = _validation_kwargs(
+        [second], {second_digest: {"unused"}}, {second_digest: {"unused"}}
+    )
+    second_kwargs["split_manifest"] = _split_manifest(alternate=True)
+    second_kwargs["split_plan"] = _split_plan(alternate=True)
+    second_receipt = validate_fit_trace([second], **second_kwargs)
+    assert first_receipt == second_receipt
+    assert first_receipt["split_manifest_sha256"] is None
+    public = repr(first_receipt)
+    assert _split_digest() not in public
+    assert _split_digest(alternate=True) not in public
+
+
+@pytest.mark.parametrize("field", ["fit_digest", "assessment_digest"])
+def test_node_index_partition_digest_mismatch_fails(field: str) -> None:
+    kwargs = {field: _digest(f"wrong-{field}")}
+    record = _node(
+        "base.imputer",
+        canonical_state_sha256({"value": 1.0}),
+        **kwargs,
+    )
+    digest = str(record["node_digest"])
+    with pytest.raises(FitTraceError) as error:
+        validate_fit_trace(
+            [record],
+            **_validation_kwargs(
+                [record], {digest: {"unused"}}, {digest: {"unused"}}
+            ),
+        )
+    assert error.value.invariant == "node_index_partition_digest_exact"
+    assert error.value.code == "c08_assessment_ancestry_detected"
+
+
+def test_equal_fit_and_assessment_index_digests_fail() -> None:
+    _, assessment_digest = _partition_digests("outer-0.inner-0")
+    record = _node(
+        "base.imputer",
+        canonical_state_sha256({"value": 1.0}),
+        fit_digest=assessment_digest,
+        assessment_digest=assessment_digest,
+    )
+    digest = str(record["node_digest"])
+    with pytest.raises(FitTraceError) as error:
+        validate_fit_trace(
+            [record],
+            **_validation_kwargs(
+                [record], {digest: {"unused"}}, {digest: {"unused"}}
+            ),
+        )
+    assert error.value.invariant == "node_index_partition_digest_exact"
+
+
+def test_stage_fold_selector_and_plan_ranges_are_watched() -> None:
+    valid = _node("base.imputer", canonical_state_sha256({"value": 1.0}))
+    fields = _private_node_fields(valid)
+    fields["stage"] = "outer-training"
+    with pytest.raises(FitTraceError) as grammar_error:
+        _make_private_fit_node(**fields)
+    assert grammar_error.value.invariant == "stage_fold_selector_exact"
+
+    out_of_range = _node(
+        "base.imputer",
+        canonical_state_sha256({"value": 1.0}),
+        assessment_digest=_digest("out-of-range-assessment"),
+        fit_digest=_digest("out-of-range-fit"),
+        fold="outer-9.inner-0",
+    )
+    kwargs = _validation_kwargs(
+        [out_of_range],
+        {str(out_of_range["node_digest"]): {"unused"}},
+        {str(out_of_range["node_digest"]): {"unused"}},
+    )
+    with pytest.raises(FitTraceError) as range_error:
+        validate_fit_trace([out_of_range], **kwargs)
+    assert range_error.value.invariant == "node_outer_fold_range"
+    assert range_error.value.code == "c08_assessment_ancestry_detected"
+
+
+def test_swapped_private_inner_partition_with_matching_node_digests_fails() -> None:
+    plan = _split_plan()
+    partition = _split_manifest()["outer_folds"][0]["inner_folds"][0]
+    train = tuple(partition["train"])
+    assessment = tuple(partition["assessment"])
+    with pytest.raises(AttributeError, match="validated_split_plan_immutable"):
+        plan._ValidatedSplitPlan__inner = ((assessment, train),)
+    record = _node(
+        "base.imputer",
+        canonical_state_sha256({"value": 1.0}),
+        fit_digest=_canonical_index_sha256(assessment),
+        assessment_digest=_canonical_index_sha256(train),
+    )
+    digest = str(record["node_digest"])
+    kwargs = _validation_kwargs([record], {digest: {"unused"}}, {digest: {"unused"}})
+    kwargs["split_plan"] = plan
+    with pytest.raises(FitTraceError) as error:
+        validate_fit_trace([record], **kwargs)
+    assert error.value.invariant == "node_index_partition_digest_exact"
+    assert plan.receipt()["inner_fold_count"] == 2
+
+
+def test_ordinary_instance_api_rejects_coordinated_attribute_replacement() -> None:
+    record = _node("base.imputer", canonical_state_sha256({"value": 1.0}))
+    digest = str(record["node_digest"])
+    kwargs = _validation_kwargs([record], {digest: {"unused"}}, {digest: {"unused"}})
+    plan = kwargs["split_plan"]
+    for name, value in (
+        ("_ValidatedSplitPlan__inner", ((((4, 5), (6, 7)),),)),
+        ("_ValidatedSplitPlan__split_digest", _digest("replacement")),
+        ("_ValidatedSplitPlan__receipt_json", "{}"),
+        (
+            "_ValidatedSplitPlan__core",
+            (((((4, 5), (6, 7)),),), _digest("replacement")),
+        ),
+    ):
+        with pytest.raises(AttributeError):
+            object.__setattr__(plan, name, value)
+    assert validate_fit_trace([record], **kwargs)["decision"] == "development_only"
+
+
+def test_closure_forged_plan_receipt_fails_independent_revalidation() -> None:
+    constructor = next(
+        cell.cell_contents
+        for cell in validate_split_manifest.__closure__ or ()
+        if getattr(cell.cell_contents, "__name__", None) == "construct"
+    )
+    manifest = _split_manifest()
+    outer = [
+        (
+            np.asarray(fold["train"], dtype=np.int64),
+            np.asarray(fold["assessment"], dtype=np.int64),
+        )
+        for fold in manifest["outer_folds"]
+    ]
+    inner = [
+        [
+            (
+                np.asarray(fold["train"], dtype=np.int64),
+                np.asarray(fold["assessment"], dtype=np.int64),
+            )
+            for fold in outer_fold["inner_folds"]
+        ]
+        for outer_fold in manifest["outer_folds"]
+    ]
+    forged_receipt = _split_plan().receipt()
+    forged_receipt["group_count"] = 999
+    forged_receipt["support_summary"][
+        "minimum_realized_training_group_count"
+    ] = 999
+    forged_plan = constructor(
+        outer,
+        inner,
+        _split_validation_spec()["groups"],
+        _split_digest(),
+        forged_receipt,
+    )
+    record = _node("base.imputer", canonical_state_sha256({"value": 1.0}))
+    digest = str(record["node_digest"])
+    kwargs = _validation_kwargs([record], {digest: {"unused"}}, {digest: {"unused"}})
+    kwargs["split_plan"] = forged_plan
+    with pytest.raises(FitTraceError) as error:
+        validate_fit_trace([record], **kwargs)
+    assert error.value.invariant == "caller_split_receipt_exact"
 
 
 def test_raw_split_digest_and_fake_split_plan_are_rejected() -> None:
@@ -614,26 +872,39 @@ def test_raw_split_digest_and_fake_split_plan_are_rejected() -> None:
     with pytest.raises(FitTraceError) as error:
         validate_fit_trace(records, **kwargs)
     assert error.value.invariant == "validated_split_plan_required"
+    kwargs = _validation_kwargs(records, fit, assessment)
+    kwargs["split_plan"] = object.__new__(ValidatedSplitPlan)
+    with pytest.raises(FitTraceError) as unregistered_error:
+        validate_fit_trace(records, **kwargs)
+    assert unregistered_error.value.invariant == "validated_split_plan_receipt"
 
 
-def test_poison_evidence_is_token_gated_and_suite_is_complete() -> None:
-    with pytest.raises(TypeError, match="poison_evidence_requires_verification"):
-        PoisonEvidence("assessment_feature", _token=object())
+def test_poison_tokens_and_external_success_evidence_are_absent() -> None:
+    assert not hasattr(fit_trace_module, "PoisonEvidence")
+    assert not hasattr(fit_trace_module, "verify_poison_result")
+    assert not hasattr(fit_trace_module, "_POISON_EVIDENCE_TOKEN")
 
+
+def test_raw_poison_case_schema_and_coverage_are_exact() -> None:
     records, fit, assessment = _trace_fixture()
     kwargs = _validation_kwargs(records, fit, assessment)
-    kwargs["poison_evidence"] = ["feature_outcome_sentinel_verified"]
+    kwargs["poison_cases"] = ["mechanics_checked"]
     with pytest.raises(FitTraceError) as string_error:
         validate_fit_trace(records, **kwargs)
-    assert string_error.value.invariant == "poison_evidence_schema"
+    assert string_error.value.invariant == "poison_case_coverage"
 
-    feature, outcome = _poison_suite()
-    for incomplete in [(feature,), (outcome,), (feature, feature, outcome)]:
+    for omitted in ("assessment_feature", "assessment_outcome"):
         kwargs = _validation_kwargs(records, fit, assessment)
-        kwargs["poison_evidence"] = incomplete
+        del kwargs["poison_cases"][omitted]
         with pytest.raises(FitTraceError) as incomplete_error:
             validate_fit_trace(records, **kwargs)
-        assert incomplete_error.value.invariant == "poison_evidence_complete"
+        assert incomplete_error.value.invariant == "poison_case_coverage"
+
+    kwargs = _validation_kwargs(records, fit, assessment)
+    kwargs["poison_cases"]["assessment_outcome"]["success_status"] = "checked"
+    with pytest.raises(FitTraceError) as schema_error:
+        validate_fit_trace(records, **kwargs)
+    assert schema_error.value.invariant == "poison_case_schema"
 
 
 def test_duplicate_node_fails() -> None:
@@ -641,13 +912,13 @@ def test_duplicate_node_fails() -> None:
     with pytest.raises(FitTraceError, match="c08_fit_trace_incomplete") as error:
         duplicate = [records[0], copy.deepcopy(records[0])]
         validate_fit_trace(duplicate, **{
-            "assessment_ancestry": {},
             "cache_evidence": {},
             "execution_profile": _execution_profile(duplicate),
-            "fit_ancestry": {},
-            "poison_evidence": _poison_suite(),
+            "poison_cases": _poison_cases(),
             "private_seed_registries": {},
+            "split_manifest": _split_manifest(),
             "split_plan": _split_plan(),
+            "split_validation_spec": _split_validation_spec(),
         })
     assert error.value.invariant == "node_digest_unique"
 
@@ -662,13 +933,13 @@ def test_cycle_fails_before_untrusted_digest_acceptance() -> None:
     second["node"]["parent_node_digests"] = ["a" * 64]
     with pytest.raises(FitTraceError, match="c08_fit_trace_incomplete") as error:
         validate_fit_trace([first, second], **{
-            "assessment_ancestry": {},
             "cache_evidence": {},
             "execution_profile": _execution_profile([first, second]),
-            "fit_ancestry": {},
-            "poison_evidence": _poison_suite(),
+            "poison_cases": _poison_cases(),
             "private_seed_registries": {},
+            "split_manifest": _split_manifest(),
             "split_plan": _split_plan(),
+            "split_validation_spec": _split_validation_spec(),
         })
     assert error.value.invariant == "trace_cycle"
 
@@ -787,17 +1058,19 @@ def test_private_seed_and_nonce_do_not_affect_public_receipt() -> None:
     assert first == second
     first_cache = verify_cache_use("unused", node=first["node"])
     second_cache = verify_cache_use("unused", node=second["node"])
-    assert repr(first_cache) == repr(second_cache) == "CacheUseEvidence(verified=True)"
+    assert repr(first_cache) == repr(second_cache) == (
+        "CacheUseEvidence(mechanics_checked=True)"
+    )
     assert _cache_identity(first["node"]) == _cache_identity(second["node"])
 
     digest = str(first["node_digest"])
     common = {
         "cache_evidence": {digest: first_cache},
         "execution_profile": _execution_profile([first]),
-        "fit_ancestry": {digest: {"train"}},
-        "assessment_ancestry": {digest: {"held-out"}},
-        "poison_evidence": _poison_suite(),
+        "poison_cases": _poison_cases(),
+        "split_manifest": _split_manifest(),
         "split_plan": _split_plan(),
+        "split_validation_spec": _split_validation_spec(),
     }
     first_receipt = validate_fit_trace(
         [first], private_seed_registries={digest: first_registry}, **common
@@ -829,47 +1102,44 @@ def test_bool_output_support_is_rejected() -> None:
 
 
 def test_feature_poison_changed_sentinel_is_watched_failure() -> None:
-    state = canonical_state_sha256({"value": 1.0})
+    records, fit, assessment = _trace_fixture()
+    kwargs = _validation_kwargs(records, fit, assessment)
+    kwargs["poison_cases"]["assessment_feature"][
+        "poisoned_sentinel_predictions"
+    ] = np.array([4.0])
     with pytest.raises(FitTraceError, match="c08_fit_trace_incomplete") as error:
-        verify_poison_result(
-            "assessment_feature",
-            baseline_state_digest=state,
-            poisoned_state_digest=state,
-            baseline_predictions=np.array([1.0, 2.0]),
-            poisoned_predictions=np.array([3.0, 4.0]),
-            baseline_sentinel_predictions=np.array([2.0]),
-            poisoned_sentinel_predictions=np.array([4.0]),
-        )
+        validate_fit_trace(records, **kwargs)
     assert error.value.invariant == "assessment_feature_sentinel_prediction_invariance"
 
 
 def test_outcome_poison_prediction_or_state_drift_fails() -> None:
-    state = canonical_state_sha256({"value": 1.0})
+    records, fit, assessment = _trace_fixture()
+    kwargs = _validation_kwargs(records, fit, assessment)
+    kwargs["poison_cases"]["assessment_outcome"]["poisoned_predictions"] = np.array(
+        [2.0, 2.0]
+    )
     with pytest.raises(FitTraceError, match="c08_fit_trace_incomplete") as prediction_error:
-        verify_poison_result(
-            "assessment_outcome",
-            baseline_state_digest=state,
-            poisoned_state_digest=state,
-            baseline_predictions=np.array([1.0]),
-            poisoned_predictions=np.array([2.0]),
-        )
+        validate_fit_trace(records, **kwargs)
     assert prediction_error.value.invariant == "assessment_outcome_prediction_invariance"
+    kwargs = _validation_kwargs(records, fit, assessment)
+    kwargs["poison_cases"]["assessment_outcome"]["poisoned_state_digest"] = _digest(
+        "changed"
+    )
     with pytest.raises(FitTraceError, match="c08_fit_trace_incomplete") as state_error:
-        verify_poison_result(
-            "assessment_outcome",
-            baseline_state_digest=state,
-            poisoned_state_digest=_digest("changed"),
-            baseline_predictions=np.array([1.0]),
-            poisoned_predictions=np.array([1.0]),
-        )
+        validate_fit_trace(records, **kwargs)
     assert state_error.value.invariant == "poison_learned_state_invariance"
 
 
 def test_stacking_predicted_group_must_be_excluded() -> None:
-    stacker = _node("stacking.stacker", canonical_state_sha256({"value": 1.0}))
+    stacker = _node(
+        "stacking.stacker",
+        canonical_state_sha256({"value": 1.0}),
+        fold="outer-0",
+        stage="stacking-training",
+    )
     digest = str(stacker["node_digest"])
-    fit = {digest: {"train-a", "train-b"}}
-    assessment = {digest: {"held-out"}}
+    fit = {digest: {"g4", "g5", "g6", "g7"}}
+    assessment = {digest: {"g0", "g1", "g2", "g3"}}
     kwargs = _validation_kwargs([stacker], fit, assessment)
     with pytest.raises(FitTraceError) as error:
         validate_fit_trace(
@@ -878,8 +1148,8 @@ def test_stacking_predicted_group_must_be_excluded() -> None:
             stacking_predictions=[
                 verify_stacking_prediction(
                     digest,
-                    "train-a",
-                    frozenset({"train-a", "train-b"}),
+                    "g6",
+                    frozenset({"g6", "g7"}),
                 )
             ],
         )
@@ -887,21 +1157,36 @@ def test_stacking_predicted_group_must_be_excluded() -> None:
 
 
 def test_stacking_evidence_is_mandatory_unique_and_complete() -> None:
-    stacker = _node("stacking.stacker", canonical_state_sha256({"value": 1.0}))
+    stacker = _node(
+        "stacking.stacker",
+        canonical_state_sha256({"value": 1.0}),
+        fold="outer-0",
+        stage="stacking-training",
+    )
     digest = str(stacker["node_digest"])
-    fit = {digest: {"train-a", "train-b"}}
-    assessment = {digest: {"held-out"}}
+    fit = {digest: {"g4", "g5", "g6", "g7"}}
+    assessment = {digest: {"g0", "g1", "g2", "g3"}}
     kwargs = _validation_kwargs([stacker], fit, assessment)
     with pytest.raises(FitTraceError) as missing_error:
         validate_fit_trace([stacker], **kwargs)
     assert missing_error.value.invariant == "stacking_prediction_evidence_complete"
 
     complete = [
-        verify_stacking_prediction(
-            digest, f"predicted-{index}", frozenset({"train-a", "train-b"})
+        verify_stacking_prediction(digest, group, fit_groups)
+        for group, fit_groups in (
+            ("g4", frozenset({"g6", "g7"})),
+            ("g5", frozenset({"g6", "g7"})),
+            ("g6", frozenset({"g4", "g5"})),
+            ("g7", frozenset({"g4", "g5"})),
         )
-        for index in range(4)
     ]
+    marker = "credential-private-marker"
+    for name in ("_StackingPredictionEvidence__predicted_group", "extra"):
+        with pytest.raises(
+            AttributeError, match="stacking_prediction_evidence_immutable"
+        ) as error:
+            setattr(complete[0], name, marker)
+        assert marker not in str(error.value)
     assert validate_fit_trace(
         [stacker], **kwargs, stacking_predictions=complete
     )["decision"] == "development_only"
@@ -914,6 +1199,25 @@ def test_stacking_evidence_is_mandatory_unique_and_complete() -> None:
     with pytest.raises(FitTraceError) as incomplete_error:
         validate_fit_trace([stacker], **kwargs, stacking_predictions=complete[:-1])
     assert incomplete_error.value.invariant == "stacking_prediction_evidence_complete"
+
+    wrong_plan = verify_stacking_prediction(
+        digest, "g4", frozenset({"g5", "g6", "g7"})
+    )
+    with pytest.raises(FitTraceError) as wrong_plan_error:
+        validate_fit_trace(
+            [stacker], **kwargs, stacking_predictions=[wrong_plan, *complete[1:]]
+        )
+    assert wrong_plan_error.value.invariant == "stacking_fit_partition_exact"
+
+
+def test_public_trace_receipt_contains_no_group_identity_or_group_hash() -> None:
+    records, fit, assessment = _trace_fixture()
+    receipt = validate_fit_trace(records, **_validation_kwargs(records, fit, assessment))
+    public = repr(receipt)
+    for group in (f"g{index}" for index in range(8)):
+        assert group not in public
+        assert _digest(group) not in public
+    assert "outside-parent" not in public
 
 
 def test_nonstacker_cannot_accept_stacking_evidence() -> None:
