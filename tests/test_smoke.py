@@ -360,6 +360,48 @@ def test_full_pipeline_offline(aligned, pipeline, tmp_path):
     assert (tmp_path / "offline" / "model_metrics.csv").exists()
 
 
+def test_public_report_omits_row_level_and_local_config_values(aligned, pipeline, tmp_path):
+    summary = summarize(
+        build_context(aligned, pipeline["util"], pipeline["missing"], pipeline["batch"]),
+        pipeline["cfg"],
+    )
+    audit = _audit(aligned, pipeline, summary)
+    marker = "PRIVATE_LOCAL_MARKER"
+    audit["config"]["modalities"][0]["path"] = f"C:\\Users\\{marker}\\rna.csv"
+    audit["config"]["clinical"]["path"] = f"C:\\Users\\{marker}\\clinical.csv"
+    audit["config"]["output_dir"] = f"C:\\Users\\{marker}\\output"
+    audit["config"]["llm"]["api_key_env"] = f"{marker}_KEY"
+    audit["diagnostics"]["missingness"]["sample_missingness"]["sample_ids"][0] = marker
+    audit["diagnostics"]["missingness"]["sample_missingness"]["by_modality"]["signal"] = [
+        0.123456789,
+        0.987654321,
+    ]
+    audit["diagnostics"]["batch"]["pca_coords"] = {
+        "signal": {"pc1": [1.0], "pc2": [2.0], "batch": [marker], "target": [marker]}
+    }
+
+    assets = build_report(audit, tmp_path / "public")
+    public = json.loads(assets["json"].read_text(encoding="utf-8"))
+    serialized = json.dumps(public, sort_keys=True)
+    html_text = assets["html"].read_text(encoding="utf-8")
+
+    assert marker not in serialized
+    assert marker not in html_text
+    assert "0.123456789" not in html_text
+    assert "0.987654321" not in html_text
+    assert "within-row missing fraction" in html_text
+    assert "sample_missingness" not in public["diagnostics"]["missingness"]
+    assert public["diagnostics"]["missingness"]["sample_missingness_summary"]
+    assert "pca_coords" not in public["diagnostics"]["batch"]
+    assert public["diagnostics"]["batch"]["pca_coordinates_status"] == (
+        "omitted_from_public_audit"
+    )
+    assert "path" not in public["config"]["modalities"][0]
+    assert "path" not in public["config"]["clinical"]
+    assert "output_dir" not in public["config"]
+    assert "api_key_env" not in public["config"]["llm"]
+
+
 def test_full_pipeline_llm_mocked(aligned, pipeline, tmp_path, monkeypatch):
     # Install a fake anthropic module returning a valid JSON schema.
     canned = json.dumps({

@@ -4,18 +4,20 @@ Produces a single self-contained ``.html`` file that is fully offline (Plotly
 bundled inline; IBM Plex Sans + IBM Plex Mono embedded as @font-face data URIs),
 styled with a humanist sans aesthetic and a color-blind-safe Okabe-Ito palette. Every data grid is sortable, text-filterable, and CSV/TSV-exportable via
 dependency-free vanilla JavaScript. The workflow flowchart is embedded as a
-scaling inline SVG. Alongside the dashboard it writes a raw JSON metadata object
+scaling inline SVG. Alongside the dashboard it writes a public-safe JSON metadata object
 and flat CSV summaries.
 """
 
 from __future__ import annotations
 
+import copy
 import csv
 import html
 import json
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import plotly.graph_objects as go
 from jinja2 import Template
 
@@ -407,17 +409,24 @@ def fig_missingness(missing: dict, include_js: bool) -> str:
     sm = missing.get("sample_missingness", {})
     by_mod = sm.get("by_modality", {})
     if not by_mod:
-        return "<p class='muted'>No missingness matrix available.</p>"
+        return "<p class='muted'>No missingness summary available.</p>"
     mods = list(by_mod.keys())
-    z = [by_mod[m] for m in mods]  # rows = modalities, cols = samples
+    edges = np.asarray([0.0, 0.01, 0.05, 0.10, 0.25, 0.50, 1.0000001])
+    labels = ["0-1%", "1-5%", "5-10%", "10-25%", "25-50%", "50-100%"]
+    z = []
+    for modality in mods:
+        values = np.asarray(by_mod[modality], dtype=float)
+        counts, _ = np.histogram(values[np.isfinite(values)], bins=edges)
+        denominator = max(1, int(counts.sum()))
+        z.append((counts / denominator).tolist())
     fig = go.Figure(go.Heatmap(
-        z=z, y=mods, zmin=0, zmax=max(0.01, max((max(r) for r in z), default=0.01)),
+        z=z, x=labels, y=mods, zmin=0, zmax=1,
         colorscale=[[0, "#FFFFFF"], [0.5, AMBER], [1, VERMILLION]],
-        colorbar=dict(title="missing frac"),
+        colorbar=dict(title="row fraction"),
     ))
     _base_layout(fig)
     fig.update_layout(margin=dict(l=90, r=30, t=20, b=50), showlegend=False,
-                      xaxis_title="samples", yaxis_title="")
+                      xaxis_title="within-row missing fraction", yaxis_title="")
     return _fig_html(fig, include_js)
 
 
@@ -625,6 +634,52 @@ def _build_dome(audit: dict) -> dict:
     }
 
 
+def _public_config_view(config: dict[str, Any]) -> dict[str, Any]:
+    """Remove machine-local input and output locations from a config copy."""
+    public = copy.deepcopy(config)
+    public.pop("output_dir", None)
+    for modality in public.get("modalities", []):
+        if isinstance(modality, dict):
+            modality.pop("path", None)
+    clinical = public.get("clinical")
+    if isinstance(clinical, dict):
+        clinical.pop("path", None)
+    llm = public.get("llm")
+    if isinstance(llm, dict):
+        llm.pop("api_key_env", None)
+    return public
+
+
+def _public_audit_view(audit: dict[str, Any]) -> dict[str, Any]:
+    """Build the identifier-free audit payload written to public assets."""
+    public = copy.deepcopy(audit)
+    public["config"] = _public_config_view(public.get("config", {}))
+
+    diagnostics = public.get("diagnostics", {})
+    missing = diagnostics.get("missingness", {})
+    sample_missingness = missing.pop("sample_missingness", None)
+    if isinstance(sample_missingness, dict):
+        by_modality = sample_missingness.get("by_modality", {})
+        summary: dict[str, dict[str, float | int]] = {}
+        if isinstance(by_modality, dict):
+            for name, values in by_modality.items():
+                array = np.asarray(values, dtype=float)
+                if array.ndim != 1 or not np.isfinite(array).all():
+                    continue
+                summary[str(name)] = {
+                    "n_rows": int(array.size),
+                    "mean_missing_fraction": float(array.mean()) if array.size else 0.0,
+                    "maximum_missing_fraction": float(array.max()) if array.size else 0.0,
+                }
+        missing["sample_missingness_summary"] = summary
+
+    batch = diagnostics.get("batch", {})
+    if isinstance(batch, dict) and "pca_coords" in batch:
+        batch.pop("pca_coords", None)
+        batch["pca_coordinates_status"] = "omitted_from_public_audit"
+    return public
+
+
 def _model_card_md(audit: dict) -> str:
     """A Mitchell-style model card (FAccT 2019) for the run."""
     meta = audit.get("meta", {}); ds = audit.get("dataset", {}); util = audit.get("utility", {})
@@ -673,13 +728,17 @@ def build_report(audit: dict, out_dir: str | Path, config=None) -> dict[str, Pat
     assets: dict[str, Path] = {}
 
     # -- machine-readable assets ------------------------------------------- #
-    audit["dome"] = _build_dome(audit)           # governance metadata into audit.json
+    audit["dome"] = _build_dome(audit)
+    public_audit = _public_audit_view(audit)
+    public_audit["dome"] = _build_dome(public_audit)
     json_path = out / "audit.json"
-    json_path.write_text(json.dumps(audit, indent=2, default=str), encoding="utf-8", newline="")
+    json_path.write_text(
+        json.dumps(public_audit, indent=2, default=str), encoding="utf-8", newline=""
+    )
     assets["json"] = json_path
 
     card_path = out / "MODEL_CARD.md"
-    card_path.write_text(_model_card_md(audit), encoding="utf-8", newline="")
+    card_path.write_text(_model_card_md(public_audit), encoding="utf-8", newline="")
     assets["model_card"] = card_path
 
     models = audit.get("models", {})
@@ -736,7 +795,7 @@ def build_report(audit: dict, out_dir: str | Path, config=None) -> dict[str, Pat
 
     checklist = _trust_checklist(audit, util, missing, batch, control_max)
     ctx = {
-        "audit": audit,
+        "audit": public_audit,
         "control_max": control_max,
         "checklist": checklist,
         "gain_eps": GAIN_EPS,
@@ -763,7 +822,7 @@ def build_report(audit: dict, out_dir: str | Path, config=None) -> dict[str, Pat
                  "gain": gain_html, "attribution": attr_html, "calibration": cal_html},
         "tables": {"models": model_table, "ledger": ledger_table, "diag": diag_table,
                    "attr": attr_table},
-        "config_json": html.escape(json.dumps(audit.get("config", {}), indent=2)),
+        "config_json": html.escape(json.dumps(public_audit.get("config", {}), indent=2)),
     }
     html_out = Template(_TEMPLATE).render(**ctx)
     html_path = out / "report.html"
