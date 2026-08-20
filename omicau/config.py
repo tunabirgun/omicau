@@ -51,6 +51,10 @@ class ClinicalSpec:
     group: str | list[str] | None = None
     #: Column defining batches for batch-effect diagnostics.
     batch: str | None = None
+    #: Optional exact modality-to-clinical-column mapping for modality-specific
+    #: batch labels. Alignment preserves missing labels in this mapping so later
+    #: group-aware diagnostics can refuse incomplete batch metadata explicitly.
+    batch_by_modality: dict[str, str] = field(default_factory=dict)
     #: For binary classification, the label treated as the positive class.
     positive_label: str | None = None
     #: "auto" | "classification" | "regression" | "survival".

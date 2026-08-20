@@ -369,6 +369,7 @@ def test_public_report_omits_row_level_and_local_config_values(aligned, pipeline
     marker = "PRIVATE_LOCAL_MARKER"
     audit["config"]["modalities"][0]["path"] = f"C:\\Users\\{marker}\\rna.csv"
     audit["config"]["clinical"]["path"] = f"C:\\Users\\{marker}\\clinical.csv"
+    audit["config"]["clinical"]["batch_by_modality"] = {"signal": marker}
     audit["config"]["output_dir"] = f"C:\\Users\\{marker}\\output"
     audit["config"]["llm"]["api_key_env"] = f"{marker}_KEY"
     audit["diagnostics"]["missingness"]["sample_missingness"]["sample_ids"][0] = marker
@@ -398,6 +399,7 @@ def test_public_report_omits_row_level_and_local_config_values(aligned, pipeline
     )
     assert "path" not in public["config"]["modalities"][0]
     assert "path" not in public["config"]["clinical"]
+    assert "batch_by_modality" not in public["config"]["clinical"]
     assert "output_dir" not in public["config"]
     assert "api_key_env" not in public["config"]["llm"]
 

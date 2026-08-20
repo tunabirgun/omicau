@@ -74,6 +74,7 @@ class AlignedDataset:
     class_names: list[str] | None = None
     groups: pd.Series | None = None
     batch: pd.Series | None = None
+    batch_by_modality: dict[str, pd.Series] = field(default_factory=dict)
     event: pd.Series | None = None      # survival only: 1 = event, 0 = right-censored
     time_unit: str = ""                 # survival only: free-text label for the report
     provenance_hash: str = ""
@@ -618,6 +619,33 @@ def align_modalities(
         batch = clinical[clin_spec.batch].astype("string").fillna("NA")
         batch.index = pd.Index(sample_ids)
 
+    raw_batch_by_modality = clin_spec.batch_by_modality
+    if not isinstance(raw_batch_by_modality, dict):
+        raise ValueError("clinical.batch_by_modality must be an exact modality-to-column mapping")
+    expected_modalities = set(aligned_mods)
+    if raw_batch_by_modality:
+        if (
+            any(type(key) is not str or type(value) is not str
+                for key, value in raw_batch_by_modality.items())
+            or set(raw_batch_by_modality) != expected_modalities
+        ):
+            raise ValueError("clinical.batch_by_modality must cover every aligned modality exactly")
+        if any(column not in clinical.columns for column in raw_batch_by_modality.values()):
+            raise ValueError("clinical.batch_by_modality refers to an unavailable clinical column")
+        batch_by_modality = {
+            name: clinical[raw_batch_by_modality[name]].astype("string").copy()
+            for name in aligned_mods
+        }
+    elif clin_spec.batch and clin_spec.batch in clinical.columns:
+        batch_by_modality = {
+            name: clinical[clin_spec.batch].astype("string").copy()
+            for name in aligned_mods
+        }
+    else:
+        batch_by_modality = {}
+    for values in batch_by_modality.values():
+        values.index = pd.Index(sample_ids)
+
     event = None
     if is_survival:
         parsed = _encode_event(clinical[clin_spec.event])
@@ -665,6 +693,7 @@ def align_modalities(
         class_names=class_names,
         groups=groups,
         batch=batch,
+        batch_by_modality=batch_by_modality,
         event=event,
         time_unit=clin_spec.time_unit,
         provenance_hash=prov,

@@ -644,6 +644,7 @@ def _public_config_view(config: dict[str, Any]) -> dict[str, Any]:
     clinical = public.get("clinical")
     if isinstance(clinical, dict):
         clinical.pop("path", None)
+        clinical.pop("batch_by_modality", None)
     llm = public.get("llm")
     if isinstance(llm, dict):
         llm.pop("api_key_env", None)
