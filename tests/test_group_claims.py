@@ -1,9 +1,12 @@
 import json
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from omicau.diagnostics import group_claims as gc
+from omicau.data.alignment import align_modalities
+from omicau.data.benchmark_data import make_mock_dataset, mock_config
 
 
 def _inputs() -> tuple[dict, np.ndarray, np.ndarray, np.ndarray]:
@@ -71,6 +74,211 @@ def _independent_holm(values: list[float]) -> np.ndarray:
     adjusted = np.empty_like(raw)
     adjusted[order] = np.minimum(sorted_adjusted, 1.0)
     return adjusted
+
+
+def _aligned_inputs(task="classification"):
+    bundle = make_mock_dataset(task=task, n_samples=48, seed=23)
+    clinical = bundle.clinical.copy()
+    group_order = {
+        group: index for index, group in enumerate(sorted(clinical["patient_id"].unique()))
+    }
+    if task == "classification":
+        clinical["label"] = clinical["patient_id"].map(
+            lambda group: "responder" if group_order[group] % 2 else "nonresponder"
+        )
+    elif task == "regression":
+        clinical["label"] = clinical["patient_id"].map(
+            lambda group: float(group_order[group])
+        )
+    else:
+        clinical["time"] = clinical["patient_id"].map(
+            lambda group: float(group_order[group] + 1)
+        )
+        clinical["event"] = clinical["patient_id"].map(
+            lambda group: int(group_order[group] % 2)
+        )
+    clinical["batch"] = clinical["patient_id"].map(
+        lambda group: f"batch{group_order[group] % 3 + 1}"
+    )
+    config = mock_config(task=task)
+    config.clinical.batch_by_modality = {
+        name: "batch" for name in bundle.modalities
+    }
+    aligned = align_modalities(bundle.modalities, clinical, config)
+    representations = {
+        name: {
+            "values": pd.DataFrame(
+                np.nan_to_num(modality.X, nan=0.0),
+                index=aligned.sample_ids,
+                columns=[f"{name}::{feature}" for feature in modality.feature_names],
+            ),
+        }
+        for name, modality in aligned.modalities.items()
+    }
+    parameters = _parameters(
+        {
+            name: {"missingness": None, "representation": None}
+            for name in aligned.modalities
+        }
+    )
+    parameters.pop("batch_by_modality")
+    parameters.pop("endpoint_task")
+    parameters.pop("event")
+    return aligned, representations, parameters
+
+
+def test_aligned_adapter_binds_exact_modalities_and_preserves_development_status(monkeypatch):
+    _install_fakes(monkeypatch)
+    aligned, representations, parameters = _aligned_inputs()
+
+    result = gc.group_claim_receipts_from_aligned(
+        aligned, representations, **parameters
+    )
+
+    assert result["status"] == "development_only_not_production_wired"
+    assert result["modality_count"] == len(aligned.modalities)
+    assert set(result["claims"]) == {"C03", "C04", "C05"}
+
+
+def test_aligned_adapter_derives_missingness_without_mutating_inputs(monkeypatch):
+    aligned, representations, parameters = _aligned_inputs()
+    name = next(iter(aligned.modalities))
+    row = aligned.modalities[name].frame.index[0]
+    column = aligned.modalities[name].frame.columns[0]
+    aligned.modalities[name].frame.loc[row, column] = np.nan
+    before = {
+        key: value["values"].copy(deep=True) for key, value in representations.items()
+    }
+    seen: dict[str, np.ndarray] = {}
+
+    def fake_missingness(missingness, *args, **kwargs):
+        seen["missingness"] = np.asarray(missingness).copy()
+        return {
+            "endpoint_association": {"primary": {"p_value": 0.5}},
+            "batch_association": {"primary": {"p_value": 0.5}},
+        }
+
+    monkeypatch.setattr(gc.gm, "group_missingness_diagnostics", fake_missingness)
+    monkeypatch.setattr(
+        gc.gb, "structure_batch_association", lambda *a, **k: {"p_value": 0.5}
+    )
+    monkeypatch.setattr(
+        gc.gb, "classification_batch_association", lambda *a, **k: {"p_value": 0.5}
+    )
+
+    gc.group_claim_receipts_from_aligned(aligned, representations, **parameters)
+
+    assert seen["missingness"].dtype == np.int8
+    assert int(seen["missingness"].sum()) >= 1
+    assert all(
+        representations[key]["values"].equals(value)
+        for key, value in before.items()
+    )
+
+
+def test_aligned_adapter_routes_regression_without_defaults(monkeypatch):
+    _install_fakes(monkeypatch)
+    aligned, representations, parameters = _aligned_inputs("regression")
+
+    result = gc.group_claim_receipts_from_aligned(
+        aligned, representations, **parameters
+    )
+
+    assert result["status"] == "development_only_not_production_wired"
+    assert set(result["claims"]) == {"C03", "C04", "C05"}
+
+
+def test_aligned_adapter_preserves_fixed_survival_refusal():
+    aligned, representations, parameters = _aligned_inputs("survival")
+
+    with pytest.raises(
+        gc.GroupClaimsRefusal, match=f"^{gc.REFUSAL_SURVIVAL_UNSUPPORTED}$"
+    ):
+        gc.group_claim_receipts_from_aligned(
+            aligned, representations, **parameters
+        )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing_groups",
+        "missing_batch_modality",
+        "missing_batch_value",
+        "group_order",
+        "endpoint_order",
+        "batch_order",
+        "missing_representation",
+        "nonfinite_representation",
+        "row_count",
+        "modality_order",
+        "representation_order",
+        "representation_value_order",
+        "representation_modality_swap",
+        "representation_extra_field",
+        "duplicate_sample",
+    ],
+)
+def test_aligned_adapter_refuses_incomplete_or_unbound_inputs(mutation, monkeypatch):
+    aligned, representations, parameters = _aligned_inputs()
+    hostile = r"C:\private\token=synthetic-secret-marker"
+    if mutation == "missing_groups":
+        aligned.groups = None
+    elif mutation == "missing_batch_modality":
+        aligned.batch_by_modality.pop(next(iter(aligned.batch_by_modality)))
+    elif mutation == "missing_batch_value":
+        name = next(iter(aligned.batch_by_modality))
+        aligned.batch_by_modality[name] = aligned.batch_by_modality[name].copy()
+        aligned.batch_by_modality[name].iloc[0] = pd.NA
+    elif mutation == "group_order":
+        aligned.groups = aligned.groups.iloc[::-1]
+    elif mutation == "endpoint_order":
+        aligned.y = aligned.y.iloc[::-1]
+    elif mutation == "batch_order":
+        name = next(iter(aligned.batch_by_modality))
+        aligned.batch_by_modality[name] = aligned.batch_by_modality[name].iloc[::-1]
+    elif mutation == "missing_representation":
+        representations.pop(next(iter(representations)))
+    elif mutation == "nonfinite_representation":
+        representations[next(iter(representations))]["values"].iloc[0, 0] = np.inf
+    elif mutation == "row_count":
+        name = next(iter(representations))
+        representations[name]["values"] = representations[name]["values"].iloc[:-1]
+    elif mutation == "modality_order":
+        name = next(iter(aligned.modalities))
+        aligned.modalities[name].frame = aligned.modalities[name].frame.iloc[::-1]
+    elif mutation == "representation_order":
+        name = next(iter(representations))
+        representations[name]["values"] = representations[name]["values"].iloc[::-1]
+    elif mutation == "representation_value_order":
+        name = next(iter(representations))
+        reversed_values = representations[name]["values"].iloc[::-1].copy()
+        reversed_values.index = aligned.sample_ids
+        representations[name]["values"] = reversed_values
+    elif mutation == "representation_modality_swap":
+        first, second = list(representations)[:2]
+        representations[first]["values"], representations[second]["values"] = (
+            representations[second]["values"],
+            representations[first]["values"],
+        )
+    elif mutation == "representation_extra_field":
+        representations[next(iter(representations))]["extra"] = hostile
+    else:
+        aligned.sample_ids[1] = aligned.sample_ids[0]
+    with pytest.raises(
+        gc.GroupClaimsRefusal, match=f"^{gc.REFUSAL_ALIGNED_INPUT}$"
+    ) as captured:
+        gc.group_claim_receipts_from_aligned(
+            aligned, representations, **parameters
+        )
+    assert hostile.lower() not in str(captured.value).lower()
+
+
+def test_aligned_adapter_remains_inactive_in_cli_source():
+    from pathlib import Path
+
+    source = Path("omicau/cli.py").read_text(encoding="utf-8")
+    assert "group_claim_receipts_from_aligned" not in source
 
 
 def _install_fakes(monkeypatch, *, secondary_p: float = 0.5) -> None:

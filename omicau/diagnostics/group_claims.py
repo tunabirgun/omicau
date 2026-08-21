@@ -7,6 +7,7 @@ import re
 from typing import Any, Literal
 
 import numpy as np
+import pandas as pd
 
 from omicau.diagnostics import group_batch as gb
 from omicau.diagnostics import group_missingness as gm
@@ -22,12 +23,14 @@ REFUSAL_SURVIVAL_UNSUPPORTED = "GROUP_CLAIMS_SURVIVAL_MISSINGNESS_UNSUPPORTED"
 REFUSAL_SUPPORT = "GROUP_CLAIMS_SUPPORT_REFUSED"
 REFUSAL_ANALYSIS = "GROUP_CLAIMS_ANALYSIS_REFUSED"
 REFUSAL_ELIGIBILITY_REGISTRY = "GROUP_CLAIMS_ELIGIBILITY_REGISTRY_REFUSED"
+REFUSAL_ALIGNED_INPUT = "GROUP_CLAIMS_ALIGNED_INPUT_REFUSED"
 
 _MODALITY_FIELDS = frozenset({"missingness", "representation"})
 _REPS_FIELDS = frozenset({"missingness", "c05_structure", "c05_outcome"})
 _SUPPORT_FIELDS = frozenset({"minimum_groups", "minimum_groups_per_batch"})
 _SEED_FIELDS = _REPS_FIELDS
 _ELIGIBILITY_FIELDS = frozenset({"eligibility_status"})
+_REPRESENTATION_INPUT_FIELDS = frozenset({"values"})
 _SAFE_ID = re.compile(r"[a-z][a-z0-9_]{0,63}")
 
 
@@ -144,6 +147,132 @@ def _family_receipt(
         "secondary_evidence_status": "localization_only_not_decision_triggering",
         "oracle_status": "not_run_development_scaffold",
     }
+
+
+def _aligned_vector(value: Any, sample_ids: Sequence[str]) -> np.ndarray:
+    try:
+        if hasattr(value, "index") and list(value.index) != list(sample_ids):
+            _refuse(REFUSAL_ALIGNED_INPUT)
+        result = np.asarray(value, dtype=object)
+    except (TypeError, ValueError, IndexError):
+        _refuse(REFUSAL_ALIGNED_INPUT)
+    if result.ndim != 1 or len(result) != len(sample_ids):
+        _refuse(REFUSAL_ALIGNED_INPUT)
+    for item in result.tolist():
+        try:
+            missing = item is None or bool(np.asarray(item != item))
+        except (TypeError, ValueError):
+            _refuse(REFUSAL_ALIGNED_INPUT)
+        if missing:
+            _refuse(REFUSAL_ALIGNED_INPUT)
+    return result
+
+
+def group_claim_receipts_from_aligned(
+    aligned: Any,
+    representations: Mapping[str, Mapping[str, Any]],
+    *,
+    eligible_modality_registry: Mapping[str, Mapping[str, Any]],
+    alpha: float,
+    permutation_reps: Mapping[str, int],
+    permutation_seeds: Mapping[str, Mapping[str, int]],
+    support: Mapping[str, int],
+    group_reducer: gb.Reducer,
+    standardization: gb.Standardization,
+    representation_distance: gb.RepresentationDistance,
+) -> dict[str, Any]:
+    """Bind an aligned dataset to C03-C05 mechanics without choosing parameters."""
+    try:
+        names = list(aligned.modalities)
+        sample_ids = list(aligned.sample_ids)
+        task = aligned.task
+    except (AttributeError, TypeError, ValueError):
+        _refuse(REFUSAL_ALIGNED_INPUT)
+    if (
+        not names
+        or not sample_ids
+        or len(sample_ids) != len(set(sample_ids))
+        or any(type(name) is not str or _SAFE_ID.fullmatch(name) is None for name in names)
+        or not isinstance(representations, Mapping)
+        or set(representations) != set(names)
+    ):
+        _refuse(REFUSAL_ALIGNED_INPUT)
+    if aligned.groups is None or not isinstance(aligned.batch_by_modality, Mapping):
+        _refuse(REFUSAL_ALIGNED_INPUT)
+    if set(aligned.batch_by_modality) != set(names):
+        _refuse(REFUSAL_ALIGNED_INPUT)
+
+    groups = _aligned_vector(aligned.groups, sample_ids)
+    endpoint = _aligned_vector(aligned.y, sample_ids)
+    batches = {
+        name: _aligned_vector(aligned.batch_by_modality[name], sample_ids)
+        for name in names
+    }
+    modalities: dict[str, dict[str, np.ndarray]] = {}
+    for name in names:
+        try:
+            modality_ids = list(aligned.modalities[name].frame.index)
+            matrix = np.asarray(aligned.modalities[name].X, dtype=float)
+            specification = _exact_mapping(
+                representations[name], _REPRESENTATION_INPUT_FIELDS
+            )
+            representation_frame = specification["values"]
+            if not isinstance(representation_frame, pd.DataFrame):
+                _refuse(REFUSAL_ALIGNED_INPUT)
+            representation_ids = list(representation_frame.index)
+            representation_columns = list(representation_frame.columns)
+            expected_columns = [
+                f"{name}::{feature}"
+                for feature in aligned.modalities[name].feature_names
+            ]
+            representation = representation_frame.to_numpy(dtype=float)
+        except (AttributeError, TypeError, ValueError, IndexError):
+            _refuse(REFUSAL_ALIGNED_INPUT)
+        if (
+            modality_ids != sample_ids
+            or representation_ids != sample_ids
+            or representation_columns != expected_columns
+            or matrix.ndim != 2
+            or representation.ndim != 2
+            or matrix.shape[0] != len(sample_ids)
+            or representation.shape[0] != len(sample_ids)
+            or matrix.shape[1] == 0
+            or representation.shape[1] == 0
+            or not np.isfinite(representation).all()
+        ):
+            _refuse(REFUSAL_ALIGNED_INPUT)
+        observed = np.isfinite(matrix)
+        if not np.array_equal(representation[observed], matrix[observed]):
+            _refuse(REFUSAL_ALIGNED_INPUT)
+        modalities[name] = {
+            "missingness": np.isnan(matrix).astype(np.int8),
+            "representation": np.array(representation, dtype=float, copy=True),
+        }
+
+    event = None
+    if task == "survival":
+        if aligned.event is None:
+            _refuse(REFUSAL_ALIGNED_INPUT)
+        event = _aligned_vector(aligned.event, sample_ids)
+    elif aligned.event is not None:
+        _refuse(REFUSAL_ALIGNED_INPUT)
+
+    return group_claim_receipts(
+        modalities,
+        groups,
+        endpoint,
+        endpoint_task=task,
+        batch_by_modality=batches,
+        eligible_modality_registry=eligible_modality_registry,
+        event=event,
+        alpha=alpha,
+        permutation_reps=permutation_reps,
+        permutation_seeds=permutation_seeds,
+        support=support,
+        group_reducer=group_reducer,
+        standardization=standardization,
+        representation_distance=representation_distance,
+    )
 
 
 def group_claim_receipts(
