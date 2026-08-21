@@ -279,10 +279,21 @@ def _group_context(
     time: Sequence[Any] | None,
     event: Sequence[Any] | None,
 ) -> dict[str, Any]:
-    if isinstance(groups, (str, bytes)) or not groups:
+    if isinstance(groups, (str, bytes)):
         _fail("c07_endpoint_invalid", "groups_type")
-    n_rows = len(groups)
-    if len(strata) != n_rows:
+    try:
+        n_rows = len(groups)
+    except TypeError:
+        _fail("c07_endpoint_invalid", "groups_type")
+    if n_rows == 0:
+        _fail("c07_endpoint_invalid", "groups_type")
+    if isinstance(strata, (str, bytes)):
+        _fail("c07_endpoint_invalid", "strata_shape")
+    try:
+        strata_rows = len(strata)
+    except TypeError:
+        _fail("c07_endpoint_invalid", "strata_shape")
+    if strata_rows != n_rows:
         _fail("c07_endpoint_invalid", "strata_shape")
     group_rows: dict[str | int, list[int]] = {}
     normalized_groups: list[str | int] = []
@@ -641,6 +652,108 @@ def execute_group_endpoint_permutation(
         "stratum_count": len(blocks),
         "transform_role": "stress_control_only_not_inferential_randomization",
     }
+
+
+def _execute_fold_endpoint_permutations(
+    *,
+    contract: Mapping[str, Any],
+    outer_splits: Sequence[tuple[Sequence[Any], Sequence[Any]]],
+    groups: Sequence[Any],
+    task: str,
+    y: Sequence[Any] | None = None,
+    time: Sequence[Any] | None = None,
+    event: Sequence[Any] | None = None,
+) -> tuple[tuple[dict[str, np.ndarray], ...], dict[str, Any]]:
+    """Build private per-fold training endpoints and an aggregate public receipt."""
+    expected = {
+        "exchangeability_contract",
+        "fold_seeds",
+        "minimum_distinct_nonidentity_assignments",
+        "permutation_registry",
+        "strata",
+        "strata_schema",
+    }
+    if not isinstance(contract, Mapping) or set(contract) != expected:
+        _fail("c07_contract_invalid", "fold_contract_schema")
+    if isinstance(outer_splits, (str, bytes)) or not outer_splits:
+        _fail("c07_contract_invalid", "outer_splits")
+    fold_seeds = contract["fold_seeds"]
+    if (
+        isinstance(fold_seeds, (str, bytes))
+        or not isinstance(fold_seeds, Sequence)
+        or len(fold_seeds) != len(outer_splits)
+    ):
+        _fail("c07_contract_invalid", "fold_seed_count")
+
+    candidates: list[dict[str, np.ndarray]] = []
+    receipts: list[dict[str, Any]] = []
+    for fold, split in enumerate(outer_splits):
+        if not isinstance(split, Sequence) or len(split) != 2:
+            _fail("c07_contract_invalid", "outer_split_schema")
+        captured: dict[str, np.ndarray] = {}
+
+        def consume(candidate: Mapping[str, np.ndarray]) -> None:
+            if captured:
+                _fail("c07_contract_invalid", "fold_candidate_count")
+            captured.update({key: np.asarray(value).copy() for key, value in candidate.items()})
+
+        receipt = execute_group_endpoint_permutation(
+            groups=groups,
+            strata=contract["strata"],
+            strata_schema=contract["strata_schema"],
+            permutation_registry=contract["permutation_registry"],
+            exchangeability_contract=contract["exchangeability_contract"],
+            task=task,
+            outer_train_indices=split[0],
+            minimum_distinct_nonidentity_assignments=contract[
+                "minimum_distinct_nonidentity_assignments"
+            ],
+            seed=fold_seeds[fold],
+            consume=consume,
+            y=y,
+            time=time,
+            event=event,
+        )
+        if not captured:
+            _fail("c07_contract_invalid", "fold_candidate_count")
+        candidates.append(captured)
+        receipts.append(receipt)
+
+    first = receipts[0]
+    stable_keys = (
+        "claim_id",
+        "control_kind",
+        "exchangeability_contract_sha256",
+        "minimum_distinct_nonidentity_assignments",
+        "permutation_registry_sha256",
+        "permutation_registry_status",
+        "strata_schema_sha256",
+        "transform_role",
+    )
+    if any(
+        any(receipt[key] != first[key] for key in stable_keys)
+        for receipt in receipts[1:]
+    ):
+        _fail("c07_contract_invalid", "fold_contract_consistency")
+    public_receipt = {key: first[key] for key in stable_keys}
+    public_receipt.update(
+        {
+            "decision": "development_only",
+            "fold_count": len(receipts),
+            "fold_summaries": [
+                {
+                    "attainable_permutation_count": receipt[
+                        "attainable_permutation_count"
+                    ],
+                    "outer_train_group_count": receipt["outer_train_group_count"],
+                    "stratum_count": receipt["stratum_count"],
+                }
+                for receipt in receipts
+            ],
+            "production_status": "pending_frozen_registry_and_fit_ancestry_inventory",
+        }
+    )
+    return tuple(candidates), public_receipt
 
 
 def validate_target_fit_ancestry(

@@ -32,6 +32,7 @@ from omicau.models.base import (
     resolve_validated_cv_splits,
     score_predictions,
 )
+from omicau.models.group_controls import _execute_fold_endpoint_permutations
 
 
 def resolve_cores(config) -> int:
@@ -299,18 +300,28 @@ def _run_batch_adjusted_fusion(
 
 
 def run_classical_benchmarks(
-    aligned, config, batch_diag=None, *, validated_plan=None
+    aligned,
+    config,
+    batch_diag=None,
+    *,
+    validated_plan=None,
+    validated_control_contract=None,
 ) -> dict[str, Any]:
     """Run the full classical benchmark grid over an aligned dataset."""
-    legacy_controls_requested = config.controls.enabled and any(
-        (
-            config.controls.shuffle_target,
-            config.controls.shuffle_features,
-            config.controls.random_noise,
-        )
+    target_control_requested = bool(
+        config.controls.enabled and config.controls.shuffle_target
     )
-    if validated_plan is not None and legacy_controls_requested:
-        raise ValueError("validated_plan_controls_require_c07_integration")
+    feature_controls_requested = bool(
+        config.controls.enabled
+        and (config.controls.shuffle_features or config.controls.random_noise)
+    )
+    if validated_plan is not None and feature_controls_requested:
+        raise ValueError("validated_plan_feature_controls_require_c07_integration")
+    if validated_plan is not None and target_control_requested:
+        if validated_control_contract is None:
+            raise ValueError("validated_plan_target_control_contract_required")
+    elif validated_control_contract is not None:
+        raise ValueError("validated_plan_target_control_contract_unused")
     task = aligned.task
     seed = config.seed
     n_jobs = resolve_cores(config)
@@ -324,7 +335,16 @@ def run_classical_benchmarks(
     groups = aligned.groups.to_numpy() if aligned.groups is not None else None
     mods = aligned.modality_names
 
-    def run(name, X, feats, modalities, yy=y, gg=groups, imp=False):
+    def run(
+        name,
+        X,
+        feats,
+        modalities,
+        yy=y,
+        gg=groups,
+        imp=False,
+        control_contract=None,
+    ):
         factory = _estimator_factory(ref_key if imp else current_key, task, seed, n_jobs)
         return cross_validate_estimator(
             name, X, yy, gg, task, factory,
@@ -332,10 +352,23 @@ def run_classical_benchmarks(
             n_splits=n_splits, seed=seed, shuffle=shuffle, max_features=max_feat,
             compute_importance=imp, importance_repeats=config.xai.permutation_repeats,
             validated_plan=validated_plan,
+            validated_control_contract=control_contract,
         )
 
     results: list[CVResult] = []
     X_all, feats_all = aligned.concat_matrix(mods)
+    control_execution_receipt = None
+    if validated_plan is not None and target_control_requested:
+        outer_splits, _, _ = resolve_validated_cv_splits(
+            validated_plan, X_all, y, groups, task, n_splits
+        )
+        _, control_execution_receipt = _execute_fold_endpoint_permutations(
+            contract=validated_control_contract,
+            outer_splits=outer_splits,
+            groups=groups,
+            task=task,
+            y=y,
+        )
 
     for current_key in keys:
         # single-modality baselines
@@ -359,8 +392,22 @@ def run_classical_benchmarks(
 
     if config.controls.enabled:
         if config.controls.shuffle_target:
-            y_shuf = rng.permutation(y)
-            controls.append(run("control::shuffled_target", X_all, feats_all, mods, yy=y_shuf))
+            if validated_plan is None:
+                y_shuf = rng.permutation(y)
+                controls.append(
+                    run("control::shuffled_target", X_all, feats_all, mods, yy=y_shuf)
+                )
+            else:
+                control = run(
+                    "control::group_permuted_target",
+                    X_all,
+                    feats_all,
+                    mods,
+                    control_contract=validated_control_contract,
+                )
+                if control.extra.get("control_execution_receipt") != control_execution_receipt:
+                    raise ValueError("validated_target_control_receipt_mismatch")
+                controls.append(control)
         if config.controls.shuffle_features:
             Xp = np.array(X_all, copy=True)
             for j in range(Xp.shape[1]):
@@ -424,6 +471,7 @@ def run_classical_benchmarks(
         "estimator_keys": keys,
         "results": results,
         "controls": controls,
+        "control_execution_receipt": control_execution_receipt,
         "split_plan_status": split_plan_status,
         "split_plan_receipt": split_plan_receipt,
     }

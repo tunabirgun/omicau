@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import hashlib
 from types import SimpleNamespace
 
 import numpy as np
@@ -9,7 +10,9 @@ import pytest
 from sklearn.linear_model import LogisticRegression, Ridge
 
 import omicau.models.classical as classical
+import omicau.models.base as base
 from omicau.models.base import cross_validate_estimator
+from omicau.models.base import CVResult
 from omicau.models.split_plan import ValidatedSplitPlan, validate_split_manifest
 
 
@@ -190,6 +193,40 @@ def _config():
     )
 
 
+def _control_contract(n_rows: int = 8) -> dict[str, object]:
+    return {
+        "strata": ["registered_block"] * n_rows,
+        "strata_schema": {
+            "name": "registered_block",
+            "version": "1",
+            "fields": ["registered_block"],
+            "target_derived": False,
+        },
+        "permutation_registry": {
+            "schema_version": "c07_private_registry_binding_v1",
+            "purpose": "group_endpoint_permutation",
+            "nonce_hex": hashlib.sha256(b"synthetic c07 registry nonce").hexdigest(),
+            "registry_id": "synthetic_group_endpoint_permutation",
+            "artifact": {
+                "artifact_id": "synthetic_fixture",
+                "sha256": hashlib.sha256(b"synthetic c07 fixture").hexdigest(),
+            },
+            "entries": [
+                {
+                    "entry_id": "synthetic_entry",
+                    "artifact_sha256": hashlib.sha256(b"synthetic c07 entry").hexdigest(),
+                }
+            ],
+        },
+        "exchangeability_contract": {
+            "unit": "highest_exchangeable_group",
+            "scope": "outer_train_only",
+        },
+        "minimum_distinct_nonidentity_assignments": 1,
+        "fold_seeds": [31, 37],
+    }
+
+
 class _Aligned:
     task = "classification"
     modality_names = ["m1", "m2"]
@@ -228,6 +265,64 @@ def test_legacy_path_is_explicitly_non_benchmark():
     result = _run_base(None)
     assert result.extra["split_plan_status"] == "legacy_generated_non_benchmark"
     assert result.extra["split_plan_receipt"] is None
+
+
+def test_cross_validation_derives_fold_targets_and_scores_original_truth(
+    monkeypatch,
+):
+    fitted: list[np.ndarray] = []
+
+    class _Estimator:
+        classes_ = np.asarray([0, 1])
+
+    class _Pipeline:
+        named_steps = {"estimator": _Estimator()}
+
+        def fit(self, X, y):
+            fitted.append(np.asarray(y).copy())
+            return self
+
+        def predict_proba(self, X):
+            return np.column_stack((np.full(len(X), 0.5), np.full(len(X), 0.5)))
+
+    monkeypatch.setattr(base, "make_pipeline", lambda *args, **kwargs: _Pipeline())
+    result = base.cross_validate_estimator(
+        "control::group_permuted_target",
+        np.arange(16, dtype=float).reshape(8, 2),
+        np.asarray([0, 1, 0, 1, 0, 1, 0, 1]),
+        np.asarray([f"g{index}" for index in range(8)], dtype=object),
+        "classification",
+        lambda: _Estimator(),
+        feature_names=["a", "b"],
+        modalities=["m"],
+        n_splits=2,
+        seed=3,
+        validated_plan=_plan(),
+        validated_control_contract=_control_contract(),
+    )
+    expected_multisets = [[0, 0, 1, 1], [0, 0, 1, 1]]
+    assert [sorted(observed.tolist()) for observed in fitted] == expected_multisets
+    assert all(not np.array_equal(observed, [0, 1, 0, 1]) for observed in fitted)
+    assert np.array_equal(result.oof_true, np.asarray([0, 1, 0, 1, 0, 1, 0, 1]))
+    assert result.extra["control_execution_receipt"]["decision"] == "development_only"
+
+
+def test_raw_fold_training_target_bypass_is_not_in_the_cv_api():
+    with pytest.raises(TypeError, match="fold_training_targets"):
+        cross_validate_estimator(
+            "test",
+            np.arange(16, dtype=float).reshape(8, 2),
+            np.asarray([0, 1, 0, 1, 0, 1, 0, 1]),
+            np.asarray([f"g{index}" for index in range(8)], dtype=object),
+            "classification",
+            _factory("classification"),
+            feature_names=["a", "b"],
+            modalities=["m"],
+            n_splits=2,
+            seed=3,
+            validated_plan=_plan(),
+            fold_training_targets=(np.asarray([0, 1, 0, 1]),),
+        )
 
 
 def test_regression_uses_the_same_supplied_outer_partitions():
@@ -353,13 +448,126 @@ def test_plan_with_legacy_controls_fails_before_any_estimator(monkeypatch):
 
     monkeypatch.setattr(classical, "_estimator_factory", watched_factory)
     with pytest.raises(
-        ValueError, match="^validated_plan_controls_require_c07_integration$"
+        ValueError, match="^validated_plan_feature_controls_require_c07_integration$"
     ) as caught:
         classical.run_classical_benchmarks(
             _Aligned(), config, validated_plan=_plan()
         )
     assert constructed == 0
     assert "g0" not in str(caught.value)
+
+
+def test_validated_target_control_requires_explicit_contract_before_estimator(monkeypatch):
+    config = _config()
+    config.controls.enabled = True
+    config.controls.shuffle_target = True
+    constructed = 0
+
+    def forbidden_factory(*args, **kwargs):
+        nonlocal constructed
+        constructed += 1
+        raise AssertionError("estimator construction must not start")
+
+    monkeypatch.setattr(classical, "_estimator_factory", forbidden_factory)
+    with pytest.raises(
+        ValueError, match="^validated_plan_target_control_contract_required$"
+    ):
+        classical.run_classical_benchmarks(
+            _Aligned(), config, validated_plan=_plan()
+        )
+    assert constructed == 0
+
+
+def test_validated_target_control_routes_fold_targets_and_keeps_truth(monkeypatch):
+    config = _config()
+    config.controls.enabled = True
+    config.controls.shuffle_target = True
+    captured: dict[str, object] = {}
+
+    def fake_cv(name, X, y, groups, task, factory, **kwargs):
+        receipt = None
+        if name == "control::group_permuted_target":
+            captured["contract"] = kwargs["validated_control_contract"]
+            captured["truth"] = np.asarray(y).copy()
+            splits, _, _ = classical.resolve_validated_cv_splits(
+                kwargs["validated_plan"], X, y, groups, task, kwargs["n_splits"]
+            )
+            _, receipt = classical._execute_fold_endpoint_permutations(
+                contract=kwargs["validated_control_contract"],
+                outer_splits=splits,
+                groups=groups,
+                task=task,
+                y=y,
+            )
+        return CVResult(
+            name=name,
+            task=task,
+            metrics={"auroc": 0.5},
+            fold_primary=[0.5, 0.5],
+            per_fold=[{"auroc": 0.5}, {"auroc": 0.5}],
+            n_features=np.asarray(X).shape[1],
+            modalities=list(kwargs["modalities"]),
+            oof_true=np.asarray(y).copy(),
+            oof_score=np.full(len(y), 0.5),
+            oof_pred=np.zeros(len(y)),
+            oof_groups=np.asarray(groups).copy(),
+            extra={"n_splits": 2, "control_execution_receipt": receipt},
+        )
+
+    monkeypatch.setattr(classical, "cross_validate_estimator", fake_cv)
+    monkeypatch.setattr(classical, "_run_stacking", lambda *args, **kwargs: None)
+    output = classical.run_classical_benchmarks(
+        _Aligned(),
+        config,
+        validated_plan=_plan(),
+        validated_control_contract=_control_contract(),
+    )
+    assert captured["contract"] == _control_contract()
+    assert np.array_equal(captured["truth"], _Aligned.y.to_numpy())
+    assert output["controls"][0].oof_true.tolist() == _Aligned.y.tolist()
+    receipt = output["control_execution_receipt"]
+    assert receipt["decision"] == "development_only"
+    assert receipt["fold_count"] == 2
+    assert "seed" not in repr(receipt).lower()
+
+
+def test_validated_target_control_runs_through_classification_pipeline():
+    config = _config()
+    config.controls.enabled = True
+    config.controls.shuffle_target = True
+    output = classical.run_classical_benchmarks(
+        _Aligned(),
+        config,
+        validated_plan=_plan(),
+        validated_control_contract=_control_contract(),
+    )
+    assert [control.name for control in output["controls"]] == [
+        "control::group_permuted_target"
+    ]
+    assert output["controls"][0].oof_true.tolist() == _Aligned.y.tolist()
+    assert output["control_execution_receipt"]["decision"] == "development_only"
+
+
+def test_validated_target_control_runs_through_regression_pipeline():
+    config = _config()
+    config.controls.enabled = True
+    config.controls.shuffle_target = True
+    aligned = _Aligned()
+    aligned.task = "regression"
+    aligned.y = pd.Series(np.arange(8, dtype=float))
+    aligned.modality_names = ["m1"]
+    aligned._matrices = {"m1": aligned._matrices["m1"]}
+    output = classical.run_classical_benchmarks(
+        aligned,
+        config,
+        validated_plan=_regression_plan(),
+        validated_control_contract=_control_contract(),
+    )
+    assert [control.name for control in output["controls"]] == [
+        "control::group_permuted_target"
+    ]
+    assert np.array_equal(output["controls"][0].oof_true, aligned.y.to_numpy())
+    assert output["control_execution_receipt"]["decision"] == "development_only"
 
 
 def test_legacy_controls_still_run_without_validated_plan():

@@ -393,6 +393,7 @@ def cross_validate_estimator(
     compute_importance: bool = False,
     importance_repeats: int = 8,
     validated_plan: Any = None,
+    validated_control_contract: Any = None,
 ) -> CVResult:
     """Run leakage-safe CV for one estimator over feature matrix ``X``."""
     y = np.asarray(y)
@@ -410,6 +411,30 @@ def cross_validate_estimator(
         k = len(splits)
         split_status = "validated_development_plan"
 
+    fold_training_targets = None
+    control_execution_receipt = None
+    if validated_control_contract is not None:
+        if validated_plan is None or name != "control::group_permuted_target":
+            raise ValueError("validated_target_control_scope_invalid")
+        from omicau.models.group_controls import _execute_fold_endpoint_permutations
+
+        candidates, control_execution_receipt = _execute_fold_endpoint_permutations(
+            contract=validated_control_contract,
+            outer_splits=splits,
+            groups=groups,
+            task=task,
+            y=y,
+        )
+        fold_training_targets = tuple(
+            np.asarray(
+                candidate["y"],
+                dtype=y.dtype if task == "classification" else float,
+            )
+            for candidate in candidates
+        )
+    elif name == "control::group_permuted_target":
+        raise ValueError("validated_target_control_contract_required")
+
     # Out-of-fold prediction stores.
     if task == "classification":
         n_classes = len(np.unique(y))
@@ -423,9 +448,14 @@ def cross_validate_estimator(
     fold_primary: list[float] = []
     importance_stack: list[np.ndarray] = []   # per-fold permutation importances
 
-    for train_idx, val_idx in splits:
+    for fold, (train_idx, val_idx) in enumerate(splits):
         pipe = make_pipeline(estimator_factory(), task, X.shape[1], max_features, seed)
-        pipe.fit(X[train_idx], y[train_idx])
+        training_target = (
+            y[train_idx]
+            if fold_training_targets is None
+            else fold_training_targets[fold]
+        )
+        pipe.fit(X[train_idx], training_target)
 
         if task == "classification":
             proba = pipe.predict_proba(X[val_idx])
@@ -504,6 +534,7 @@ def cross_validate_estimator(
             "n_splits": int(k),
             "split_plan_status": split_status,
             "split_plan_receipt": split_receipt,
+            "control_execution_receipt": control_execution_receipt,
         },
         oof_true=y,
         oof_score=pooled_score,

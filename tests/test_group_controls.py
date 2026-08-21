@@ -9,6 +9,7 @@ import pytest
 
 from omicau.models.group_controls import (
     GroupControlError,
+    _execute_fold_endpoint_permutations,
     execute_group_endpoint_permutation,
     proxy_risk_receipt,
     scan_registered_exact_copy,
@@ -87,6 +88,68 @@ def test_permutation_is_deterministic_groupwise_and_training_only(task: str) -> 
     serialized = json.dumps(receipt, sort_keys=True)
     for forbidden in ("g0", "g1", "seed", "indices", "labels", "mapping", "subject", "path"):
         assert forbidden not in serialized.lower()
+
+
+def test_private_fold_executor_returns_training_candidates_and_public_aggregates() -> None:
+    values = _base()
+    contract = {
+        "strata": values["strata"],
+        "strata_schema": values["strata_schema"],
+        "permutation_registry": values["permutation_registry"],
+        "exchangeability_contract": values["exchangeability_contract"],
+        "minimum_distinct_nonidentity_assignments": 1,
+        "fold_seeds": [31, 37],
+    }
+    outer = (
+        (np.arange(8), np.arange(8, 12)),
+        (np.arange(4, 12), np.arange(4)),
+    )
+    candidates, receipt = _execute_fold_endpoint_permutations(
+        contract=contract,
+        outer_splits=outer,
+        groups=values["groups"],
+        task="classification",
+        y=values["y"],
+    )
+    assert len(candidates) == receipt["fold_count"] == 2
+    assert [len(candidate["y"]) for candidate in candidates] == [8, 8]
+    assert receipt["decision"] == "development_only"
+    assert (
+        receipt["production_status"]
+        == "pending_frozen_registry_and_fit_ancestry_inventory"
+    )
+    public = json.dumps(receipt, sort_keys=True)
+    for forbidden in ("g0", "g1", "seed", "indices", "labels", "mapping"):
+        assert forbidden not in public.lower()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda contract: contract.update(extra=True),
+        lambda contract: contract.update(fold_seeds=[31]),
+        lambda contract: contract.update(fold_seeds=[31, True]),
+    ],
+)
+def test_private_fold_executor_fails_closed_on_contract_drift(mutation) -> None:
+    values = _base()
+    contract = {
+        "strata": values["strata"],
+        "strata_schema": values["strata_schema"],
+        "permutation_registry": values["permutation_registry"],
+        "exchangeability_contract": values["exchangeability_contract"],
+        "minimum_distinct_nonidentity_assignments": 1,
+        "fold_seeds": [31, 37],
+    }
+    mutation(contract)
+    with pytest.raises(GroupControlError, match="^c07_contract_invalid$"):
+        _execute_fold_endpoint_permutations(
+            contract=contract,
+            outer_splits=((np.arange(8), np.arange(8, 12)),) * 2,
+            groups=values["groups"],
+            task="classification",
+            y=values["y"],
+        )
 
 
 def test_independent_enumeration_oracle_accepts_generated_assignment() -> None:

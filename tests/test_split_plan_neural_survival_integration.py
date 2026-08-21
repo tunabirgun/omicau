@@ -1,4 +1,5 @@
 from copy import deepcopy
+import hashlib
 from types import SimpleNamespace
 
 import numpy as np
@@ -155,6 +156,40 @@ def _config(task: str):
     )
 
 
+def _control_contract() -> dict[str, object]:
+    return {
+        "strata": ["registered_block"] * 8,
+        "strata_schema": {
+            "name": "registered_block",
+            "version": "1",
+            "fields": ["registered_block"],
+            "target_derived": False,
+        },
+        "permutation_registry": {
+            "schema_version": "c07_private_registry_binding_v1",
+            "purpose": "group_endpoint_permutation",
+            "nonce_hex": hashlib.sha256(b"synthetic survival registry nonce").hexdigest(),
+            "registry_id": "synthetic_group_endpoint_permutation",
+            "artifact": {
+                "artifact_id": "synthetic_fixture",
+                "sha256": hashlib.sha256(b"synthetic survival fixture").hexdigest(),
+            },
+            "entries": [
+                {
+                    "entry_id": "synthetic_entry",
+                    "artifact_sha256": hashlib.sha256(b"synthetic survival entry").hexdigest(),
+                }
+            ],
+        },
+        "exchangeability_contract": {
+            "unit": "highest_exchangeable_group",
+            "scope": "outer_train_only",
+        },
+        "minimum_distinct_nonidentity_assignments": 1,
+        "fold_seeds": [41, 43],
+    }
+
+
 class _ZeroClassifier:
     def eval(self):
         return self
@@ -288,10 +323,95 @@ def test_survival_validated_plan_refuses_legacy_controls_before_private_access_o
     )
     monkeypatch.setattr(survival, "cox_fit", forbidden_fit)
     with pytest.raises(
-        RuntimeError, match="^validated_plan_controls_require_c07_integration$"
+        RuntimeError, match="^validated_plan_target_control_contract_required$"
     ):
         survival.run_survival_benchmark(_Aligned("survival"), config, plan)
     assert private_calls == fit_calls == 0
+
+
+def test_survival_validated_target_control_uses_fold_endpoints_and_original_truth(
+    monkeypatch,
+) -> None:
+    config = _config("survival")
+    config.controls.enabled = True
+    config.controls.shuffle_target = True
+    captured = []
+
+    def fake_cv(X, time, event, groups, n_splits, seed, max_features, **kwargs):
+        captured.append(kwargs.get("validated_control_contract"))
+        return 0.5, [0.5, 0.5], np.zeros(len(time)), 2
+
+    monkeypatch.setattr(survival, "_cv_cindex", fake_cv)
+    monkeypatch.setattr(survival, "_boot_ci", lambda *args, **kwargs: (None, None))
+    aligned = _Aligned("survival")
+    output = survival.run_survival_benchmark(
+        aligned,
+        config,
+        _survival_plan(),
+        validated_control_contract=_control_contract(),
+    )
+    control_contracts = [value for value in captured if value is not None]
+    assert control_contracts == [_control_contract()]
+    assert np.array_equal(output["controls"][0].oof_true, aligned.y.to_numpy())
+    receipt = output["control_execution_receipt"]
+    assert receipt["decision"] == "development_only"
+    assert receipt["fold_count"] == 2
+    assert "seed" not in repr(receipt).lower()
+
+
+def test_survival_validated_target_control_runs_through_cox_pipeline() -> None:
+    config = _config("survival")
+    config.controls.enabled = True
+    config.controls.shuffle_target = True
+    aligned = _Aligned("survival")
+    output = survival.run_survival_benchmark(
+        aligned,
+        config,
+        _survival_plan(),
+        validated_control_contract=_control_contract(),
+    )
+    assert [control.name for control in output["controls"]] == [
+        "control::group_permuted_target"
+    ]
+    assert np.array_equal(output["controls"][0].oof_true, aligned.y.to_numpy())
+    assert output["control_execution_receipt"]["decision"] == "development_only"
+
+
+def test_survival_raw_fold_endpoint_bypass_is_not_in_the_cv_api() -> None:
+    time, event, groups = _survival_data()
+    with pytest.raises(TypeError, match="fold_training_endpoints"):
+        survival._cv_cindex(
+            np.column_stack((time, np.arange(8, dtype=float))),
+            time,
+            event,
+            groups,
+            2,
+            17,
+            None,
+            validated_plan=_survival_plan(),
+            fold_training_endpoints=(),
+        )
+
+
+def test_survival_validated_feature_controls_stay_fail_closed_before_fit(monkeypatch):
+    config = _config("survival")
+    config.controls.enabled = True
+    config.controls.shuffle_features = True
+    fit_calls = 0
+
+    def forbidden_fit(*args, **kwargs):
+        nonlocal fit_calls
+        fit_calls += 1
+        raise AssertionError("fit must not start")
+
+    monkeypatch.setattr(survival, "cox_fit", forbidden_fit)
+    with pytest.raises(
+        RuntimeError, match="^validated_plan_feature_controls_require_c07_integration$"
+    ):
+        survival.run_survival_benchmark(
+            _Aligned("survival"), config, _survival_plan()
+        )
+    assert fit_calls == 0
 
 
 def test_survival_zero_event_training_fold_fails_instead_of_skip(monkeypatch) -> None:

@@ -24,6 +24,7 @@ from sklearn.model_selection import GroupKFold, KFold, StratifiedGroupKFold, Str
 
 from omicau.models.base import CVResult
 from omicau.models.classical import resolve_cores  # noqa: F401 (parity with classical API)
+from omicau.models.group_controls import _execute_fold_endpoint_permutations
 from omicau.models.split_plan import ValidatedSplitPlan
 
 
@@ -177,6 +178,7 @@ def _splitter(event: np.ndarray, groups: np.ndarray | None, n_splits: int, seed:
 def _cv_cindex(
     X, time, event, groups, n_splits, seed, max_features, l2=10.0,
     validated_plan=None,
+    validated_control_contract=None,
 ):
     """Return (pooled_cindex, fold_cindices, oof_risk, actual_k)."""
     if validated_plan is not None:
@@ -189,20 +191,49 @@ def _cv_cindex(
         strat = event.astype(int)
         split_args = (X, strat, groups) if groups is not None else (X, strat)
         splits = tuple(splitter.split(*split_args))
+    fold_training_endpoints = None
+    if validated_control_contract is not None:
+        if validated_plan is None:
+            raise RuntimeError("validated_target_control_scope_invalid")
+        candidates, _ = _execute_fold_endpoint_permutations(
+            contract=validated_control_contract,
+            outer_splits=splits,
+            groups=groups,
+            task="survival",
+            time=time,
+            event=np.asarray(event).astype(np.int64),
+        )
+        fold_training_endpoints = tuple(
+            {
+                "time": np.asarray(candidate["time"], dtype=float),
+                "event": np.asarray(candidate["event"], dtype=float),
+            }
+            for candidate in candidates
+        )
     oof = np.full(len(time), np.nan)
     fold_c = []
-    for tr, va in splits:
+    for fold, (tr, va) in enumerate(splits):
+        train_time = (
+            time[tr]
+            if fold_training_endpoints is None
+            else fold_training_endpoints[fold]["time"]
+        )
+        train_event = (
+            event[tr]
+            if fold_training_endpoints is None
+            else fold_training_endpoints[fold]["event"]
+        )
         # need events in train (to fit Cox) and at least one event in val (a c-index
         # needs a comparable event); the old unique()<1 clause could never be true.
         if validated_plan is not None:
-            if event[tr].sum() < 1:
+            if train_event.sum() < 1:
                 raise RuntimeError("c06_survival_training_event_support_runtime")
             if not _has_comparable_pair(time[va], event[va]):
                 raise RuntimeError("c06_survival_assessment_pair_support_runtime")
         elif event[tr].sum() < 2 or event[va].sum() < 1:
             continue
         pre = _Preproc(max_features).fit(X[tr])
-        beta = cox_fit(pre.transform(X[tr]), time[tr], event[tr], l2=l2)
+        beta = cox_fit(pre.transform(X[tr]), train_time, train_event, l2=l2)
         risk = pre.transform(X[va]) @ beta
         oof[va] = risk
         if event[va].sum() >= 1:
@@ -262,17 +293,24 @@ def _result(
     return r
 
 
-def run_survival_benchmark(aligned, config, validated_plan=None) -> dict[str, Any]:
+def run_survival_benchmark(
+    aligned, config, validated_plan=None, *, validated_control_contract=None
+) -> dict[str, Any]:
     """Cox + C-index survival benchmark mirroring run_classical_benchmarks' output."""
-    legacy_controls_enabled = config.controls.enabled and any(
-        (
-            config.controls.shuffle_target,
-            config.controls.shuffle_features,
-            config.controls.random_noise,
-        )
+    target_control_requested = bool(
+        config.controls.enabled and config.controls.shuffle_target
     )
-    if validated_plan is not None and legacy_controls_enabled:
-        raise RuntimeError("validated_plan_controls_require_c07_integration")
+    feature_controls_requested = bool(
+        config.controls.enabled
+        and (config.controls.shuffle_features or config.controls.random_noise)
+    )
+    if validated_plan is not None and feature_controls_requested:
+        raise RuntimeError("validated_plan_feature_controls_require_c07_integration")
+    if validated_plan is not None and target_control_requested:
+        if validated_control_contract is None:
+            raise RuntimeError("validated_plan_target_control_contract_required")
+    elif validated_control_contract is not None:
+        raise RuntimeError("validated_plan_target_control_contract_unused")
     seed = config.seed
     n_splits = config.cv.n_splits
     n_boot = config.cv.n_bootstrap
@@ -285,6 +323,20 @@ def run_survival_benchmark(aligned, config, validated_plan=None) -> dict[str, An
         _VALIDATED_SPLIT_STATUS if validated_plan is not None else _LEGACY_SPLIT_STATUS
     )
     split_receipt = validated_plan.receipt() if validated_plan is not None else None
+
+    control_execution_receipt = None
+    if validated_plan is not None and target_control_requested:
+        outer_splits, _ = _validated_outer_splits(
+            validated_plan, len(time), groups, time, event
+        )
+        _, control_execution_receipt = _execute_fold_endpoint_permutations(
+            contract=validated_control_contract,
+            outer_splits=outer_splits,
+            groups=groups,
+            task="survival",
+            time=time,
+            event=event.astype(np.int64),
+        )
 
     results: list[CVResult] = []
     for m in mods:
@@ -316,9 +368,40 @@ def run_survival_benchmark(aligned, config, validated_plan=None) -> dict[str, An
     if config.controls.enabled:
         rng = np.random.default_rng(seed)
         if config.controls.shuffle_target:
-            perm = rng.permutation(len(time))          # shuffle (time, event) jointly
-            p, f, o, kk = _cv_cindex(X_all, time[perm], event[perm], groups, n_splits, seed, max_feat, validated_plan=validated_plan)
-            controls.append(_result("control::shuffled_target", mods, p, f, o, time[perm], event[perm], groups, kk, X_all.shape[1], n_boot, seed, split_status, split_receipt))
+            if validated_plan is None:
+                perm = rng.permutation(len(time))      # shuffle (time, event) jointly
+                p, f, o, kk = _cv_cindex(X_all, time[perm], event[perm], groups, n_splits, seed, max_feat, validated_plan=validated_plan)
+                controls.append(_result("control::shuffled_target", mods, p, f, o, time[perm], event[perm], groups, kk, X_all.shape[1], n_boot, seed, split_status, split_receipt))
+            else:
+                p, f, o, kk = _cv_cindex(
+                    X_all,
+                    time,
+                    event,
+                    groups,
+                    n_splits,
+                    seed,
+                    max_feat,
+                    validated_plan=validated_plan,
+                    validated_control_contract=validated_control_contract,
+                )
+                control = _result(
+                    "control::group_permuted_target",
+                    mods,
+                    p,
+                    f,
+                    o,
+                    time,
+                    event,
+                    groups,
+                    kk,
+                    X_all.shape[1],
+                    n_boot,
+                    seed,
+                    split_status,
+                    split_receipt,
+                )
+                control.extra["control_execution_receipt"] = control_execution_receipt
+                controls.append(control)
         if config.controls.shuffle_features:
             Xp = np.array(X_all, copy=True)
             for j in range(Xp.shape[1]):
@@ -333,6 +416,7 @@ def run_survival_benchmark(aligned, config, validated_plan=None) -> dict[str, An
     return {
         "results": results,
         "controls": controls,
+        "control_execution_receipt": control_execution_receipt,
         "primary_metric": "c_index",
         "reference_estimator": "cox",
         "split_execution_status": split_status,
