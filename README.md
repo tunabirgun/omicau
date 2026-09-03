@@ -9,11 +9,15 @@ Research use only. Predictive performance does not establish clinical utility or
 - CSV and TSV ingestion with orientation detection and cross-file sample alignment.
 - Group-aware cross-validation for repeated measures and related samples.
 - Missingness-bias, batch-confounding, and group-structure diagnostics.
-- Classical single-modality and fusion models plus masked neural fusion.
+- Classical single-modality and fusion models plus availability-aware gated residual neural fusion.
 - Fold-local preprocessing, fixed random seeds, and provenance hashes.
 - Modality utility, redundancy, permutation importance, and negative controls.
 - Self-contained HTML, JSON, CSV, runtime log, and model-card outputs.
 - Optional local web interface and public-data connectors.
+
+## Neural fusion
+
+By default, neural benchmarks use availability-aware gated residual fusion: each modality is encoded with masked pooling and a nonlinear projection, produces a unimodal prediction, and contributes through a normalized gate across observed modalities; a zero-initialized residual adds cross-modal interactions. Set `"neural": {"architecture": "legacy"}` to use the previous masked global-pooling fusion.
 
 ## Installation
 

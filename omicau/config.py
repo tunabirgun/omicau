@@ -96,6 +96,8 @@ class CVSpec:
 @dataclass
 class NeuralSpec:
     enabled: bool = True
+    #: "gated_residual" is the application default; "legacy" preserves masked global pooling.
+    architecture: str = "gated_residual"
     epochs: int = 60
     batch_size: int = 32
     hidden_dim: int = 64
@@ -105,6 +107,16 @@ class NeuralSpec:
     weight_decay: float = 1e-4
     patience: int = 12
     pooling: str = "mean"  # "mean" | "max"
+    #: Hidden width of the encoder residual projection.
+    encoder_hidden_dim: int | None = 16
+    #: Hidden width of the cross-modal residual branch.
+    residual_hidden_dim: int = 16
+    #: Dropout used by the gated-residual architecture; legacy uses ``dropout``.
+    gated_dropout: float = 0.10
+    #: Training-only weight for the observed unimodal heads' task losses.
+    auxiliary_loss_weight: float = 0.25
+    #: Per-sample probability of hiding an otherwise available modality in fusion.
+    modality_dropout: float = 0.10
 
 
 @dataclass

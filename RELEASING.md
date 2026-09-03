@@ -30,10 +30,10 @@ The binding is keyed to the workflow **filename + environment** — never rename
 ## Shipping an update (the automatic part)
 
 ```bash
-# edit pyproject.toml:  version = "0.1.1"
-git checkout -b release-0.1.1
-git commit -am "release: v0.1.1"
-git push -u origin release-0.1.1
+# edit pyproject.toml:  version = "0.4.0"
+git checkout -b performance-fusion-v0.4.0
+git commit -am "release: v0.4.0"
+git push -u origin performance-fusion-v0.4.0
 # open a PR, review, merge to main
 ```
 

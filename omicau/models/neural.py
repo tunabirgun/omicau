@@ -181,6 +181,158 @@ class MaskedGlobalPoolingFusion(nn.Module):
         return self.head(torch.cat(embs, dim=1))
 
 
+class NonlinearModalityEncoder(nn.Module):
+    """Masked pooled encoder with a compact residual nonlinear projection."""
+
+    def __init__(
+        self,
+        n_features: int,
+        embed_dim: int,
+        pooling: str = "mean",
+        hidden_dim: int | None = None,
+        dropout: float = 0.1,
+    ):
+        super().__init__()
+        self.pooled = ModalityEncoder(n_features, embed_dim, pooling)
+        projection_dim = hidden_dim if hidden_dim is not None else 2 * embed_dim
+        self.projection = nn.Sequential(
+            nn.Linear(embed_dim, projection_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(projection_dim, embed_dim),
+        )
+        self.norm = nn.LayerNorm(embed_dim)
+
+    def forward(self, x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        pooled = self.pooled(x, mask)
+        return self.norm(pooled + self.projection(pooled))
+
+    def feature_norms(self) -> np.ndarray:
+        return self.pooled.feature_norms()
+
+
+class GatedResidualFusion(nn.Module):
+    """Availability-aware fusion with unimodal heads and a zero-initialized residual."""
+
+    def __init__(
+        self,
+        feature_dims: dict[str, int],
+        embed_dim: int,
+        hidden_dim: int,
+        out_dim: int,
+        dropout: float = 0.2,
+        pooling: str = "mean",
+        encoder_hidden_dim: int | None = None,
+    ):
+        super().__init__()
+        self.modalities = list(feature_dims.keys())
+        self.encoders = nn.ModuleDict(
+            {
+                name: NonlinearModalityEncoder(
+                    n_features, embed_dim, pooling, encoder_hidden_dim, dropout
+                )
+                for name, n_features in feature_dims.items()
+            }
+        )
+        self.gates = nn.ModuleDict({
+            name: nn.Sequential(
+                nn.Linear(embed_dim + 1, embed_dim),
+                nn.GELU(),
+                nn.Linear(embed_dim, 1),
+            )
+            for name in self.modalities
+        })
+        self.unimodal_heads = nn.ModuleDict(
+            {name: nn.Linear(embed_dim, out_dim) for name in self.modalities}
+        )
+        residual_dim = embed_dim * (len(self.modalities) + 1)
+        self.residual = nn.Sequential(
+            nn.Linear(residual_dim, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, out_dim),
+        )
+        nn.init.zeros_(self.residual[-1].weight)
+        nn.init.zeros_(self.residual[-1].bias)
+
+    @staticmethod
+    def _drop_availability(
+        availability: torch.Tensor,
+        probability: float,
+        generator: torch.Generator | None,
+    ) -> torch.Tensor:
+        if probability <= 0.0:
+            return availability
+        if probability >= 1.0:
+            probability = 1.0
+        sampled = torch.rand(
+            availability.shape, generator=generator, device="cpu", dtype=torch.float32
+        ).to(availability.device)
+        dropped = availability & (sampled < probability)
+        all_dropped = dropped.sum(dim=1) == availability.sum(dim=1)
+        if torch.any(all_dropped):
+            keep_index = availability[all_dropped].to(torch.int64).argmax(dim=1)
+            rows = torch.nonzero(all_dropped, as_tuple=False).view(-1)
+            dropped[rows, keep_index] = False
+        return availability & ~dropped
+
+    def forward_components(
+        self,
+        batch: dict[str, tuple[torch.Tensor, torch.Tensor]],
+        modality_dropout: float = 0.0,
+        generator: torch.Generator | None = None,
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        embeddings: list[torch.Tensor] = []
+        observed_fractions: list[torch.Tensor] = []
+        unimodal_logits: list[torch.Tensor] = []
+        for name in self.modalities:
+            x, mask = batch[name]
+            embedding = self.encoders[name](x, mask)
+            embeddings.append(embedding)
+            observed_fractions.append(mask.float().mean(dim=1, keepdim=True))
+            unimodal_logits.append(self.unimodal_heads[name](embedding))
+
+        stacked_embeddings = torch.stack(embeddings, dim=1)
+        fractions = torch.cat(observed_fractions, dim=1)
+        availability = fractions > 0.0
+        if self.training:
+            availability = self._drop_availability(availability, modality_dropout, generator)
+        gate_inputs = [
+            torch.cat((embeddings[index], observed_fractions[index]), dim=1)
+            for index in range(len(self.modalities))
+        ]
+        gate_logits = torch.cat(
+            [self.gates[name](gate_inputs[index]) for index, name in enumerate(self.modalities)],
+            dim=1,
+        )
+        gate_logits = gate_logits.masked_fill(~availability, float("-inf"))
+        no_available = ~availability.any(dim=1)
+        if torch.any(no_available):
+            gate_logits = gate_logits.clone()
+            gate_logits[no_available] = 0.0
+        gates = torch.softmax(gate_logits, dim=1)
+        gates = torch.where(availability, gates, torch.zeros_like(gates))
+
+        stacked_unimodal = torch.stack(unimodal_logits, dim=1)
+        base_logits = (gates.unsqueeze(-1) * stacked_unimodal).sum(dim=1)
+        fused = (gates.unsqueeze(-1) * stacked_embeddings).sum(dim=1)
+        residual_input = torch.cat(
+            (fused, (gates.unsqueeze(-1) * stacked_embeddings).flatten(start_dim=1)), dim=1
+        )
+        residual = self.residual(residual_input)
+        final = base_logits + residual
+        return final, {
+            "base_logits": base_logits,
+            "unimodal_logits": stacked_unimodal,
+            "gates": gates,
+            "availability": availability,
+            "residual": residual,
+        }
+
+    def forward(self, batch: dict[str, tuple[torch.Tensor, torch.Tensor]]) -> torch.Tensor:
+        return self.forward_components(batch)[0]
+
+
 # --------------------------------------------------------------------------- #
 # Fold-internal standardization (masked, leakage-safe)
 # --------------------------------------------------------------------------- #
@@ -216,6 +368,58 @@ def _to_batch(mod_arrays, idx, device):
     }
 
 
+def _build_neural_model(
+    feature_dims: dict[str, int], out_dim: int, cfg
+) -> tuple[nn.Module, str]:
+    """Construct the requested neural architecture without changing legacy defaults."""
+    architecture = getattr(cfg, "architecture", "legacy")
+    if architecture == "legacy":
+        return (
+            MaskedGlobalPoolingFusion(
+                feature_dims,
+                cfg.embed_dim,
+                cfg.hidden_dim,
+                out_dim,
+                cfg.dropout,
+                cfg.pooling,
+            ),
+            architecture,
+        )
+    if architecture == "gated_residual":
+        return (
+            GatedResidualFusion(
+                feature_dims,
+                cfg.embed_dim,
+                getattr(cfg, "residual_hidden_dim", cfg.hidden_dim),
+                out_dim,
+                getattr(cfg, "gated_dropout", cfg.dropout),
+                cfg.pooling,
+                getattr(cfg, "encoder_hidden_dim", None),
+            ),
+            architecture,
+        )
+    raise ValueError(
+        f"Unsupported neural architecture '{architecture}'; expected 'legacy' or 'gated_residual'."
+    )
+
+
+def _unimodal_loss(
+    logits: torch.Tensor,
+    availability: torch.Tensor,
+    target: torch.Tensor,
+    task: str,
+    loss_fn: nn.Module,
+) -> torch.Tensor:
+    """Average task loss over observed unimodal heads only."""
+    if not torch.any(availability):
+        return logits.sum() * 0.0
+    if task == "classification":
+        repeated_target = target.unsqueeze(1).expand(-1, logits.shape[1])
+        return loss_fn(logits[availability], repeated_target[availability])
+    repeated_target = target.view(-1, 1).expand(-1, logits.shape[1])
+    return loss_fn(logits.squeeze(-1)[availability], repeated_target[availability])
+
+
 def _train_fold(
     mod_arrays: dict[str, dict[str, np.ndarray]],
     y: np.ndarray,
@@ -231,10 +435,12 @@ def _train_fold(
 ) -> nn.Module:
     torch.manual_seed(seed)
     np.random.seed(seed)
-    model = MaskedGlobalPoolingFusion(
-        feature_dims, cfg.embed_dim, cfg.hidden_dim, out_dim, cfg.dropout, cfg.pooling
-    ).to(device)
-    opt = torch.optim.Adam(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+    model, architecture = _build_neural_model(feature_dims, out_dim, cfg)
+    model = model.to(device)
+    if architecture == "legacy":
+        opt = torch.optim.Adam(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+    else:
+        opt = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
     if task == "classification":
         loss_fn = nn.CrossEntropyLoss()
         y_t = torch.from_numpy(y.astype(np.int64))
@@ -248,14 +454,35 @@ def _train_fold(
 
     best_state, best_val, patience = None, float("inf"), 0
     rng = np.random.default_rng(seed)
+    dropout_generator = torch.Generator(device="cpu")
+    dropout_generator.manual_seed(seed)
+    auxiliary_loss_weight = getattr(cfg, "auxiliary_loss_weight", 0.25)
+    modality_dropout = getattr(cfg, "modality_dropout", 0.10)
     for _ in range(cfg.epochs):
         model.train()
         perm = rng.permutation(fit_idx)
         for start in range(0, len(perm), batch_size):
             bidx = perm[start : start + batch_size]
             opt.zero_grad()
-            out = model(_to_batch(mod_arrays, bidx, device))
-            loss = loss_fn(out, _y(bidx))
+            batch = _to_batch(mod_arrays, bidx, device)
+            if architecture == "legacy":
+                out = model(batch)
+                loss = loss_fn(out, _y(bidx))
+            else:
+                out, components = model.forward_components(
+                    batch,
+                    modality_dropout=modality_dropout,
+                    generator=dropout_generator,
+                )
+                task_loss = loss_fn(out, _y(bidx))
+                auxiliary_loss = _unimodal_loss(
+                    components["unimodal_logits"],
+                    components["availability"],
+                    _y(bidx),
+                    task,
+                    loss_fn,
+                )
+                loss = task_loss + auxiliary_loss_weight * auxiliary_loss
             loss.backward()
             opt.step()
         # internal validation for early stopping (subset of the training fold)
