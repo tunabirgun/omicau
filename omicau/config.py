@@ -99,9 +99,9 @@ class NeuralSpec:
     #: "gated_residual" is the application default; "legacy" preserves masked global pooling.
     architecture: str = "gated_residual"
     epochs: int = 60
-    batch_size: int = 32
+    batch_size: int = 16
     hidden_dim: int = 64
-    embed_dim: int = 32
+    embed_dim: int = 8
     dropout: float = 0.2
     lr: float = 1e-3
     weight_decay: float = 1e-4
@@ -117,6 +117,9 @@ class NeuralSpec:
     auxiliary_loss_weight: float = 0.25
     #: Per-sample probability of hiding an otherwise available modality in fusion.
     modality_dropout: float = 0.10
+    #: Variance-ranked features retained per modality inside each training split.
+    #: None disables the cap and restores uncapped feature use.
+    max_features_per_modality: int | None = 256
 
 
 @dataclass
@@ -390,7 +393,12 @@ class OmicauConfig:
                 "task": "classification",
             },
             "cv": {"n_splits": 5, "seed": 42, "shuffle": True},
-            "neural": {"enabled": True, "epochs": 60, "batch_size": 32},
+            "neural": {
+                "enabled": True,
+                "epochs": 60,
+                "batch_size": 16,
+                "max_features_per_modality": 256,
+            },
             "classical": {"enabled": True, "models": ["linear", "random_forest"]},
             "xai": {"enabled": True, "permutation_repeats": 8, "top_k_features": 25},
             "controls": {"enabled": True},

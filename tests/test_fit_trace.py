@@ -41,6 +41,7 @@ _CALLSITE_COMPONENTS = {
     "base.threshold": "threshold",
     "base.variance_filter": "variance_filter",
     "batch.adjuster": "batch_adjuster",
+    "neural.feature_selector": "feature_selector",
     "neural.optimizer": "optimizer",
     "neural.scaler": "scaler",
     "stacking.stacker": "stacker",

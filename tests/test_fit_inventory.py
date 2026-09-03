@@ -32,9 +32,9 @@ def test_live_static_inventory_is_exact_and_development_only() -> None:
     receipt = derive_fit_callsite_inventory(ROOT)
     assert receipt["claim_id"] == "C08"
     assert receipt["decision"] == "development_only"
-    assert receipt["fit_callsite_count"] == 14
-    assert receipt["active_runtime_callsite_count"] == 13
-    assert receipt["registered_runtime_callsite_count"] == 18
+    assert receipt["fit_callsite_count"] == 15
+    assert receipt["active_runtime_callsite_count"] == 14
+    assert receipt["registered_runtime_callsite_count"] == 19
     assert receipt["inactive_registered_callsite_count"] == 5
     assert receipt["production_status"] == "pending_runtime_trace_and_frozen_inventory"
     assert receipt["schema_version"] == "c08_static_fit_callsite_inventory_v2"
@@ -48,7 +48,8 @@ def test_live_static_inventory_is_exact_and_development_only() -> None:
     [
         ("omicau/models/base.py", "pipe.fit(X[train_idx], training_target)", "pipe.predict(X[train_idx])"),
         ("omicau/models/classical.py", "meta.fit(meta_train, y[outer_train])", "meta.predict(meta_train)"),
-        ("omicau/models/neural.py", "mean, std = _masked_stats(raw[m], fit_idx)", "mean, std = (0.0, 1.0)"),
+        ("omicau/models/neural.py", "selected = _selected_columns(matrix, fit_idx, max_features)", "selected = np.arange(matrix.shape[1])"),
+        ("omicau/models/neural.py", "mean, std = _masked_stats(values, fit_idx)", "mean, std = (0.0, 1.0)"),
         ("omicau/models/neural.py", "opt.step()", "model.zero_grad()"),
         ("omicau/models/survival.py", "beta = cox_fit(", "beta = tuple("),
         ("omicau/diagnostics/batch.py", "pca.fit_transform(Xs)", "pca.transform(Xs)"),

@@ -17,7 +17,7 @@ Research use only. Predictive performance does not establish clinical utility or
 
 ## Neural fusion
 
-By default, neural benchmarks use availability-aware gated residual fusion: each modality is encoded with masked pooling and a nonlinear projection, produces a unimodal prediction, and contributes through a normalized gate across observed modalities; a zero-initialized residual adds cross-modal interactions. Set `"neural": {"architecture": "legacy"}` to use the previous masked global-pooling fusion.
+By default, neural benchmarks use availability-aware gated residual fusion with 8-dimensional modality embeddings. Variance ranking retains at most 256 features per modality within training data only. Each outer fold uses an inner training split to select the epoch, then fits a fresh model for that epoch on all outer-training rows before assessment. Set `"neural": {"architecture": "legacy"}` to use the previous masked global-pooling topology, or set `max_features_per_modality` to `null` to disable the feature cap.
 
 ## Installation
 

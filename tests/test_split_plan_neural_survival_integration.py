@@ -203,8 +203,14 @@ def test_neural_uses_exact_outer_and_plan_inner_folds(monkeypatch) -> None:
     calls = []
 
     def fake_train(*args, device, batch_size, **kwargs):
-        calls.append((tuple(args[2]), tuple(args[3])))
-        return _ZeroClassifier(), device, batch_size
+        calls.append({
+            "fit": tuple(args[2]),
+            "validation": tuple(args[3]),
+            "fixed_epochs": kwargs.get("fixed_epochs"),
+        })
+        model = _ZeroClassifier()
+        model._omicau_selected_epoch = 3
+        return model, device, batch_size
 
     monkeypatch.setattr(neural, "_train_fold_resilient", fake_train)
     monkeypatch.setattr(neural, "attach_cis", lambda *args, **kwargs: None)
@@ -219,7 +225,23 @@ def test_neural_uses_exact_outer_and_plan_inner_folds(monkeypatch) -> None:
         result.to_dict()["split_plan_status"] == output["split_execution_status"]
         for result in output["results"]
     )
-    assert calls == [((6, 7), (4, 5)), ((2, 3), (0, 1))] * 2
+    expected = [
+        {"fit": (6, 7), "validation": (4, 5), "fixed_epochs": None},
+        {"fit": (4, 5, 6, 7), "validation": (4, 5, 6, 7), "fixed_epochs": 3},
+        {"fit": (2, 3), "validation": (0, 1), "fixed_epochs": None},
+        {"fit": (0, 1, 2, 3), "validation": (0, 1, 2, 3), "fixed_epochs": 3},
+    ] * 2
+    assert calls == expected
+    outer_assessments = ({0, 1, 2, 3}, {4, 5, 6, 7})
+    for method_offset in (0, 4):
+        for fold, assessment_rows in enumerate(outer_assessments):
+            selection = calls[method_offset + 2 * fold]
+            refit = calls[method_offset + 2 * fold + 1]
+            assert set(selection["fit"]).isdisjoint(selection["validation"])
+            assert set(selection["fit"]) | set(selection["validation"]) == set(refit["fit"])
+            assert refit["fit"] == refit["validation"]
+            assert set(refit["fit"]).isdisjoint(assessment_rows)
+            assert refit["fixed_epochs"] == 3
     public = repr(output["split_plan_receipt"])
     assert "outer_folds" not in public and "g0" not in public
 

@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+import numpy as np
+import pandas as pd
 import pytest
 import torch
 import torch.nn.functional as F
 
 from omicau.config import NeuralSpec, OmicauConfig
+from omicau.models import neural
 from omicau.models.neural import GatedResidualFusion, MaskedGlobalPoolingFusion
 
 
@@ -165,3 +170,148 @@ def test_cpu_initialization_and_output_are_deterministic_with_legacy_config_comp
     torch.testing.assert_close(first_output, second_output, rtol=0.0, atol=0.0)
     assert NeuralSpec().architecture == "gated_residual"
     assert OmicauConfig.from_dict({"neural": {"architecture": "legacy"}}).neural.architecture == "legacy"
+
+
+def test_candidate_defaults_match_controlled_regimen():
+    spec = NeuralSpec()
+    assert spec.embed_dim == 8
+    assert spec.batch_size == 16
+    assert spec.max_features_per_modality == 256
+
+
+def test_feature_cap_is_fit_only_deterministic_and_tie_stable():
+    matrix = np.asarray([
+        [0.0, 0.0, 0.0, 1.0, 3.0],
+        [1.0, 1.0, 2.0, 1.0, 3.0],
+        [2.0, 2.0, 4.0, 1.0, 3.0],
+        [3.0, 3.0, 6.0, 1.0, 3.0],
+        [9.0, -9.0, 0.0, 50.0, -50.0],
+        [8.0, -8.0, 0.0, 60.0, -60.0],
+    ], dtype=np.float32)
+    fit = np.arange(4)
+    first = neural._selected_columns(matrix, fit, 2)
+    poisoned = matrix.copy()
+    poisoned[4:] = 1e8
+    second = neural._selected_columns(poisoned, fit, 2)
+    assert np.array_equal(first, np.asarray([2, 0]))
+    assert np.array_equal(first, second)
+    arrays_a, dims_a, columns_a, scaling_a = neural._prepare_modalities({"m": matrix}, fit, 2)
+    arrays_b, dims_b, columns_b, scaling_b = neural._prepare_modalities({"m": poisoned}, fit, 2)
+    assert dims_a == dims_b == {"m": 2}
+    assert np.array_equal(columns_a["m"], columns_b["m"])
+    assert np.array_equal(scaling_a["m"][0], scaling_b["m"][0])
+    assert np.array_equal(scaling_a["m"][1], scaling_b["m"][1])
+    assert arrays_a["m"]["Xs"].shape[1] <= 2
+
+
+def test_fixed_epoch_refit_uses_all_and_only_outer_training_rows(monkeypatch):
+    rng = np.random.default_rng(8)
+    matrix = rng.normal(size=(10, 4)).astype(np.float32)
+    arrays, dimensions, _, _ = neural._prepare_modalities({"m": matrix}, np.arange(7), None)
+    target = np.asarray([0, 1, 0, 1, 0, 1, 0, 1, 0, 1], dtype=np.int64)
+    seen = []
+    original = neural._to_batch
+
+    def recording_batch(values, indices, device):
+        seen.extend(np.asarray(indices).tolist())
+        return original(values, indices, device)
+
+    monkeypatch.setattr(neural, "_to_batch", recording_batch)
+    cfg = SimpleNamespace(
+        architecture="legacy", embed_dim=3, hidden_dim=4, dropout=0.0,
+        pooling="mean", lr=1e-3, weight_decay=0.0, epochs=9, patience=2,
+    )
+    model = neural._train_fold(
+        arrays, target, np.arange(7), np.arange(7), dimensions, "classification", 2,
+        cfg, torch.device("cpu"), seed=13, batch_size=3, fixed_epochs=3,
+    )
+    assert model._omicau_selected_epoch == 3
+    assert sorted(seen) == sorted(np.tile(np.arange(7), 3).tolist())
+    assert not set(seen) & {7, 8, 9}
+
+
+def test_assessment_label_poisoning_cannot_change_refit_state():
+    rng = np.random.default_rng(19)
+    matrix = rng.normal(size=(12, 5)).astype(np.float32)
+    train = np.arange(8)
+    arrays, dimensions, columns, scaling = neural._prepare_modalities({"m": matrix}, train, 3)
+    poisoned_matrix = matrix.copy()
+    poisoned_matrix[8:] = 1e8
+    poisoned_arrays, poisoned_dimensions, poisoned_columns, poisoned_scaling = (
+        neural._prepare_modalities({"m": poisoned_matrix}, train, 3)
+    )
+    assert dimensions == poisoned_dimensions
+    assert np.array_equal(columns["m"], poisoned_columns["m"])
+    assert np.array_equal(scaling["m"][0], poisoned_scaling["m"][0])
+    assert np.array_equal(scaling["m"][1], poisoned_scaling["m"][1])
+    target = np.asarray([0, 1] * 6, dtype=np.int64)
+    poisoned = target.copy()
+    poisoned[8:] = 1 - poisoned[8:]
+    cfg = SimpleNamespace(
+        architecture="gated_residual", embed_dim=8, hidden_dim=16, dropout=0.2,
+        gated_dropout=0.1, encoder_hidden_dim=16, residual_hidden_dim=16,
+        pooling="mean", lr=1e-3, weight_decay=1e-4, epochs=4, patience=2,
+        auxiliary_loss_weight=0.25, modality_dropout=0.1,
+    )
+    selected_first = neural._train_fold(
+        arrays, target, np.arange(6), np.arange(6, 8), dimensions,
+        "classification", 2, cfg, torch.device("cpu"), seed=29, batch_size=4,
+    )
+    selected_second = neural._train_fold(
+        poisoned_arrays, poisoned, np.arange(6), np.arange(6, 8), dimensions,
+        "classification", 2, cfg, torch.device("cpu"), seed=29, batch_size=4,
+    )
+    assert selected_first._omicau_selected_epoch == selected_second._omicau_selected_epoch
+    for name, value in selected_first.state_dict().items():
+        assert torch.equal(value, selected_second.state_dict()[name])
+    first = neural._train_fold(
+        arrays, target, train, train, dimensions, "classification", 2, cfg,
+        torch.device("cpu"), seed=29, batch_size=4, fixed_epochs=2,
+    )
+    second = neural._train_fold(
+        poisoned_arrays, poisoned, train, train, dimensions, "classification", 2, cfg,
+        torch.device("cpu"), seed=29, batch_size=4, fixed_epochs=2,
+    )
+    for name, value in first.state_dict().items():
+        assert torch.equal(value, second.state_dict()[name])
+
+
+@pytest.mark.parametrize("task", ["classification", "regression"])
+def test_capped_refit_cv_runs_and_importance_maps_to_original_names(task):
+    rng = np.random.default_rng(31)
+    n = 24
+    target = (
+        np.asarray([0, 1] * (n // 2), dtype=np.int64)
+        if task == "classification"
+        else rng.normal(size=n)
+    )
+    matrix = rng.normal(size=(n, 6)).astype(np.float32)
+    aligned = SimpleNamespace(
+        task=task,
+        y=pd.Series(target),
+        groups=pd.Series(np.arange(n)),
+        modalities={"m": SimpleNamespace(X=matrix, feature_names=[f"f{i}" for i in range(6)])},
+    )
+    cfg = OmicauConfig()
+    cfg.cv.n_splits = 2
+    cfg.neural.epochs = 1
+    cfg.neural.patience = 1
+    cfg.neural.max_features_per_modality = 2
+    result = neural._neural_cv(
+        "neural::m", aligned, ["m"], cfg, torch.device("cpu"), True
+    )
+    assert np.isfinite(result.primary)
+    assert set(result.feature_importance) == {f"m::f{i}" for i in range(6)}
+
+
+def test_explicit_legacy_architecture_runs_with_capped_refit():
+    cfg = NeuralSpec(architecture="legacy", epochs=1, patience=1, max_features_per_modality=2)
+    arrays, dimensions, _, _ = neural._prepare_modalities(
+        {"m": np.arange(30, dtype=np.float32).reshape(10, 3)}, np.arange(8), 2
+    )
+    model = neural._train_fold(
+        arrays, np.asarray([0, 1] * 5), np.arange(8), np.arange(8), dimensions,
+        "classification", 2, cfg, torch.device("cpu"), seed=3, batch_size=4,
+        fixed_epochs=1,
+    )
+    assert isinstance(model, MaskedGlobalPoolingFusion)

@@ -61,22 +61,23 @@ _SPECS = (
     _Spec("omicau/models/classical.py", "_run_nested_stacking", "fit", "meta.fit", "traced_stacking_fit", _nodes("base.imputer", "base.variance_filter", "base.scaler", "stacking.stacker")),
     _Spec("omicau/models/classical.py", "_run_batch_adjusted_fusion", "fit_batch_centering", "fit_batch_centering", "traced_batch_adjustment_fit", _nodes("batch.adjuster")),
     _Spec("omicau/models/classical.py", "_run_batch_adjusted_fusion", "fit", "pipe.fit", "traced_batch_adjusted_model_fit", _PIPELINE_NODES),
-    _Spec("omicau/models/neural.py", "_neural_cv", "_masked_stats", "_masked_stats", "traced_neural_scaler_fit", _nodes("neural.scaler")),
+    _Spec("omicau/models/neural.py", "_prepare_modalities", "_selected_columns", "_selected_columns", "traced_neural_feature_selector_fit", _nodes("neural.feature_selector")),
+    _Spec("omicau/models/neural.py", "_prepare_modalities", "_masked_stats", "_masked_stats", "traced_neural_scaler_fit", _nodes("neural.scaler")),
     _Spec("omicau/models/neural.py", "_train_fold", "step", "opt.step", "traced_neural_optimizer_step", _nodes("neural.optimizer")),
     _Spec("omicau/models/survival.py", "_Preproc.fit", "fit", "PCA(n_components=self.n_comp_, random_state=0).fit", "traced_survival_pca_fit", _nodes("survival.pca")),
     _Spec("omicau/models/survival.py", "_cv_cindex", "fit", "_Preproc(max_features).fit", "traced_survival_preprocessing_fit", _nodes("survival.imputer", "survival.scaler")),
     _Spec("omicau/models/survival.py", "_cv_cindex", "cox_fit", "cox_fit", "traced_survival_model_fit", _nodes("survival.cox")),
 )
-_TRAINING_OPERATIONS = frozenset({"_masked_stats", "cox_fit", "fit", "fit_batch_centering", "fit_transform", "step"})
+_TRAINING_OPERATIONS = frozenset({"_masked_stats", "_selected_columns", "cox_fit", "fit", "fit_batch_centering", "fit_transform", "step"})
 _TRACE_CONDITIONS = frozenset({"always", "pipeline_step_present"})
 _EXCLUDED_DISPOSITIONS = frozenset({"excluded_descriptive_diagnostic", "excluded_runtime_probe"})
 _TRACED_DISPOSITIONS = frozenset({
     "traced_analysis_fit", "traced_batch_adjusted_model_fit", "traced_batch_adjustment_fit",
-    "traced_inner_base_fit", "traced_neural_optimizer_step", "traced_neural_scaler_fit",
+    "traced_inner_base_fit", "traced_neural_feature_selector_fit", "traced_neural_optimizer_step", "traced_neural_scaler_fit",
     "traced_outer_base_fit", "traced_stacking_fit", "traced_survival_model_fit",
     "traced_survival_pca_fit", "traced_survival_preprocessing_fit",
 })
-_EXPECTED_SPEC_SHA256 = "dbc3b403427de8e8a181681057abb5b391d43459d1b97241e5d1a35af21e0cff"
+_EXPECTED_SPEC_SHA256 = "9adb13379c9b02a7ba092ad3e4324ee617ad9fcc4851f620a19bb40537526940"
 
 
 class _CallVisitor(ast.NodeVisitor):

@@ -348,11 +348,64 @@ def _masked_stats(X: np.ndarray, train_idx: np.ndarray) -> tuple[np.ndarray, np.
     return mean, std
 
 
+def _selected_columns(
+    X: np.ndarray, fit_idx: np.ndarray, max_features: int | None
+) -> np.ndarray:
+    """Select fold-local features by descending observed variance with stable ties."""
+    if isinstance(max_features, bool) or not isinstance(max_features, int) or max_features < 1:
+        if max_features is not None:
+            raise ValueError("max_features_per_modality must be a positive integer or None")
+    if max_features is None or X.shape[1] <= max_features:
+        return np.arange(X.shape[1], dtype=np.int64)
+    training = X[fit_idx]
+    observed = ~np.isnan(training)
+    counts = observed.sum(axis=0)
+    means = np.where(
+        counts > 0,
+        np.where(observed, training, 0.0).sum(axis=0) / np.maximum(counts, 1),
+        0.0,
+    )
+    centered = np.where(observed, training - means, 0.0)
+    variance = np.where(
+        counts > 0,
+        (centered * centered).sum(axis=0) / np.maximum(counts, 1),
+        0.0,
+    )
+    order = np.lexsort((np.arange(X.shape[1]), -variance))
+    return order[:max_features].astype(np.int64, copy=False)
+
+
 def _standardize(X: np.ndarray, mean: np.ndarray, std: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     mask = (~np.isnan(X)).astype(np.float32)
     Xs = (np.where(np.isnan(X), 0.0, X) - mean) / std
     Xs = np.where(mask > 0, Xs, 0.0).astype(np.float32)
     return Xs, mask
+
+
+def _prepare_modalities(
+    raw: dict[str, np.ndarray],
+    fit_idx: np.ndarray,
+    max_features: int | None,
+) -> tuple[
+    dict[str, dict[str, np.ndarray]],
+    dict[str, int],
+    dict[str, np.ndarray],
+    dict[str, tuple[np.ndarray, np.ndarray]],
+]:
+    arrays: dict[str, dict[str, np.ndarray]] = {}
+    dimensions: dict[str, int] = {}
+    columns: dict[str, np.ndarray] = {}
+    scaling: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+    for name, matrix in raw.items():
+        selected = _selected_columns(matrix, fit_idx, max_features)
+        values = matrix[:, selected]
+        mean, std = _masked_stats(values, fit_idx)
+        Xs, mask = _standardize(values, mean, std)
+        arrays[name] = {"Xs": Xs, "mask": mask}
+        dimensions[name] = int(selected.size)
+        columns[name] = selected
+        scaling[name] = (mean, std)
+    return arrays, dimensions, columns, scaling
 
 
 # --------------------------------------------------------------------------- #
@@ -432,6 +485,7 @@ def _train_fold(
     device: torch.device,
     seed: int,
     batch_size: int,
+    fixed_epochs: int | None = None,
 ) -> nn.Module:
     torch.manual_seed(seed)
     np.random.seed(seed)
@@ -458,7 +512,9 @@ def _train_fold(
     dropout_generator.manual_seed(seed)
     auxiliary_loss_weight = getattr(cfg, "auxiliary_loss_weight", 0.25)
     modality_dropout = getattr(cfg, "modality_dropout", 0.10)
-    for _ in range(cfg.epochs):
+    epochs = fixed_epochs if fixed_epochs is not None else cfg.epochs
+    best_epoch = 0
+    for epoch in range(1, epochs + 1):
         model.train()
         perm = rng.permutation(fit_idx)
         for start in range(0, len(perm), batch_size):
@@ -485,19 +541,22 @@ def _train_fold(
                 loss = task_loss + auxiliary_loss_weight * auxiliary_loss
             loss.backward()
             opt.step()
+        if fixed_epochs is not None:
+            continue
         # internal validation for early stopping (subset of the training fold)
         model.eval()
         with torch.no_grad():
             out_v = model(_to_batch(mod_arrays, val_idx, device))
             vloss = float(loss_fn(out_v, _y(val_idx)).item())
         if vloss < best_val - 1e-4:
-            best_val, best_state, patience = vloss, {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}, 0
+            best_val, best_state, best_epoch, patience = vloss, {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}, epoch, 0
         else:
             patience += 1
             if patience >= cfg.patience:
                 break
     if best_state is not None:
         model.load_state_dict(best_state)
+    model._omicau_selected_epoch = fixed_epochs if fixed_epochs is not None else best_epoch
     return model
 
 
@@ -570,6 +629,7 @@ def _neural_cv(
     fold_primary: list[float] = []
     imp_acc = {m: np.zeros(feature_dims[m]) for m in modalities} if compute_importance else None
     imp_folds = 0
+    max_features = getattr(config.neural, "max_features_per_modality", None)
 
     fold_id = 0
     for train_idx, val_idx in outer_splits:
@@ -584,21 +644,38 @@ def _neural_cv(
             if len(fit_idx) == 0:
                 fit_idx, val_internal = tr, tr
 
-        # masked standardization from the FIT split only.
-        mod_arrays: dict[str, dict[str, np.ndarray]] = {}
-        for m in modalities:
-            mean, std = _masked_stats(raw[m], fit_idx)
-            Xs, mask = _standardize(raw[m], mean, std)
-            mod_arrays[m] = {"Xs": Xs, "mask": mask}
-
-        model, device, _bs = _train_fold_resilient(
-            mod_arrays, y, fit_idx, val_internal, feature_dims, task, out_dim, config.neural,
+        inner_arrays, inner_dims, _, _ = _prepare_modalities(
+            raw, np.asarray(fit_idx), max_features
+        )
+        selection_model, device, _bs = _train_fold_resilient(
+            inner_arrays, y, fit_idx, val_internal, inner_dims, task, out_dim, config.neural,
             seed=seed + fold_id, device=device, batch_size=config.neural.batch_size,
+        )
+        selected_epoch = int(getattr(selection_model, "_omicau_selected_epoch", 1))
+        if selected_epoch < 1:
+            raise RuntimeError("neural_selected_epoch_invalid")
+
+        outer_arrays, outer_dims, outer_columns, _ = _prepare_modalities(
+            raw, np.asarray(train_idx), max_features
+        )
+        model, device, _bs = _train_fold_resilient(
+            outer_arrays,
+            y,
+            np.asarray(train_idx),
+            np.asarray(train_idx),
+            outer_dims,
+            task,
+            out_dim,
+            config.neural,
+            seed=seed + fold_id,
+            device=device,
+            batch_size=config.neural.batch_size,
+            fixed_epochs=selected_epoch,
         )
 
         model.eval()
         with torch.no_grad():
-            logits = model(_to_batch(mod_arrays, np.array(val_idx), device)).cpu()
+            logits = model(_to_batch(outer_arrays, np.array(val_idx), device)).cpu()
         if task == "classification":
             proba = torch.softmax(logits, dim=1).numpy()
             oof_score[val_idx] = proba
@@ -616,7 +693,13 @@ def _neural_cv(
 
         if compute_importance:
             for m in modalities:
-                imp_acc[m] += model.encoders[m].feature_norms()
+                columns = outer_columns[m]
+                observed_std = np.nan_to_num(
+                    np.nanstd(raw[m][np.asarray(train_idx)][:, columns], axis=0), nan=0.0
+                )
+                imp_acc[m][columns] += model.encoders[m].feature_norms() * (
+                    observed_std + 1e-6
+                )
             imp_folds += 1
         fold_id += 1
 
@@ -630,8 +713,7 @@ def _neural_cv(
     importance: dict[str, float] = {}
     if compute_importance and imp_folds:
         for m in modalities:
-            obs_std = np.nan_to_num(np.nanstd(raw[m], axis=0), nan=0.0)
-            score = (imp_acc[m] / imp_folds) * (obs_std + 1e-6)
+            score = imp_acc[m] / imp_folds
             for j, fname in enumerate(feature_names[m]):
                 importance[f"{m}::{fname}"] = float(score[j])
 
