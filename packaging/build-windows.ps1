@@ -32,5 +32,5 @@ if (Get-Command iscc -ErrorAction SilentlyContinue) {
   $ver = (Select-String -Path (Join-Path $root "pyproject.toml") -Pattern '^version\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
   iscc "/DAppVersion=$ver" packaging/omicau.iss
 } else {
-  Write-Host "iscc (Inno Setup) not found on PATH — skipping installer; onedir is in dist/omicau"
+  Write-Host "iscc (Inno Setup) not found on PATH; skipping installer; onedir is in dist/omicau"
 }
