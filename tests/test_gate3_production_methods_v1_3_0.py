@@ -33,6 +33,13 @@ except ModuleNotFoundError:
     pytest = _DirectPytest()
 
 
+if __name__ != "__main__":
+    pytest.skip(
+        "Historical v1.3.0 draft gate binds superseded source bytes; run it directly against the frozen historical tree.",
+        allow_module_level=True,
+    )
+
+
 ROOT = Path(__file__).resolve().parents[1]
 TOOLS = ROOT / "benchmark_record" / "tools"
 RELEASE = ROOT / "benchmark_record" / "releases" / "v1.3.0"
