@@ -166,7 +166,11 @@ def _run_nested_stacking(aligned, ref_key, config, groups, n_jobs, seed, validat
         modalities=list(mods),
         extra={
             "n_splits": len(outer),
-            "split_plan_status": "validated_development_plan",
+            "split_plan_status": (
+                "validated_public_exact_splits"
+                if receipt.get("decision") == "validated"
+                else "validated_development_plan"
+            ),
             "split_plan_receipt": receipt,
             "stacking_status": "nested_inner_oof",
         },
@@ -178,43 +182,12 @@ def _run_nested_stacking(aligned, ref_key, config, groups, n_jobs, seed, validat
 
 
 def _run_stacking(aligned, results, ref_key, config, groups, n_jobs, seed, validated_plan=None):
-    """Late-integration stacking: cross-validate a meta-learner over the
-    single-modality out-of-fold predictions. A meta-test sample's meta-features
-    are base predictions from models that excluded its fold (base and meta CV
-    share the partition), so the evaluation is out-of-fold, not in-sample. It is
-    not fully nested -- the base models that produced the meta-TRAIN features were
-    trained on folds that include the meta-test fold, so as an estimate of the
-    stacking procedure's own generalization it can be mildly optimistic. Treat a
-    stacking win as indicative."""
-    mods = aligned.modality_names
-    if len(mods) < 2:
+    """Run only the nested fixed-plan stack; legacy stacking is unavailable."""
+    if validated_plan is None or len(aligned.modality_names) < 2:
         return None
-    if validated_plan is not None:
-        return _run_nested_stacking(
-            aligned, ref_key, config, groups, n_jobs, seed, validated_plan
-        )
-    task = aligned.task
-    y = aligned.y.to_numpy()
-    cl = {r.name: r for r in results}
-    cols: list[np.ndarray] = []
-    names: list[str] = []
-    for m in mods:
-        r = cl.get(f"{ref_key}::{m}")
-        if r is None or r.oof_score is None:
-            return None
-        s = np.asarray(r.oof_score, dtype=float).reshape(len(y), -1)
-        cols.append(s)
-        names += [m] if s.shape[1] == 1 else [f"{m}[{j}]" for j in range(s.shape[1])]
-    meta_X = np.hstack(cols)
-    factory = _estimator_factory("linear", task, seed, n_jobs)
-    result = cross_validate_estimator(
-        "stacking::FUSION", meta_X, y, groups, task, factory,
-        feature_names=names, modalities=list(mods),
-        n_splits=config.cv.n_splits, seed=seed, shuffle=config.cv.shuffle,
-        max_features=None, compute_importance=False,
+    return _run_nested_stacking(
+        aligned, ref_key, config, groups, n_jobs, seed, validated_plan
     )
-    result.extra["stacking_status"] = "legacy_nonnested_non_benchmark"
-    return result
 
 
 class _FixedSplitter:
@@ -315,8 +288,6 @@ def run_classical_benchmarks(
         config.controls.enabled
         and (config.controls.shuffle_features or config.controls.random_noise)
     )
-    if validated_plan is not None and feature_controls_requested:
-        raise ValueError("validated_plan_feature_controls_require_c07_integration")
     if validated_plan is not None and target_control_requested:
         if validated_control_contract is None:
             raise ValueError("validated_plan_target_control_contract_required")
@@ -344,6 +315,7 @@ def run_classical_benchmarks(
         gg=groups,
         imp=False,
         control_contract=None,
+        feature_control=None,
     ):
         factory = _estimator_factory(ref_key if imp else current_key, task, seed, n_jobs)
         return cross_validate_estimator(
@@ -353,6 +325,7 @@ def run_classical_benchmarks(
             compute_importance=imp, importance_repeats=config.xai.permutation_repeats,
             validated_plan=validated_plan,
             validated_control_contract=control_contract,
+            validated_feature_control=feature_control,
         )
 
     results: list[CVResult] = []
@@ -394,9 +367,20 @@ def run_classical_benchmarks(
         if config.controls.shuffle_target:
             if validated_plan is None:
                 y_shuf = rng.permutation(y)
-                controls.append(
-                    run("control::shuffled_target", X_all, feats_all, mods, yy=y_shuf)
+                control = run(
+                    "control::shuffled_target", X_all, feats_all, mods, yy=y_shuf
                 )
+                control.extra["control_execution_receipt"] = {
+                    "assessment_truth_status": "not_preserved",
+                    "decision": (
+                        "unsupported_for_group_safe_control"
+                        if groups is not None
+                        else "rowwise_stress_control"
+                    ),
+                    "scope": "rowwise_target_shuffle",
+                    "transform_role": "stress_control_only_not_inferential_randomization",
+                }
+                controls.append(control)
             else:
                 control = run(
                     "control::group_permuted_target",
@@ -412,15 +396,65 @@ def run_classical_benchmarks(
             Xp = np.array(X_all, copy=True)
             for j in range(Xp.shape[1]):
                 Xp[:, j] = rng.permutation(Xp[:, j])
-            controls.append(run("control::shuffled_features", Xp, feats_all, mods))
+            control = run(
+                "control::shuffled_features",
+                X_all if validated_plan is not None else Xp,
+                feats_all,
+                mods,
+                feature_control=("shuffled_features" if validated_plan is not None else None),
+            )
+            if validated_plan is None:
+                control.extra["control_execution_receipt"] = {
+                    "assessment_truth_status": "preserved",
+                    "control_kind": "shuffled_features",
+                    "decision": "descriptive_legacy_stress_control",
+                    "eligibility_reason": "feature_transform_not_fold_local_under_dynamic_splits",
+                    "expected_null_scope": "not_evaluable_legacy",
+                    "global_chance_eligible": False,
+                    "scope": "whole_dataset_feature_transform_before_split",
+                    "transform_role": "feature_association_stress_control",
+                }
+            controls.append(control)
         if config.controls.random_noise:
             Xn = rng.normal(size=X_all.shape)
-            controls.append(run("control::random_noise", Xn, feats_all, mods))
+            control = run(
+                "control::random_noise",
+                X_all if validated_plan is not None else Xn,
+                feats_all,
+                mods,
+                feature_control=("random_noise" if validated_plan is not None else None),
+            )
+            if validated_plan is None:
+                control.extra["control_execution_receipt"] = {
+                    "assessment_truth_status": "preserved",
+                    "control_kind": "random_noise",
+                    "decision": "descriptive_legacy_stress_control",
+                    "eligibility_reason": "feature_transform_not_fold_local_under_dynamic_splits",
+                    "expected_null_scope": "not_evaluable_legacy",
+                    "global_chance_eligible": False,
+                    "scope": "whole_dataset_feature_transform_before_split",
+                    "transform_role": "feature_association_stress_control",
+                }
+            controls.append(control)
 
-    # -- late-integration stacking (meta-learner over per-modality OOF) ----- #
-    stack = _run_stacking(
-        aligned, results, ref_key, config, groups, n_jobs, seed, validated_plan
-    )
+    # -- late integration --------------------------------------------------- #
+    # The dynamic-split path would train a meta-learner on base OOF predictions
+    # that include information from its assessment fold. Only the validated plan
+    # route supplies the nested inner partitions needed for an outer-clean stack.
+    stack = None
+    if validated_plan is not None:
+        stack = _run_stacking(
+            aligned, results, ref_key, config, groups, n_jobs, seed, validated_plan
+        )
+    stacking = {
+        "status": (
+            "nested_inner_oof"
+            if stack is not None
+            else "unavailable_fixed_plan_single_modality"
+            if validated_plan is not None
+            else "unavailable_legacy_nonnested_information_boundary"
+        )
+    }
     if stack is not None:
         results.append(stack)
 
@@ -461,7 +495,11 @@ def run_classical_benchmarks(
         split_plan_status = "legacy_generated_non_benchmark"
         split_plan_receipt = None
     else:
-        split_plan_status = "validated_development_plan"
+        split_plan_status = (
+            "validated_public_exact_splits"
+            if validated_plan.receipt().get("decision") == "validated"
+            else "validated_development_plan"
+        )
         split_plan_receipt = validated_plan.receipt()
 
     return {
@@ -472,6 +510,7 @@ def run_classical_benchmarks(
         "results": results,
         "controls": controls,
         "control_execution_receipt": control_execution_receipt,
+        "stacking": stacking,
         "split_plan_status": split_plan_status,
         "split_plan_receipt": split_plan_receipt,
     }

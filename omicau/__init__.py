@@ -1,8 +1,8 @@
 """omicau -- Omics Audit.
 
-A reproducible, leakage-safe, platform-agnostic CLI for auditing multi-omic
+A reproducible, leakage-aware, platform-agnostic CLI for auditing multi-omic
 datasets: flexible ingestion and alignment, cryptographic provenance, batch and
-missingness-bias diagnostics, leakage-safe classical and neural fusion
+missingness-bias diagnostics, leakage-aware classical and neural fusion
 benchmarks, feature attribution, and dual clinical/research reporting.
 
 The core package is fully self-contained: it runs with no internet access, no
@@ -13,7 +13,7 @@ network are absent.
 
 from __future__ import annotations
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 __author__ = "Tuna Birgun"
 
 # Lightweight, dependency-free symbols are re-exported for convenience. Heavy

@@ -10,6 +10,10 @@ on:
   release:
     types: [published]
 
+# This workflow may build CI artifacts but has no authority to modify GitHub Release assets.
+permissions:
+  contents: read
+
 jobs:
   build:
     strategy:

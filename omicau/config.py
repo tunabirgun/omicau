@@ -49,6 +49,12 @@ class ClinicalSpec:
     #: so all of an animal's tissues, and everything in a run, stay on one side).
     #: Point it at the OUTERMOST independent replicate unit, not a per-sample id.
     group: str | list[str] | None = None
+    #: Design-only column(s) defining exchangeability strata for the optional
+    #: group-level target-permutation stress control. It must be specified
+    #: explicitly for a fixed split plan and must not be derived from the target.
+    #: That control currently requires a target constant within each clinical
+    #: group; it does not support longitudinal or other group-varying endpoints.
+    permutation_strata: str | list[str] | None = None
     #: Column defining batches for batch-effect diagnostics.
     batch: str | None = None
     #: Optional exact modality-to-clinical-column mapping for modality-specific
@@ -71,6 +77,11 @@ class ClinicalSpec:
 @dataclass
 class CVSpec:
     n_splits: int = 5
+    #: Optional JSON file containing exact outer and nested inner row partitions.
+    #: Row positions refer to Omicau's canonical aligned sample order, never raw IDs.
+    split_manifest: str | None = None
+    #: Required nested-fold count when ``split_manifest`` is set.
+    inner_splits: int | None = None
     #: Mirrors the master OmicauConfig.seed via _propagate_seed(); kept for config
     #: round-tripping. The pipeline seeds every estimator/splitter/bootstrap from the
     #: master seed, so a run is reproducible from that single value.
@@ -350,6 +361,10 @@ class OmicauConfig:
             candidate = base / self.clinical.path
             if candidate.exists():
                 self.clinical.path = str(candidate)
+        if self.cv.split_manifest and not Path(self.cv.split_manifest).is_absolute():
+            candidate = base / self.cv.split_manifest
+            if candidate.exists():
+                self.cv.split_manifest = str(candidate)
         # keep output_dir relative to the config too, unless absolute.
         if self.output_dir and not Path(self.output_dir).is_absolute():
             self.output_dir = str(base / self.output_dir)

@@ -14,6 +14,7 @@ import numpy as np
 
 _PARTITION_EVIDENCE_TOKEN = object()
 _SPLIT_MANIFEST_STATUS = "unavailable_pending_frozen_public_manifest"
+_PUBLIC_SPLIT_MANIFEST_STATUS = "validated_public_exact_manifest"
 
 
 class SplitValidationError(ValueError):
@@ -419,6 +420,43 @@ def _canonical_runtime_atom(value: Any) -> dict[str, Any]:
     }
 
 
+def canonical_ordered_identity_sha256(values: Sequence[Hashable]) -> str:
+    """Hash typed, ordered normalized identities without exposing their values."""
+    if isinstance(values, (str, bytes)):
+        raise TypeError("ordered_identity_schema")
+    ordered = tuple(values)
+    if not ordered or any(_missing(value) or not isinstance(value, Hashable) for value in ordered):
+        raise ValueError("ordered_identity_schema")
+    payload = {
+        "schema_version": "omicau_ordered_identity_v1",
+        "values": [_canonical_runtime_atom(value) for value in ordered],
+    }
+    canonical = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("ascii")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def public_manifest_identity_binding(
+    *, groups: Sequence[Hashable] | None, permutation_strata: Sequence[Hashable] | None
+) -> dict[str, str | None]:
+    """Return digest-only bindings for an aligned public split-manifest envelope."""
+    if groups is None:
+        raise ValueError("public_manifest_groups_required")
+    return {
+        "aligned_group_sha256": canonical_ordered_identity_sha256(groups),
+        "aligned_permutation_strata_sha256": (
+            None
+            if permutation_strata is None
+            else canonical_ordered_identity_sha256(permutation_strata)
+        ),
+    }
+
+
 def _canonical_runtime_universe_sha256(
     *,
     groups: Sequence[Hashable],
@@ -717,9 +755,12 @@ def _validate_split_manifest_impl(
     minimum_regression_assessment_variance: float | None = None,
     minimum_survival_training_event_groups: int | None = None,
     minimum_survival_assessment_comparable_pairs: int | None = None,
+    public_manifest: bool = False,
 ) -> ValidatedSplitPlan:
     """Verify exact realized nested folds and return a private runtime plan."""
     n = _integer(n_samples, "n_samples", 2)
+    if type(public_manifest) is not bool:
+        _fail("public_manifest_type")
     outer_k = _integer(requested_outer_k, "requested_outer_k", 2)
     inner_k = _integer(requested_inner_k, "requested_inner_k", 2)
     minimum_train_groups = _integer(
@@ -941,13 +982,19 @@ def _validate_split_manifest_impl(
     internal_split_digest = canonical_split_manifest_sha256(manifest)
     receipt = {
         "claim_id": "C06",
-        "decision": "development_only",
-        "eligibility_reason": "trusted_process_development_mechanics",
+        "decision": "validated" if public_manifest else "development_only",
+        "eligibility_reason": (
+            "exact_manifest_bound_to_ordered_runtime_universe"
+            if public_manifest
+            else "trusted_process_development_mechanics"
+        ),
         "group_count": group_count,
         "inner_fold_count": inner_k,
         "outer_fold_count": outer_k,
-        "split_manifest_sha256": None,
-        "split_manifest_status": _SPLIT_MANIFEST_STATUS,
+        "split_manifest_sha256": internal_split_digest if public_manifest else None,
+        "split_manifest_status": (
+            _PUBLIC_SPLIT_MANIFEST_STATUS if public_manifest else _SPLIT_MANIFEST_STATUS
+        ),
         "support_summary": {
             **support_summary,
             "minimum_realized_assessment_group_count": min(
@@ -958,7 +1005,9 @@ def _validate_split_manifest_impl(
             ),
         },
         "verifier_status": (
-            "trusted_process_development_mechanics_pending_frozen_public_manifest"
+            "exact_manifest_runtime_binding_verified"
+            if public_manifest
+            else "trusted_process_development_mechanics_pending_frozen_public_manifest"
         ),
     }
     return _constructor(

@@ -1,6 +1,8 @@
 # omicau
 
-`omicau` is a local-first command-line tool for leakage-aware multi-omics data auditing and fusion benchmarking. It aligns molecular layers, checks missingness and batch structure, evaluates classical and neural fusion under group-aware cross-validation, records value-level provenance, and produces a self-contained HTML report with machine-readable outputs.
+`omicau` is a local-first command-line tool for multi-omics data auditing and fusion benchmarking. It aligns molecular layers, checks missingness and batch structure, evaluates classical and neural fusion under group-aware cross-validation, records value-level provenance, and produces a self-contained HTML report with machine-readable outputs. Its diagnostics and controls are evidence about the evaluated workflow, not proof that every form of leakage or bias is absent.
+
+Ordinary users run `omicau run` or the optional local browser interface. The bundled `benchmarks/` harness and `benchmark_record/` files are archived evaluation materials; they are not part of the ordinary user workflow and are not invoked by `omicau run`.
 
 Research use only. Predictive performance does not establish clinical utility or causal biology.
 
@@ -10,7 +12,9 @@ Research use only. Predictive performance does not establish clinical utility or
 - Group-aware cross-validation for repeated measures and related samples.
 - Missingness-bias, batch-confounding, and group-structure diagnostics.
 - Classical single-modality and fusion models plus availability-aware gated residual neural fusion.
+- Late-integration stacking only with a validated nested fixed-split plan; otherwise the result is reported as unavailable.
 - Fold-local preprocessing, fixed random seeds, and provenance hashes.
+- Optional public fixed nested-fold manifests bound to aligned input, group, and declared design-strata identities.
 - Modality utility, redundancy, permutation importance, and negative controls.
 - Self-contained HTML, JSON, CSV, runtime log, and model-card outputs.
 - Optional local web interface and public-data connectors.
@@ -25,6 +29,12 @@ Python 3.10 or later is required.
 
 ```bash
 python -m pip install omicau
+```
+
+For a pre-release evaluation build, install the reviewed wheel from a local review directory. The candidate is not installed from PyPI:
+
+```bash
+python -m pip install ./omicau-0.5.0-py3-none-any.whl
 ```
 
 Install optional features only when needed:
@@ -90,6 +100,16 @@ Minimal configuration:
 
 Set `clinical.group` to the outermost independent unit. All rows from the same group remain on one side of each cross-validation split.
 
+## Fixed split manifests and controls
+
+An ordinary `omicau run` creates group-aware splits from the resolved configuration. For a pre-specified, fixed nested-fold evaluation, set `cv.split_manifest` and `cv.inner_splits` in the configuration. The optional public manifest uses schema version `omicau_public_split_manifest_v2`; it is bound to the aligned value provenance, ordered group identities, and any declared permutation strata. Its `outer_folds` contain the exact nested row partitions in Omicau's canonical aligned order. The executable construction pattern is included in `tests/test_public_fixed_split_cli.py` and should be generated and frozen before fitting.
+
+Stacking fusion requires this validated nested plan. In an ordinary dynamic-split run, Omicau omits stacking and records an unavailable status because the nonnested alternative would cross the outer information boundary.
+
+If a fixed-plan target-permutation control is enabled, declare `clinical.permutation_strata` before analysis. The control permutes whole, endpoint-constant groups within the declared strata and within each outer-training partition. It is conditional on the stated exchangeability assumption. It is not a global-chance test unless its receipt explicitly says so. Feature-shuffle and random-noise controls are descriptive stress controls. Legacy dynamic-split controls are also descriptive; they do not establish group-safe control behavior.
+
+Fixed manifests currently support classification and regression. Omicau does not provide a public external-holdout route. Repeated groups must have a constant endpoint for the group target-permutation control; longitudinal or group-varying endpoints are refused for that control.
+
 ## Commands
 
 | Command | Purpose |
@@ -116,7 +136,7 @@ Use `omicau <command> --help` for the complete option list.
 
 ## Methodological safeguards
 
-Imputation, scaling, variance filtering, feature selection, batch adjustment, calibration, thresholds, and stacking features are fitted inside training data only. Model assessment uses shared group-aware folds. Null controls, target shuffling, and negative-control modalities are retained as controls rather than presented as recommended analyses. Failed methods and incomplete runs are reported instead of silently removed.
+Imputation, scaling, variance filtering, feature selection, batch adjustment, calibration, thresholds, and stacking features are fitted inside training data only. Model assessment uses shared group-aware folds. Null controls, target shuffling, and negative-control modalities are retained as controls rather than presented as recommended analyses. Failed methods and incomplete runs are reported instead of silently removed. Passing a control or diagnostic does not establish universal leakage safety, causal validity, or external generalization.
 
 Run identities include aligned-value SHA-256 provenance, configuration, relevant dependency versions, and implementation checks.
 

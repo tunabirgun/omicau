@@ -1,10 +1,8 @@
-# Automatically publish omicau to PyPI when the version in pyproject.toml changes
-# on `main`. Uses trusted publishing (OIDC) -- NO API token is stored anywhere.
+# Validate omicau when the version in pyproject.toml changes on `main`.
+# PyPI publication requires an explicit dispatch and uses OIDC; no API token is stored.
 #
-# The whole release is then: bump `version` in pyproject.toml, open a PR, merge it.
-# On merge, this workflow sees the changed version and publishes to PyPI; conda-forge
-# auto-follows PyPI. PyPI rejects duplicate versions, so the version bump is the
-# single deliberate act -- there is no separate tag/upload step. See RELEASING.md.
+# A version bump builds validation artifacts on merge. Dispatch this workflow with
+# `publish=true` only after the reviewed artifact set is approved. See RELEASING.md.
 #
 # ONE-TIME SETUP: register this repo as a PyPI trusted publisher (keyed to this
 # filename + environment, so never rename this file or add a second publish file):
@@ -16,7 +14,13 @@ on:
   push:
     branches: [main]
     paths: ["pyproject.toml"]   # cheap pre-filter; the gate below confirms the version bumped
-  workflow_dispatch:            # manual override (always builds; skip-existing guards re-uploads)
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish validated artifacts to PyPI
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -38,7 +42,7 @@ jobs:
           NEW="$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")"
           OLD="$(git show HEAD~1:pyproject.toml 2>/dev/null | python -c "import sys,tomllib; print(tomllib.load(sys.stdin.buffer)['project']['version'])" 2>/dev/null || echo none)"
           if [ "$NEW" != "$OLD" ]; then
-            echo "changed=true" >> "$GITHUB_OUTPUT"; echo "version bump: $OLD -> $NEW (publishing)"
+            echo "changed=true" >> "$GITHUB_OUTPUT"; echo "version bump: $OLD -> $NEW (validation only)"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"; echo "version unchanged ($NEW); nothing to publish"
           fi
@@ -56,6 +60,7 @@ jobs:
         run: |
           python -m pip install --upgrade build twine
           python -m build
+          python packaging/normalize_wheel_metadata.py dist/*.whl --sdist dist/*.tar.gz
       - name: Check metadata
         run: python -m twine check dist/*
       - uses: actions/upload-artifact@v4
@@ -65,6 +70,7 @@ jobs:
 
   publish:
     needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.publish == true
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -75,5 +81,3 @@ jobs:
           name: dist
           path: dist/
       - uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          skip-existing: true   # idempotent: a re-run of an already-published version is a no-op

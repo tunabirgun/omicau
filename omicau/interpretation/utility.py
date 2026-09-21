@@ -7,7 +7,8 @@ gain from adding it to the fusion (leave-one-out delta with a paired test across
 folds), representational redundancy against the other layers (linear CKA), and a
 verdict that separates real predictive signal from batch artifacts and noise.
 The control baselines gate the whole ledger: if a shuffled-target run scores far
-above chance, a leakage warning is raised and gains are treated as untrustworthy.
+above chance, a warning is raised. Passing these controls supports only the
+tested target/pipeline checks; it does not establish absence of all leakage.
 """
 
 from __future__ import annotations
@@ -73,7 +74,7 @@ def _prep_cka(X: np.ndarray) -> np.ndarray | None:
 
 
 def _paired_gain(fusion_folds: list[float], loo_folds: list[float]) -> tuple[float, float]:
-    """Mean per-fold (fusion - leave_one_out) delta and its p-value.
+    """Mean outer-fold delta and its corrected paired p-value.
 
     Uses the Nadeau-Bengio corrected resampled t-test rather than a plain paired
     t-test: k-fold train sets overlap, so the naive fold-difference variance is
@@ -101,12 +102,38 @@ def _paired_gain(fusion_folds: list[float], loo_folds: list[float]) -> tuple[flo
     return mean_d, p
 
 
+def _pooled_oof_gain(best, comparator, task: str) -> float | None:
+    """Pooled out-of-fold metric difference for the paired bootstrap estimand.
+
+    This is deliberately separate from :func:`_paired_gain`: for nonlinear
+    metrics such as AUROC, a mean of outer-fold differences need not equal the
+    difference of pooled out-of-fold metrics.
+    """
+    if _gain_eligibility(best, comparator).get("eligible") is not True:
+        return None
+    from omicau.models.base import PRIMARY_METRIC, score_predictions
+
+    y = np.asarray(best.oof_true)
+    try:
+        score_best, score_comparator = np.asarray(best.oof_score), np.asarray(comparator.oof_score)
+        pred_best, pred_comparator = np.asarray(best.oof_pred), np.asarray(comparator.oof_pred)
+        if task == "classification":
+            pred_best, pred_comparator = pred_best.astype(int), pred_comparator.astype(int)
+        key = PRIMARY_METRIC[task]
+        first = score_predictions(y, score_best, pred_best, task).get(key, np.nan)
+        second = score_predictions(y, score_comparator, pred_comparator, task).get(key, np.nan)
+        value = float(first - second)
+        return _r(value) if np.isfinite(value) else None
+    except (TypeError, ValueError, FloatingPointError):
+        return None
+
+
 def _paired_gain_ci(best, best_single, task, n_boot: int = 1000, seed: int = 42,
                     alpha: float = 0.05) -> dict | None:
-    """Percentile CI for (best.primary - best_single.primary) via a paired bootstrap.
+    """Percentile CI for the pooled-OOF metric difference via paired bootstrap.
     Both models are scored on the same pooled-OOF sample order, so one resample of
-    the sample (or group) indices is applied to both — a genuine paired interval on
-    the fusion gain, so the headline number is not reported without uncertainty."""
+    the sample (or group) indices is applied to both. This interval belongs with
+    :func:`_pooled_oof_gain`, not with the mean outer-fold decision statistic."""
     if best is None or best_single is None:
         return None
     y = getattr(best, "oof_true", None)
@@ -120,9 +147,17 @@ def _paired_gain_ci(best, best_single, task, n_boot: int = 1000, seed: int = 42,
     ss, ps = np.asarray(best_single.oof_score), np.asarray(best_single.oof_pred)
     if len(np.asarray(best_single.oof_true)) != n:
         return None
+    if not np.array_equal(np.asarray(best_single.oof_true), y, equal_nan=True):
+        return None
     n_classes = len(np.unique(y)) if task == "classification" else 0
     groups = getattr(best, "oof_groups", None)
     groups = None if groups is None else np.asarray(groups)
+    other_groups = getattr(best_single, "oof_groups", None)
+    other_groups = None if other_groups is None else np.asarray(other_groups)
+    if (groups is None) != (other_groups is None):
+        return None
+    if groups is not None and (len(groups) != n or not np.array_equal(groups, other_groups)):
+        return None
     rng = np.random.default_rng(seed)
     if groups is not None:
         uniq = np.unique(groups)
@@ -147,8 +182,36 @@ def _paired_gain_ci(best, best_single, task, n_boot: int = 1000, seed: int = 42,
             continue
     if len(vals) < 20:
         return None
-    return {"low": _r(float(np.percentile(vals, 100 * alpha / 2))),
-            "high": _r(float(np.percentile(vals, 100 * (1 - alpha / 2))))}
+    return {
+        "low": _r(float(np.percentile(vals, 100 * alpha / 2))),
+        "high": _r(float(np.percentile(vals, 100 * (1 - alpha / 2)))),
+        "resampling_unit": "group" if groups is not None else "sample",
+        "n_valid_resamples": int(len(vals)),
+    }
+
+
+def _gain_eligibility(fusion, leave_one_out) -> dict[str, Any]:
+    """State whether a paired marginal-gain uncertainty calculation is valid."""
+    if fusion is None or leave_one_out is None:
+        return {"eligible": False, "reason": "missing_fusion_or_leave_one_out"}
+    first = getattr(fusion, "oof_true", None)
+    second = getattr(leave_one_out, "oof_true", None)
+    if first is None or second is None:
+        return {"eligible": False, "reason": "missing_out_of_fold_targets"}
+    first, second = np.asarray(first), np.asarray(second)
+    if len(first) != len(second) or not np.array_equal(first, second, equal_nan=True):
+        return {"eligible": False, "reason": "unmatched_out_of_fold_targets"}
+    groups = getattr(fusion, "oof_groups", None)
+    other_groups = getattr(leave_one_out, "oof_groups", None)
+    if (groups is None) != (other_groups is None):
+        return {"eligible": False, "reason": "unmatched_group_metadata"}
+    if groups is not None and not np.array_equal(np.asarray(groups), np.asarray(other_groups)):
+        return {"eligible": False, "reason": "unmatched_group_metadata"}
+    return {
+        "eligible": True,
+        "resampling_unit": "group" if groups is not None else "sample",
+        "n_out_of_fold_rows": int(len(first)),
+    }
 
 
 def build_utility_ledger(
@@ -175,10 +238,21 @@ def build_utility_ledger(
     # -- controls / leakage gate ------------------------------------------ #
     controls = [{"name": r.name, "primary": _r(r.primary),
                  "ci_low": getattr(r, "extra", {}).get("ci_low"),
-                 "ci_high": getattr(r, "extra", {}).get("ci_high")}
+                 "ci_high": getattr(r, "extra", {}).get("ci_high"),
+                 "control_execution_receipt": getattr(r, "extra", {}).get("control_execution_receipt")}
                 for r in classical_out.get("controls", [])]
+    for control in controls:
+        receipt = control.get("control_execution_receipt") or {}
+        control["global_chance_evidence"] = bool(
+            receipt.get("decision") == "eligible"
+            and receipt.get("expected_null_scope") == "global"
+            and receipt.get("global_chance_eligible") is True
+            and receipt.get("assessment_truth_status") == "preserved"
+        )
     alarm = chance + CONTROL_MARGIN
     present = [c for c in controls if c["primary"] is not None]
+    eligible_controls = [c for c in present if c["global_chance_evidence"]]
+    ineligible_controls = [c for c in present if not c["global_chance_evidence"]]
 
     def _sig_above_chance(c):
         # A control leaks only when BOTH conditions hold: its 95% CI lower bound
@@ -201,18 +275,32 @@ def build_utility_ledger(
             return by_margin
         return (c["ci_low"] > chance) and by_margin
 
-    leaking = [c for c in present if _sig_above_chance(c)]
+    leaking = [c for c in eligible_controls if _sig_above_chance(c)]
     leakage = bool(leaking)
-    leakage_text = (
-        f"A control baseline ({leaking[0]['name'].split('::')[-1]}) is significantly above chance "
-        f"(score {leaking[0]['primary']:.3f}, chance ~ {chance:.2f}); treat reported gains with "
-        "caution and re-check group-aware splitting."
-        if leakage
-        else (f"All control baselines scored near chance (~ {chance:.2f}); the harness shows no "
-              "target or pipeline leakage. (These controls scramble the target/features; they do "
-              "not by themselves rule out group leakage from a mis-set or missing group column — "
-              "see the grouping status.)")
-    )
+    if leaking:
+        control_alarm_status = "global_chance_alarm"
+        leakage_text = (
+            f"A global-chance-eligible control ({leaking[0]['name'].split('::')[-1]}) is significantly above chance "
+            f"(score {leaking[0]['primary']:.3f}, chance ~ {chance:.2f}); treat reported gains with "
+            "caution and re-check group-aware splitting."
+        )
+    elif eligible_controls:
+        control_alarm_status = "global_chance_no_alarm"
+        leakage_text = (
+            f"All global-chance-eligible controls scored near chance (~ {chance:.2f}); no alarm was raised by "
+            "these evaluated target/pipeline controls. This does not establish absence of group leakage or other "
+            "unmodelled sources of bias; inspect the grouping and diagnostic status."
+        )
+    else:
+        control_alarm_status = "not_evaluable_no_global_chance_eligible_control"
+        leakage_text = (
+            "No global-chance-eligible control is available, so the chance-based control alarm was not evaluated. "
+            "Any conditional or rowwise control result is retained descriptively only."
+        )
+    if ineligible_controls:
+        leakage_text += (" At least one control is retained as a limited stress result but is excluded from "
+                         "global-chance alarm evidence because its receipt does not establish the required "
+                         "global-null, group-assignment, and assessment-truth conditions.")
 
     # -- redundancy (CKA) -------------------------------------------------- #
     cka = np.full((len(mods), len(mods)), np.nan)
@@ -232,10 +320,6 @@ def build_utility_ledger(
     # -- per-modality ledger ---------------------------------------------- #
     ledger: list[dict[str, Any]] = []
     batch_pm = (batch_diag or {}).get("per_modality", {})
-    # A modality is "batch-confounded" only when its variance is batch-structured
-    # AND batch is confounded with the outcome globally. Batch orthogonal to the
-    # outcome is the harmless case (Nygaard et al. 2016) -- do not flag it.
-    confounded_global = bool((batch_diag or {}).get("confounding", {}).get("flag", False))
     miss_flags_by_mod = _missing_flags_by_modality(missing_diag)
 
     for i, m in enumerate(mods):
@@ -243,6 +327,12 @@ def build_utility_ledger(
         gain_c, gain_c_p = (
             _paired_gain(fusion_ref.fold_primary, loo.fold_primary)
             if fusion_ref and loo else (float("nan"), float("nan"))
+        )
+        gain_eligibility = _gain_eligibility(fusion_ref, loo)
+        pooled_oof_gain = _pooled_oof_gain(fusion_ref, loo, task)
+        pooled_oof_gain_ci = (
+            _paired_gain_ci(fusion_ref, loo, task, seed=42)
+            if gain_eligibility["eligible"] else None
         )
         gain_n, gain_n_p = float("nan"), float("nan")
         nn_loo = nn.get(f"neural::FUSION-minus-{m}")
@@ -260,7 +350,8 @@ def build_utility_ledger(
                     red_partner, red_cka = mj, float(v)
 
         batch_structured = bool(batch_pm.get(m, {}).get("flag", False))
-        batch_confounded = batch_structured and confounded_global
+        batch_confounding = batch_pm.get(m, {}).get("target_confounding", {})
+        batch_confounded = batch_structured and bool(batch_confounding.get("flag", False))
         standalone_useful = np.isfinite(standalone[m]) and standalone[m] > chance + USEFUL_MARGIN
         # A positive point-estimate gain is not enough to claim the layer "adds
         # signal": the leave-one-out delta must also clear the paired Nadeau-Bengio
@@ -269,8 +360,22 @@ def build_utility_ledger(
         gain_positive = np.isfinite(gain_c) and gain_c > GAIN_EPS
         gain_significant = gain_positive and np.isfinite(gain_c_p) and gain_c_p < GAIN_ALPHA
         gain_state = "adds_sig" if gain_significant else ("adds_ns" if gain_positive else "none")
-        redundant = (red_partner is not None and np.isfinite(red_cka)
-                     and red_cka > CKA_REDUNDANT and gain_state != "adds_sig")
+        # A fold-level test alone is not sufficient for a categorical positive
+        # verdict when the paired OOF records needed for its uncertainty check do
+        # not match. Preserve the measured fold quantities, but fail the verdict
+        # gate closed and expose the reason in the ledger.
+        if not gain_eligibility["eligible"]:
+            gain_state = "unavailable"
+        similarity_observed = (red_partner is not None and np.isfinite(red_cka)
+                               and red_cka > CKA_REDUNDANT and gain_state != "adds_sig")
+        if not gain_eligibility["eligible"]:
+            gain_status = "unavailable"
+        elif gain_state == "adds_sig":
+            gain_status = "supported_positive"
+        elif gain_state == "adds_ns":
+            gain_status = "inconclusive_positive"
+        else:
+            gain_status = "not_positive"
 
         if single_modality:
             verdict, rec = _verdict_single(
@@ -278,7 +383,7 @@ def build_utility_ledger(
             )
         else:
             verdict, rec = _verdict(
-                standalone_useful, gain_state, redundant, batch_confounded, red_partner,
+                standalone_useful, gain_state, similarity_observed, batch_confounded, red_partner,
                 bool(miss_flags_by_mod.get(m)), leakage, gain_c, gain_c_p,
             )
 
@@ -287,14 +392,21 @@ def build_utility_ledger(
             "modality": m,
             "n_features": int(aligned.modalities[m].shape[1]),
             "standalone_primary": _r(standalone[m]),
-            "marginal_gain_classical": _r(gain_c),
-            "marginal_gain_p": _r(gain_c_p),
+            "foldmean_marginal_gain": _r(gain_c),
+            "foldmean_marginal_gain_p": _r(gain_c_p),
+            "pooled_oof_marginal_gain": pooled_oof_gain,
+            "pooled_oof_marginal_gain_ci": pooled_oof_gain_ci,
+            "marginal_gain_status": gain_status,
+            "marginal_gain_eligibility": gain_eligibility,
             "marginal_gain_neural": _r(gain_n),
             "marginal_gain_neural_p": _r(gain_n_p),
             "redundancy_max_cka": _r(red_cka),
-            "redundant_with": red_partner,
+            "similarity_with": red_partner if similarity_observed else None,
+            "redundant_with": None,
             "batch_structured": batch_structured,
             "batch_confounded": batch_confounded,
+            "batch_column": batch_pm.get(m, {}).get("batch_column"),
+            "batch_target_confounding": batch_confounding,
             "missingness_biased": bool(miss_flags_by_mod.get(m)),
             "verdict": verdict,
             "recommendation": rec,
@@ -351,6 +463,7 @@ def build_utility_ledger(
         "task": task,
         "chance_level": chance,
         "best_model": _model_brief(best),
+        "best_model_selection": "descriptive highest observed primary score across fitted fusion candidates; no inferential superiority claim",
         "calibration": calibration,
         "auprc_baseline": auprc_baseline,
         "subgroups": subgroups,
@@ -364,7 +477,35 @@ def build_utility_ledger(
         "redundancy_matrix": {"modalities": mods, "cka": [[_r(v) for v in row] for row in cka]},
         "controls": controls,
         "leakage_warning": leakage,
+        "control_alarm_status": control_alarm_status,
         "leakage_text": leakage_text,
+        "categorical_verdict_inputs": {
+            "model_scope": "classical_reference_estimator_only",
+            "reference_estimator": ref,
+            "neural_results_used": False,
+            "feature_attribution_used": False,
+            "thresholds": {
+                "standalone_margin_over_chance": USEFUL_MARGIN,
+                "marginal_gain": GAIN_EPS,
+                "marginal_gain_alpha": GAIN_ALPHA,
+                "similarity_cka": CKA_REDUNDANT,
+            },
+            "records": [{
+                "modality": row["modality"],
+                "standalone_primary": row["standalone_primary"],
+                "foldmean_marginal_gain": row["foldmean_marginal_gain"],
+                "foldmean_marginal_gain_p": row["foldmean_marginal_gain_p"],
+                "pooled_oof_marginal_gain": row["pooled_oof_marginal_gain"],
+                "pooled_oof_marginal_gain_ci": row["pooled_oof_marginal_gain_ci"],
+                "marginal_gain_status": row["marginal_gain_status"],
+                "marginal_gain_eligibility": row["marginal_gain_eligibility"],
+                "redundancy_max_cka": row["redundancy_max_cka"],
+                "similarity_with": row["similarity_with"],
+                "batch_confounded": row["batch_confounded"],
+                "missingness_biased": row["missingness_biased"],
+                "verdict": row["verdict"],
+            } for row in ledger],
+        },
         "summary_flags": _summary_flags(ledger, leakage, fusion_gain, single_modality, mods),
     }
 
@@ -372,7 +513,7 @@ def build_utility_ledger(
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
-def _verdict(standalone_useful, gain_state, redundant, batch_confounded, red_partner,
+def _verdict(standalone_useful, gain_state, similarity_observed, batch_confounded, red_partner,
              miss_biased, leakage, gain_c=float("nan"), gain_c_p=float("nan")):
     """Map a modality's evidence to a verdict. gain_state is one of 'adds_sig'
     (positive leave-one-out gain that clears the paired significance test),
@@ -398,15 +539,17 @@ def _verdict(standalone_useful, gain_state, redundant, batch_confounded, red_par
         # a noisy gain as an established contribution.
         p_txt = f" (p={gain_c_p:.2f})" if np.isfinite(gain_c_p) else ""
         g_txt = f"+{gain_c:.3f}" if np.isfinite(gain_c) else "positive"
-        return ("informative alone (fusion gain not significant)",
+        return ("informative; incremental contribution inconclusive",
                 f"Predictive on its own, but its leave-one-out gain ({g_txt}) is not distinguishable from zero at "
                 f"this sample size{p_txt}; do not claim it improves the fusion without more data.")
-    if standalone_useful and redundant:
-        return (f"redundant (subsumed by {red_partner})",
-                f"Informative alone but its signal is largely shared with '{red_partner}'; adds little on top.")
     if standalone_useful:
-        return ("informative but non-additive",
-                "Predictive on its own yet not additive in fusion; likely overlapping with the retained layers.")
+        if similarity_observed:
+            return ("informative; incremental contribution inconclusive",
+                    f"Predictive on its own and similar to '{red_partner}' by CKA, but the observed "
+                    "leave-one-out result does not establish redundancy or absence of complementary signal.")
+        return ("informative; incremental contribution inconclusive",
+                "Predictive on its own, but the available leave-one-out evidence does not establish an "
+                "incremental fusion contribution or absence of one.")
     return ("no detectable signal (control-like)",
             "Performs near chance and adds nothing; a candidate to drop.")
 
@@ -531,6 +674,7 @@ def _summary_flags(ledger, leakage, fusion_gain, single_modality=False, mods=Non
     if leakage:
         flags.append("Control-baseline leakage warning is active.")
     useful = [l for l in ledger if l["verdict"].startswith("predictive")]
+    inconclusive = [l for l in ledger if "inconclusive" in l["verdict"]]
     dead = [l for l in ledger if l["verdict"].startswith("no detectable")]
     conf = [l for l in ledger if l["batch_confounded"]]
     if useful:
@@ -539,6 +683,8 @@ def _summary_flags(ledger, leakage, fusion_gain, single_modality=False, mods=Non
         flags.append(f"Batch-confounded layer(s): {', '.join(l['modality'] for l in conf)}.")
     if dead:
         flags.append(f"Control-like layer(s) with no signal: {', '.join(l['modality'] for l in dead)}.")
+    if inconclusive:
+        flags.append(f"Incremental contribution remains inconclusive for: {', '.join(l['modality'] for l in inconclusive)}.")
     if single_modality:
         name = (mods[0] if mods else "one layer")
         flags.append(f"Single modality ({name}): fusion, redundancy, and marginal-contribution "

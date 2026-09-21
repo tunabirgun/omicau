@@ -48,6 +48,29 @@ def _encode(labels: pd.Series | None) -> np.ndarray | None:
     return codes
 
 
+def _batch_for_modality(aligned, name: str) -> pd.Series | None:
+    """Return the batch label that was mapped to this modality.
+
+    ``aligned.batch`` remains a legacy/global descriptor. It must not stand in
+    for a modality-specific label when ``batch_by_modality`` is available.
+    """
+    mapped = getattr(aligned, "batch_by_modality", {}) or {}
+    return mapped.get(name, getattr(aligned, "batch", None))
+
+
+def _valid_labelled(values: np.ndarray, labels: pd.Series | None) -> tuple[np.ndarray, pd.Series | None]:
+    """Drop rows with absent labels before a labelled diagnostic.
+
+    Missing per-modality batch labels are not a batch level. Treating pandas
+    ``NA`` as one would manufacture an apparent batch effect.
+    """
+    if labels is None:
+        return values, None
+    series = pd.Series(labels).reset_index(drop=True)
+    mask = series.notna().to_numpy()
+    return values[mask], series.loc[mask].reset_index(drop=True)
+
+
 def _pca_project(X: np.ndarray, n_components: int, seed: int) -> tuple[np.ndarray, np.ndarray]:
     Xi = _mean_impute(X)
     Xs = StandardScaler().fit_transform(Xi)
@@ -87,12 +110,53 @@ def _anova_pc1(pc1: np.ndarray, labels: np.ndarray) -> tuple[float, float, float
     return F, p, eta2
 
 
+def _target_confounding(batch: pd.Series | None, y: pd.Series, y_raw: pd.Series | None,
+                        task: str) -> dict[str, Any]:
+    """Assess target association for one explicitly supplied batch variable."""
+    if batch is None:
+        return {"tested": False, "reason": "no_batch_label"}
+    batch_values = pd.Series(batch).reset_index(drop=True)
+    target = pd.Series(y_raw if y_raw is not None else y).reset_index(drop=True)
+    valid = batch_values.notna() & target.notna()
+    batch_values, target = batch_values.loc[valid], target.loc[valid]
+    if batch_values.nunique(dropna=True) < 2:
+        return {"tested": False, "reason": "fewer_than_two_batch_levels"}
+    try:
+        if task == "classification":
+            table = pd.crosstab(batch_values.astype("string"), target.astype("string"))
+            if table.shape[0] < 2 or table.shape[1] < 2:
+                return {"tested": False, "reason": "insufficient_target_or_batch_levels"}
+            chi2, p, _, _ = stats.chi2_contingency(table)
+            cramers_v = _cramers_v(table)
+            return {
+                "tested": True,
+                "test": "chi2_batch_vs_target",
+                "statistic": _f(chi2),
+                "p_value": _f(p),
+                "cramers_v": _f(cramers_v),
+                "flag": bool(_f(p) is not None and _f(p) < ALPHA and _f(cramers_v) is not None and cramers_v > 0.2),
+            }
+        values = pd.to_numeric(target, errors="coerce").to_numpy(dtype=float)
+        codes = _encode(batch_values)
+        valid_numeric = np.isfinite(values)
+        F, p, eta2 = _anova_pc1(values[valid_numeric], codes[valid_numeric])
+        return {
+            "tested": True,
+            "test": "anova_target_vs_batch",
+            "statistic": _f(F),
+            "p_value": _f(p),
+            "eta_squared": _f(eta2),
+            "flag": bool(_f(p) is not None and _f(p) < ALPHA and _f(eta2) is not None and eta2 > 0.10),
+        }
+    except (ValueError, ZeroDivisionError, FloatingPointError):
+        return {"tested": False, "reason": "test_not_estimable"}
+
+
 def batch_effect_diagnostics(aligned, seed: int = 42, n_components: int = 10) -> dict[str, Any]:
-    """Compute batch-effect and confounding diagnostics for an aligned dataset."""
-    batch = aligned.batch
+    """Compute per-modality batch diagnostics and a labelled global summary."""
+    global_batch = getattr(aligned, "batch", None)
     y = aligned.y
     task = aligned.task
-    batch_codes = _encode(batch)
     target_codes = _encode(y.astype("string")) if task == "classification" else None
 
     per_modality: dict[str, Any] = {}
@@ -104,7 +168,12 @@ def batch_effect_diagnostics(aligned, seed: int = 42, n_components: int = 10) ->
         pc1 = coords[:, 0]
         pc2 = coords[:, 1] if coords.shape[1] > 1 else np.zeros_like(pc1)
 
-        sil_batch = _silhouette(coords, batch_codes)
+        batch = _batch_for_modality(aligned, name)
+        labelled_coords, labelled_batch = _valid_labelled(coords, batch)
+        labelled_pc1 = labelled_coords[:, 0]
+        batch_codes = _encode(labelled_batch)
+
+        sil_batch = _silhouette(labelled_coords, batch_codes)
         sil_target = _silhouette(coords, target_codes)
 
         entry: dict[str, Any] = {
@@ -114,13 +183,15 @@ def batch_effect_diagnostics(aligned, seed: int = 42, n_components: int = 10) ->
             "silhouette_target": sil_target,
         }
         if batch_codes is not None:
-            F, p, eta2 = _anova_pc1(pc1, batch_codes)
+            F, p, eta2 = _anova_pc1(labelled_pc1, batch_codes)
             try:
-                kw = stats.kruskal(*[pc1[batch_codes == u] for u in np.unique(batch_codes)])
+                kw = stats.kruskal(*[labelled_pc1[batch_codes == u] for u in np.unique(batch_codes)])
                 kw_p = kw.pvalue
             except (ValueError, FloatingPointError):
                 kw_p = np.nan
             entry.update({
+                "batch_column": getattr(batch, "name", None),
+                "n_labelled_for_batch": int(len(labelled_pc1)),
                 "pc1_anova_F": _f(F),
                 "pc1_anova_p": _f(p),
                 "pc1_kruskal_p": _f(kw_p),
@@ -141,7 +212,15 @@ def batch_effect_diagnostics(aligned, seed: int = 42, n_components: int = 10) ->
             )
         else:
             entry["flag"] = False
-            entry["interpretation"] = "No batch column supplied; batch tests skipped."
+            entry["batch_column"] = getattr(batch, "name", None)
+            entry["n_labelled_for_batch"] = 0
+            entry["interpretation"] = "No usable batch labels for this modality; batch tests skipped."
+
+        entry["target_confounding"] = _target_confounding(batch, y, aligned.y_raw, task)
+        if entry["target_confounding"].get("flag"):
+            flags.append(
+                f"{name}: its mapped batch label is associated with the target; interpret this layer's apparent signal cautiously."
+            )
 
         per_modality[name] = entry
         pca_coords[name] = {
@@ -151,60 +230,18 @@ def batch_effect_diagnostics(aligned, seed: int = 42, n_components: int = 10) ->
             "target": aligned.y_raw.astype("string").tolist() if aligned.y_raw is not None else None,
         }
 
-    # -- batch/target confounding ----------------------------------------- #
-    # The confounding-inflation risk (Nygaard et al. 2016) is a property of the
-    # batch-outcome association, not the outcome type -- test both tasks.
-    confounding: dict[str, Any] = {"tested": False}
-    if batch is not None and task == "classification":
-        try:
-            table = pd.crosstab(batch.astype("string"), aligned.y_raw.astype("string"))
-            chi2, p, _, _ = stats.chi2_contingency(table)
-            cramers_v = _cramers_v(table)
-            confounding = {
-                "tested": True,
-                "test": "chi2_batch_vs_target",
-                "statistic": _f(chi2),
-                "p_value": _f(p),
-                "cramers_v": _f(cramers_v),
-                "flag": bool(p is not None and p < ALPHA and cramers_v > 0.2),
-            }
-            if confounding["flag"]:
-                flags.append(
-                    f"Batch is confounded with the target "
-                    f"(Cramer's V={_f(cramers_v)}, p={_f(p)}); batch effects can leak as signal."
-                )
-        except (ValueError, ZeroDivisionError):
-            confounding = {"tested": False}
-    elif batch is not None and task in ("regression", "survival"):
-        # One-way ANOVA of the continuous outcome across batch levels + eta^2.
-        # For survival the outcome is the time-to-event, so this tests whether
-        # batch tracks survival time (keeps the confounding gate lit, not dark).
-        try:
-            y_cont = np.asarray(y, dtype=float)
-            F, p, eta2 = _anova_pc1(y_cont, batch_codes)
-            confounding = {
-                "tested": True,
-                "test": "anova_target_vs_batch",
-                "statistic": _f(F),
-                "p_value": _f(p),
-                "eta_squared": _f(eta2),
-                "flag": bool(_f(p) is not None and _f(p) < ALPHA
-                             and _f(eta2) is not None and eta2 > 0.10),
-            }
-            if confounding["flag"]:
-                flags.append(
-                    f"Batch is confounded with the (continuous) outcome "
-                    f"(eta2={_f(eta2)}, p={_f(p)}); batch effects can leak as signal."
-                )
-        except (ValueError, FloatingPointError):
-            confounding = {"tested": False}
+    global_confounding = _target_confounding(global_batch, y, aligned.y_raw, task)
+    if global_confounding.get("flag"):
+        flags.append("The separately supplied global batch label is associated with the target.")
 
     return {
         "alpha": ALPHA,
-        "batch_column": (aligned.batch.name if aligned.batch is not None else None),
+        "batch_column": (global_batch.name if global_batch is not None else None),
+        "global_batch_available": global_batch is not None,
         "per_modality": per_modality,
         "pca_coords": pca_coords,
-        "confounding": confounding,
+        "confounding": global_confounding,
+        "global_confounding": global_confounding,
         "flags": flags,
     }
 

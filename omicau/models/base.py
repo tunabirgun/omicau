@@ -38,6 +38,111 @@ from sklearn.metrics import (
 PRIMARY_METRIC = {"classification": "auroc", "regression": "r2", "survival": "c_index"}
 
 
+class PermutationImportanceMappingError(ValueError):
+    """The fitted preprocessing pipeline cannot be mapped to input features."""
+
+
+def _permutation_importance_original_features(
+    pipe: Pipeline,
+    X: np.ndarray,
+    y: np.ndarray,
+    *,
+    feature_names: list[str],
+    n_repeats: int,
+    random_state: int,
+    scoring: str,
+) -> np.ndarray:
+    """Score retained estimator inputs and map them back to original features."""
+    if len(feature_names) != X.shape[1]:
+        raise PermutationImportanceMappingError(
+            "permutation_importance_feature_name_count_mismatch"
+        )
+    if len(set(feature_names)) != len(feature_names):
+        raise PermutationImportanceMappingError(
+            "permutation_importance_feature_names_not_unique"
+        )
+
+    expected = np.arange(X.shape[1])
+    impute = pipe.named_steps.get("impute")
+    variance = pipe.named_steps.get("variance")
+    scale = pipe.named_steps.get("scale")
+    if not isinstance(impute, SimpleImputer) or impute.strategy != "median":
+        raise PermutationImportanceMappingError(
+            "permutation_importance_unsupported_imputer"
+        )
+    if impute.add_indicator or impute.keep_empty_features:
+        raise PermutationImportanceMappingError(
+            "permutation_importance_unsupported_imputer_output"
+        )
+    if not isinstance(variance, VarianceThreshold) or not isinstance(scale, StandardScaler):
+        raise PermutationImportanceMappingError(
+            "permutation_importance_unsupported_preprocessing"
+        )
+
+    impute_support = np.isfinite(np.asarray(impute.statistics_, dtype=float))
+    if impute_support.shape != expected.shape:
+        raise PermutationImportanceMappingError(
+            "permutation_importance_imputer_support_mismatch"
+        )
+    expected = expected[impute_support]
+    variance_support = np.asarray(variance.get_support(), dtype=bool)
+    if variance_support.shape != expected.shape:
+        raise PermutationImportanceMappingError(
+            "permutation_importance_variance_support_mismatch"
+        )
+    expected = expected[variance_support]
+
+    steps = [name for name, _ in pipe.steps[:-1]]
+    if steps not in (["impute", "variance", "scale"], ["impute", "variance", "scale", "select"]):
+        raise PermutationImportanceMappingError(
+            "permutation_importance_unsupported_preprocessing_order"
+        )
+    if "select" in pipe.named_steps:
+        select = pipe.named_steps["select"]
+        if not isinstance(select, SelectKBest):
+            raise PermutationImportanceMappingError(
+                "permutation_importance_unsupported_selector"
+            )
+        select_support = np.asarray(select.get_support(), dtype=bool)
+        if select_support.shape != expected.shape:
+            raise PermutationImportanceMappingError(
+                "permutation_importance_select_support_mismatch"
+            )
+        expected = expected[select_support]
+
+    preprocessor = pipe[:-1]
+    transformed = preprocessor.transform(X)
+    if transformed.shape[1] != len(expected):
+        raise PermutationImportanceMappingError(
+            "permutation_importance_transformed_width_mismatch"
+        )
+    try:
+        output_names = list(preprocessor.get_feature_names_out(feature_names))
+    except (AttributeError, ValueError) as error:
+        raise PermutationImportanceMappingError(
+            "permutation_importance_feature_name_mapping_unavailable"
+        ) from error
+    expected_names = [feature_names[index] for index in expected]
+    if output_names != expected_names:
+        raise PermutationImportanceMappingError(
+            "permutation_importance_feature_name_order_mismatch"
+        )
+
+    estimator = pipe.named_steps["estimator"]
+    result = permutation_importance(
+        estimator,
+        transformed,
+        y,
+        n_repeats=n_repeats,
+        n_jobs=1,
+        random_state=random_state,
+        scoring=scoring,
+    )
+    mapped = np.zeros(X.shape[1], dtype=float)
+    mapped[expected] = result.importances_mean
+    return mapped
+
+
 @dataclass
 class CVResult:
     """Cross-validated result for one model/feature-set combination."""
@@ -93,6 +198,7 @@ class CVResult:
             "ci_high": self.extra.get("ci_high"),
             "split_plan_status": self.extra.get("split_plan_status"),
             "split_plan_receipt": self.extra.get("split_plan_receipt"),
+            "control_execution_receipt": self.extra.get("control_execution_receipt"),
         }
 
 
@@ -363,8 +469,12 @@ def resolve_validated_cv_splits(
             "minimum_realized_assessment_variance"
         ]
         for _, assessment in partitions:
+            assessment_groups = sorted(
+                set(groups[assessment].tolist()),
+                key=lambda value: (type(value).__name__, repr(value)),
+            )
             values = np.asarray(
-                [group_outcomes[group] for group in set(groups[assessment].tolist())],
+                [group_outcomes[group] for group in assessment_groups],
                 dtype=float,
             )
             if len(values) < required_count or np.var(values) < required_variance:
@@ -394,6 +504,7 @@ def cross_validate_estimator(
     importance_repeats: int = 8,
     validated_plan: Any = None,
     validated_control_contract: Any = None,
+    validated_feature_control: str | None = None,
 ) -> CVResult:
     """Run leakage-safe CV for one estimator over feature matrix ``X``."""
     y = np.asarray(y)
@@ -409,10 +520,15 @@ def cross_validate_estimator(
             validated_plan, X, y, groups, task, n_splits
         )
         k = len(splits)
-        split_status = "validated_development_plan"
+        split_status = (
+            "validated_public_exact_splits"
+            if split_receipt.get("decision") == "validated"
+            else "validated_development_plan"
+        )
 
     fold_training_targets = None
     control_execution_receipt = None
+    original_y = y.copy()
     if validated_control_contract is not None:
         if validated_plan is None or name != "control::group_permuted_target":
             raise ValueError("validated_target_control_scope_invalid")
@@ -434,6 +550,22 @@ def cross_validate_estimator(
         )
     elif name == "control::group_permuted_target":
         raise ValueError("validated_target_control_contract_required")
+    if validated_feature_control is not None:
+        if validated_plan is None or name not in {
+            "control::shuffled_features", "control::random_noise"
+        }:
+            raise ValueError("validated_feature_control_scope_invalid")
+        if validated_feature_control not in {"shuffled_features", "random_noise"}:
+            raise ValueError("validated_feature_control_unknown")
+        control_execution_receipt = {
+            "assessment_truth_status": "preserved",
+            "control_kind": validated_feature_control,
+            "decision": "eligible",
+            "expected_null_scope": "global",
+            "global_chance_eligible": True,
+            "scope": "outer_train_and_assessment_transformed_separately",
+            "transform_role": "feature_association_stress_control",
+        }
 
     # Out-of-fold prediction stores.
     if task == "classification":
@@ -449,16 +581,29 @@ def cross_validate_estimator(
     importance_stack: list[np.ndarray] = []   # per-fold permutation importances
 
     for fold, (train_idx, val_idx) in enumerate(splits):
+        if not np.array_equal(y, original_y, equal_nan=True):
+            raise RuntimeError("validated_feature_control_outcomes_changed")
+        X_train, X_validation = X[train_idx], X[val_idx]
+        if validated_feature_control is not None:
+            rng = np.random.default_rng(np.random.SeedSequence([seed, fold, 941]))
+            if validated_feature_control == "shuffled_features":
+                X_train, X_validation = X_train.copy(), X_validation.copy()
+                for values in (X_train, X_validation):
+                    for column in range(values.shape[1]):
+                        values[:, column] = rng.permutation(values[:, column])
+            else:
+                X_train = rng.normal(size=X_train.shape)
+                X_validation = rng.normal(size=X_validation.shape)
         pipe = make_pipeline(estimator_factory(), task, X.shape[1], max_features, seed)
         training_target = (
             y[train_idx]
             if fold_training_targets is None
             else fold_training_targets[fold]
         )
-        pipe.fit(X[train_idx], training_target)
+        pipe.fit(X_train, training_target)
 
         if task == "classification":
-            proba = pipe.predict_proba(X[val_idx])
+            proba = pipe.predict_proba(X_validation)
             classes = pipe.named_steps["estimator"].classes_.astype(int)
             oof_score[np.ix_(val_idx, classes)] = proba
             preds = classes[proba.argmax(axis=1)]
@@ -470,7 +615,7 @@ def cross_validate_estimator(
                 task,
             )
         else:
-            preds = pipe.predict(X[val_idx])
+            preds = pipe.predict(X_validation)
             oof_pred[val_idx] = preds
             oof_score[val_idx] = preds
             fold_metrics = score_predictions(y[val_idx], preds, preds, task)
@@ -492,16 +637,29 @@ def cross_validate_estimator(
                 scoring = "roc_auc" if (task == "classification" and n_classes == 2) else (
                     "accuracy" if task == "classification" else "r2"
                 )
-                r = permutation_importance(
-                    pipe, X[val_idx], y[val_idx],
-                    n_repeats=importance_repeats, random_state=seed, scoring=scoring,
+                importance_stack.append(
+                    _permutation_importance_original_features(
+                        pipe,
+                        X[val_idx],
+                        y[val_idx],
+                        feature_names=feature_names,
+                        n_repeats=importance_repeats,
+                        random_state=seed,
+                        scoring=scoring,
+                    )
                 )
-                importance_stack.append(r.importances_mean)
+            except PermutationImportanceMappingError:
+                raise
             except (ValueError, RuntimeError):
                 pass
             finally:
                 if prev_njobs not in (None, 1):
                     est.n_jobs = prev_njobs
+
+    if validated_feature_control is not None and not np.array_equal(
+        y, original_y, equal_nan=True
+    ):
+        raise RuntimeError("validated_feature_control_outcomes_changed")
 
     # Pooled OOF metrics.
     if task == "classification":

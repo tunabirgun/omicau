@@ -1,0 +1,14 @@
+include LICENSE
+include README.md
+include docs/fixed-split-controls.md
+recursive-include omicau *.py
+recursive-include omicau/ui/static *
+prune benchmarks
+prune benchmark_record
+prune tests
+prune state
+prune build
+prune omicau.egg-info
+prune .pytest_cache
+global-exclude __pycache__
+global-exclude *.py[cod]

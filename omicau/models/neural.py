@@ -612,7 +612,11 @@ def _neural_cv(
             validated_plan, n, groups, task, y
         )
         k = len(outer_splits)
-        split_status = _VALIDATED_SPLIT_STATUS
+        split_status = (
+            "validated_public_exact_splits"
+            if split_receipt.get("decision") == "validated"
+            else _VALIDATED_SPLIT_STATUS
+        )
     else:
         k = safe_n_splits(task, y, groups, config.cv.n_splits)
         splitter = make_cv_splitter(task, k, seed, config.cv.shuffle, groups)
@@ -773,7 +777,9 @@ def run_neural_benchmark(aligned, config, validated_plan=None) -> dict[str, Any]
         "primary_metric": PRIMARY_METRIC[aligned.task],
         "results": results,
         "split_execution_status": (
-            _VALIDATED_SPLIT_STATUS if validated_plan is not None else _LEGACY_SPLIT_STATUS
+            "validated_public_exact_splits"
+            if validated_plan is not None and validated_plan.receipt().get("decision") == "validated"
+            else _VALIDATED_SPLIT_STATUS if validated_plan is not None else _LEGACY_SPLIT_STATUS
         ),
         "split_plan_receipt": validated_plan.receipt() if validated_plan is not None else None,
     }
