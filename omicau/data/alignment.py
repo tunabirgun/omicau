@@ -73,6 +73,7 @@ class AlignedDataset:
     y_raw: pd.Series | None = None
     class_names: list[str] | None = None
     groups: pd.Series | None = None
+    permutation_strata: pd.Series | None = None
     batch: pd.Series | None = None
     batch_by_modality: dict[str, pd.Series] = field(default_factory=dict)
     event: pd.Series | None = None      # survival only: 1 = event, 0 = right-censored
@@ -614,6 +615,17 @@ def align_modalities(
         if group_info["missing"]:
             report.setdefault("notes", []).append(
                 f"Grouping columns not found and ignored: {group_info['missing']}.")
+    permutation_strata, strata_info = _resolve_group_series(
+        clinical, clin_spec.permutation_strata, sample_ids
+    )
+    if strata_info is not None:
+        report["permutation_strata"] = {
+            key: value for key, value in strata_info.items() if key != "label"
+        }
+        if strata_info["missing"]:
+            report.setdefault("notes", []).append(
+                f"Permutation-strata columns not found and ignored: {strata_info['missing']}."
+            )
     batch = None
     if clin_spec.batch and clin_spec.batch in clinical.columns:
         batch = clinical[clin_spec.batch].astype("string").fillna("NA")
@@ -692,6 +704,7 @@ def align_modalities(
         y_raw=y_raw,
         class_names=class_names,
         groups=groups,
+        permutation_strata=permutation_strata,
         batch=batch,
         batch_by_modality=batch_by_modality,
         event=event,

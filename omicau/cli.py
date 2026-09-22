@@ -119,9 +119,33 @@ def estimate_runtime(aligned, config, device_type: str, cores: int) -> dict[str,
     n_controls = sum([config.controls.shuffle_target, config.controls.shuffle_features,
                       config.controls.random_noise]) if config.controls.enabled else 0
 
-    # classical model count: (single M + fusion 1 + LOO M) per estimator + controls.
-    classical_models = n_keys * (2 * M + 1) + n_controls
-    classical_fits = classical_models * K
+    # Planned model fits, rather than observations or bootstrap resamples. The
+    # fixed-plan stack is nested: each outer fold fits M base models over I inner
+    # folds, M outer-train base models, and one meta model.
+    main_models = n_keys * (M + 1 + (M if M > 1 else 0))
+    main_grid_fits = main_models * K
+    control_fits = n_controls * K
+    fixed_plan = bool(getattr(config.cv, "split_manifest", None))
+    inner_k = getattr(config.cv, "inner_splits", None)
+    nested_stacking_fits = (
+        K * (M * (int(inner_k) + 1) + 1)
+        if fixed_plan and M > 1 and isinstance(inner_k, int) and inner_k >= 2
+        else 0
+    )
+    planned_classical_fits = main_grid_fits + control_fits + nested_stacking_fits
+    optional_sensitivity_fits = {
+        "batch_blocked": (
+            min(K, int(aligned.batch.nunique()))
+            if config.cv.batch_blocked and getattr(aligned, "batch", None) is not None
+            else 0
+        ),
+        "batch_adjustment_conditional": (
+            K
+            if config.cv.batch_adjust_sensitivity and getattr(aligned, "batch", None) is not None
+            else 0
+        ),
+    }
+    estimated_classical_fits = planned_classical_fits + sum(optional_sensitivity_fits.values())
 
     # calibrate one fit on a small random problem.
     per_fit = 0.05
@@ -136,7 +160,7 @@ def estimate_runtime(aligned, config, device_type: str, cores: int) -> dict[str,
         per_fit = dt * (300 / tr0) * (max(N, 1) / max(n0, 1)) * (max(P_tot, 1) / max(p0, 1)) ** 0.5
     except Exception:  # noqa: BLE001 - fall back to the default constant
         pass
-    classical_seconds = classical_fits * per_fit
+    classical_seconds = estimated_classical_fits * per_fit
     # permutation importance adds ~ repeats * a fold-predict on the fusion model.
     if config.xai.enabled:
         classical_seconds *= 1.0 + 0.15 * config.xai.permutation_repeats / max(1, K)
@@ -159,7 +183,13 @@ def estimate_runtime(aligned, config, device_type: str, cores: int) -> dict[str,
             "classical_seconds": round(classical_seconds, 1),
             "neural_seconds": round(neural_seconds, 1),
             "overhead_seconds": round(overhead, 1),
-            "classical_fits": int(classical_fits),
+            "classical_fits": int(planned_classical_fits),
+            "classical_fit_count_kind": "planned_model_fits_excluding_optional_sensitivities",
+            "main_grid_model_fits": int(main_grid_fits),
+            "control_model_fits": int(control_fits),
+            "nested_stacking_model_fits": int(nested_stacking_fits),
+            "optional_sensitivity_model_fits": optional_sensitivity_fits,
+            "estimated_model_fits_including_optional_sensitivities": int(estimated_classical_fits),
             "neural_epochs": int((2 * M + 1) * K * config.neural.epochs) if config.neural.enabled else 0,
         },
         "dims": {"N": N, "P_total": P_tot, "M": M, "K": K, "device": device_type, "cores": cores},
@@ -186,6 +216,104 @@ def _log_runtime(log_path: Path, step: str, elapsed: float, device_tag: str) -> 
     line = f"{stamp}\t{step}\t{elapsed:.2f}s\t{device_tag}\n"
     with open(log_path, "a", encoding="utf-8", newline="") as fh:
         fh.write(line)
+
+
+def _fixed_plan_for_aligned(config, aligned):
+    """Load a public fixed-plan envelope after canonical input alignment."""
+    manifest_path = config.cv.split_manifest
+    if not manifest_path:
+        return None, None
+    if aligned.task not in {"classification", "regression"}:
+        raise ValueError("fixed split manifests currently support classification or regression")
+    if aligned.groups is None:
+        raise ValueError("fixed split manifest requires clinical.group")
+    if config.cv.inner_splits is None:
+        raise ValueError("fixed split manifest requires cv.inner_splits")
+    try:
+        envelope = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError("fixed split manifest must be readable JSON") from error
+    expected = {
+        "aligned_group_sha256",
+        "aligned_permutation_strata_sha256",
+        "aligned_provenance_sha256",
+        "outer_folds",
+        "schema_version",
+    }
+    if not isinstance(envelope, dict) or set(envelope) != expected:
+        raise ValueError("fixed split manifest envelope schema is invalid")
+    if envelope["schema_version"] != "omicau_public_split_manifest_v2":
+        raise ValueError("fixed split manifest schema version is unsupported")
+    provenance = envelope["aligned_provenance_sha256"]
+    if not isinstance(provenance, str) or provenance != aligned.provenance_hash:
+        raise ValueError("fixed split manifest does not match aligned input provenance")
+    target_control_requested = bool(
+        config.controls.enabled and config.controls.shuffle_target
+    )
+    strata = getattr(aligned, "permutation_strata", None)
+    requested = config.clinical.permutation_strata
+    if target_control_requested and (strata is None or not requested):
+        raise ValueError(
+            "fixed split target control requires clinical.permutation_strata declared before analysis"
+        )
+    from omicau.models.split_plan import (
+        public_manifest_identity_binding,
+        validate_split_manifest,
+    )
+
+    binding = public_manifest_identity_binding(
+        groups=aligned.groups.to_numpy(),
+        permutation_strata=(
+            None
+            if getattr(aligned, "permutation_strata", None) is None
+            else aligned.permutation_strata.to_numpy()
+        ),
+    )
+    if any(envelope[key] != value for key, value in binding.items()):
+        raise ValueError("fixed split manifest does not match aligned group or strata identities")
+
+    kwargs: dict[str, Any] = {
+        "n_samples": aligned.n_samples,
+        "groups": aligned.groups.to_numpy(),
+        "task": aligned.task,
+        "requested_outer_k": config.cv.n_splits,
+        "requested_inner_k": config.cv.inner_splits,
+        "minimum_training_groups": 2,
+        "minimum_assessment_groups": 2,
+        "y": aligned.y.to_numpy(),
+        "public_manifest": True,
+    }
+    if aligned.task == "classification":
+        kwargs.update(
+            minimum_training_groups_per_class=1,
+            minimum_assessment_groups_per_class=1,
+        )
+    else:
+        kwargs.update(
+            minimum_regression_assessment_groups=2,
+            minimum_regression_assessment_variance=0.0,
+        )
+    try:
+        plan = validate_split_manifest({"outer_folds": envelope["outer_folds"]}, **kwargs)
+    except ValueError as error:
+        raise ValueError("fixed split manifest is invalid for the aligned study") from error
+
+    if not target_control_requested:
+        return plan, None
+    fields = [requested] if isinstance(requested, str) else list(requested)
+    forbidden = {config.clinical.target, config.clinical.time, config.clinical.event}
+    if any(field in forbidden for field in fields):
+        raise ValueError("permutation strata must not use an endpoint column")
+    from omicau.models.group_controls import build_public_group_control_contract
+
+    contract = build_public_group_control_contract(
+        groups=aligned.groups.to_numpy(),
+        strata=strata.to_numpy(),
+        fields=fields,
+        outer_fold_count=config.cv.n_splits,
+        seed=config.seed,
+    )
+    return plan, contract
 
 
 def run_audit(config, *, cores: int, device: str, llm: bool | None,
@@ -233,6 +361,7 @@ def run_audit(config, *, cores: int, device: str, llm: bool | None,
     aligned = timed("ingest_align", lambda: load_and_align(config))
     from omicau.data.alignment import check_grouping
     check_grouping(aligned)   # preflight: warn on missing/no-op grouping, raise on class==group
+    validated_plan, validated_control_contract = _fixed_plan_for_aligned(config, aligned)
     echo(f"  provenance SHA-256 (a fingerprint of these exact inputs): {aligned.provenance_hash}")
     echo(f"  {aligned.n_samples} samples | {aligned.task} | modalities {aligned.feature_counts()}")
     if len(aligned.modality_names) == 1:
@@ -242,18 +371,38 @@ def run_audit(config, *, cores: int, device: str, llm: bool | None,
 
     cost = estimate_runtime(aligned, config, dev.type, resolved_cores)
     echo(f"Estimated wall-time: {cost['human_readable']} "
-         f"({cost['breakdown']['classical_fits']} classical fits, "
+         f"({cost['breakdown']['classical_fits']} planned classical model fits, "
          f"{cost['breakdown']['neural_epochs']} neural epochs on {dev.type})")
 
     missing = timed("diagnostics_missingness", lambda: missingness_diagnostics(aligned))
     batch = timed("diagnostics_batch", lambda: batch_effect_diagnostics(aligned, seed=config.seed))
     if aligned.task == "survival":
         from omicau.models.survival import run_survival_benchmark
-        classical = timed("classical_benchmarks", lambda: run_survival_benchmark(aligned, config))
+        classical = timed(
+            "classical_benchmarks",
+            lambda: run_survival_benchmark(
+                aligned,
+                config,
+                validated_plan=validated_plan,
+                validated_control_contract=validated_control_contract,
+            ),
+        )
         neural = {"enabled": False, "results": []}      # neural survival deferred
     else:
-        classical = timed("classical_benchmarks", lambda: run_classical_benchmarks(aligned, config, batch))
-        neural = timed("neural_benchmark", lambda: run_neural_benchmark(aligned, config))
+        classical = timed(
+            "classical_benchmarks",
+            lambda: run_classical_benchmarks(
+                aligned,
+                config,
+                batch,
+                validated_plan=validated_plan,
+                validated_control_contract=validated_control_contract,
+            ),
+        )
+        neural = timed(
+            "neural_benchmark",
+            lambda: run_neural_benchmark(aligned, config, validated_plan=validated_plan),
+        )
     util = timed("utility_ledger",
                  lambda: build_utility_ledger(aligned, classical, neural, batch, missing))
     summary = timed("interpretation",
@@ -292,6 +441,7 @@ def _assemble_audit(aligned, classical, neural, util, summary, missing, batch,
                    "reference_estimator": classical["reference_estimator"],
                    "classical": [r.to_dict() for r in classical["results"]],
                    "controls": [r.to_dict() for r in classical["controls"]],
+                   "stacking": classical.get("stacking"),
                    "neural": {"enabled": neural.get("enabled"), "device": neural.get("device"),
                               "results": [r.to_dict() for r in neural.get("results", [])]}},
         "utility": util, "summary": summary, "config": config.to_dict(),

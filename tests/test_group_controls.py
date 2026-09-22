@@ -81,6 +81,11 @@ def test_permutation_is_deterministic_groupwise_and_training_only(task: str) -> 
     assert receipt["outer_train_group_count"] == 4
     assert receipt["permutation_registry_sha256"] is None
     assert receipt["permutation_registry_status"] == "unavailable_pending_frozen_registry"
+    assert receipt["expected_null_scope"] == "conditional"
+    assert receipt["global_chance_eligible"] is False
+    assert receipt["assessment_truth_status"] == "preserved"
+    assert receipt["assignment_policy"] == "forced_nonidentity_blockwise_endpoint_assignment"
+    assert receipt["fixed_point_policy"] == "group_endpoint_fixed_points_allowed_when_endpoint_values_repeat"
     assert receipt["transform_role"] == "stress_control_only_not_inferential_randomization"
     for array in first.values():
         assert len(array) == 8
@@ -121,6 +126,21 @@ def test_private_fold_executor_returns_training_candidates_and_public_aggregates
     public = json.dumps(receipt, sort_keys=True)
     for forbidden in ("g0", "g1", "seed", "indices", "labels", "mapping"):
         assert forbidden not in public.lower()
+
+
+def test_constant_declared_stratum_is_the_only_global_chance_scope() -> None:
+    values = _base()
+    values["strata"] = ["declared_constant"] * len(values["groups"])
+    receipt, _ = _run(values)
+    assert receipt["expected_null_scope"] == "global"
+    assert receipt["global_chance_eligible"] is True
+
+
+def test_multiple_declared_strata_remain_conditional_even_with_groupwise_assignment() -> None:
+    values = _base()
+    receipt, _ = _run(values)
+    assert receipt["expected_null_scope"] == "conditional"
+    assert receipt["global_chance_eligible"] is False
 
 
 @pytest.mark.parametrize(

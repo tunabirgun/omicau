@@ -54,7 +54,8 @@ def missingness_diagnostics(aligned) -> dict[str, Any]:
     """Compute the full missingness-bias report for an :class:`AlignedDataset`."""
     y = aligned.y
     task = aligned.task
-    batch = aligned.batch
+    global_batch = getattr(aligned, "batch", None)
+    batch_by_modality = getattr(aligned, "batch_by_modality", {}) or {}
     tests: list[dict[str, Any]] = []
     overall_modalities: dict[str, Any] = {}
     sample_missing: dict[str, list[float]] = {}
@@ -102,12 +103,22 @@ def missingness_diagnostics(aligned) -> dict[str, Any]:
                                   "Missingness rate correlates with the continuous target."))
 
         # -- missingness vs batch ----------------------------------------- #
+        # Each layer must be checked against the batch variable that applies to
+        # that layer. A global batch remains useful as a separately labelled
+        # descriptive variable, but must not replace a mapped label.
+        batch = batch_by_modality.get(name, global_batch)
         if batch is not None:
-            bvals = batch.to_numpy()
-            bgroups = [rate[bvals == b] for b in np.unique(bvals)]
-            stat_b, p_b = _safe_kruskal(bgroups)
-            tests.append(_mk_test(name, "kruskal_missingrate_vs_batch", "batch", stat_b, p_b,
-                                  "Missingness rate differs across batches (batch-linked dropout)."))
+            bvals = pd.Series(batch).reset_index(drop=True)
+            valid = bvals.notna().to_numpy()
+            observed = bvals.loc[valid].to_numpy()
+            if len(observed) and len(np.unique(observed)) >= 2:
+                bgroups = [rate[valid][observed == b] for b in np.unique(observed)]
+                stat_b, p_b = _safe_kruskal(bgroups)
+                tests.append(_mk_test(
+                    name, "kruskal_missingrate_vs_batch", "batch", stat_b, p_b,
+                    "Missingness rate differs across this modality's mapped batches (batch-linked dropout).",
+                    batch_column=getattr(batch, "name", None),
+                ))
 
     # FDR across all tests.
     p_adj = benjamini_hochberg([t["p_value"] for t in tests])
@@ -138,8 +149,8 @@ def missingness_diagnostics(aligned) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 # Safe statistical wrappers
 # --------------------------------------------------------------------------- #
-def _mk_test(modality, test, association, stat, p, interpretation) -> dict[str, Any]:
-    return {
+def _mk_test(modality, test, association, stat, p, interpretation, batch_column=None) -> dict[str, Any]:
+    result = {
         "modality": modality,
         "test": test,
         "association": association,
@@ -147,6 +158,9 @@ def _mk_test(modality, test, association, stat, p, interpretation) -> dict[str, 
         "p_value": _f(p),
         "interpretation": interpretation,
     }
+    if association == "batch":
+        result["batch_column"] = batch_column
+    return result
 
 
 def _safe_kruskal(groups):

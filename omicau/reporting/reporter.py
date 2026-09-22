@@ -63,15 +63,15 @@ def _verdict_status(verdict: str) -> str:
     v = (verdict or "").lower()
     if v.startswith("predictive"):
         return "predictive"
-    if v.startswith("redundant"):
-        return "redundant"
+    if "inconclusive" in v:
+        return "not_additive"
     if "batch-confounded" in v:
         return "batch_confounded"
     if "no detectable" in v or "control-like" in v:
         return "control_like"
     if v.startswith("informative"):
         return "not_additive"   # predictive alone but not a significant fusion contributor
-    return "redundant"
+    return "not_additive"
 
 
 def _rating_status(rating: str) -> str:
@@ -106,7 +106,7 @@ def _answer_strip(util: dict, rating_status: str) -> list[dict]:
     elif isinstance(gain, (int, float)) and gain > GAIN_EPS:
         q1 = ("Yes — a modest gain", "△", "answer--mid")
     else:
-        q1 = ("No — one layer suffices", "•", "answer--neutral")
+        q1 = ("Incremental benefit is inconclusive", "•", "answer--neutral")
 
     if leak or rating_status == "high":
         q2 = ("No — serious flags", "▲", "answer--warn")
@@ -130,7 +130,7 @@ def _answer_strip(util: dict, rating_status: str) -> list[dict]:
     elif useful and isinstance(gain, (int, float)) and gain > GAIN_EPS:
         q3 = ("Adopt the fusion model", "✓", "answer--ok")
     else:
-        q3 = ("Prefer the best single layer", "•", "answer--neutral")
+        q3 = ("Treat the descriptive best model cautiously", "•", "answer--neutral")
 
     q1_label = "What kind of check is this?" if single else "Does combining layers help?"
     return [
@@ -151,13 +151,22 @@ def _trust_checklist(audit: dict, util: dict, missing: dict, batch: dict,
     checks: list[dict] = []
 
     leak = util.get("leakage_warning")
+    control_alarm_status = util.get("control_alarm_status")
+    unsupported_controls = [c for c in util.get("controls", []) if not c.get("global_chance_evidence", False)]
     ctrl = (f"shuffled-label control scored {control_max:.2f}"
             if control_max is not None else "controls unavailable")
-    checks.append({"label": "Control baselines at chance (no target/pipeline leakage)",
-                   "status": "fail" if leak else "pass",
-                   "note": ctrl + (" — above chance; investigate leakage before trusting the model."
-                                   if leak else ", so a scrambled target is not predictable — as it should be. "
-                                   "These controls catch target/pipeline leakage; group leakage is covered by the next check.")})
+    if leak:
+        control_note = " — above chance; investigate leakage before trusting the model."
+    elif control_alarm_status == "not_evaluable_no_global_chance_eligible_control":
+        control_note = ", so no global-chance control alarm was evaluated."
+    else:
+        control_note = ", so no alarm was raised by the global-chance-eligible controls."
+    control_note += " These checks cover the tested target/pipeline path; they do not establish absence of other bias."
+    if unsupported_controls:
+        control_note += " A conditional or rowwise target shuffle is retained as a stress result but is not global-chance alarm evidence."
+    checks.append({"label": "Target/pipeline control result",
+                   "status": "fail" if leak else ("caution" if control_alarm_status == "not_evaluable_no_global_chance_eligible_control" or unsupported_controls else "pass"),
+                   "note": ctrl + control_note})
 
     # Grouping status: whether samples were keyed to independent subjects. The
     # controls above cannot detect group leakage, so surface it explicitly rather
@@ -173,7 +182,7 @@ def _trust_checklist(audit: dict, util: dict, missing: dict, batch: dict,
                  "has repeated samples per subject (aliquots, timepoints), set a group id, or scores can "
                  "be inflated by pseudoreplication that the shuffled-target control cannot detect.")
         gstatus = "caution"
-    checks.append({"label": "Samples keyed to independent subjects (no group leakage)",
+    checks.append({"label": "Samples keyed to independent subjects",
                    "status": gstatus, "note": gnote})
 
     if n is not None:
@@ -204,7 +213,7 @@ def _trust_checklist(audit: dict, util: dict, missing: dict, batch: dict,
     checks.append({"label": "No batch confounding",
                    "status": "caution" if conf else "pass",
                    "note": (f"in {', '.join(conf)}, processing batch lines up with the outcome, so their apparent signal may be a technical artifact, not biology — treat it as untrustworthy."
-                            if conf else "no layer's signal is dominated by batch structure.")})
+                            if conf else "no mapped layer met this batch-confounding flag; this is not evidence that all batch effects are absent.")})
 
     flagged = [t for t in missing.get("tests", []) if t.get("flag")]
     checks.append({"label": "No target-linked missingness",
@@ -435,30 +444,30 @@ def fig_marginal_gain(util: dict, include_js: bool) -> str:
     if not ledger:
         return "<p class='muted'>No modality ledger available.</p>"
     x = [m["modality"] for m in ledger]
-    y = [m.get("marginal_gain_classical") or 0.0 for m in ledger]
+    y = [m.get("foldmean_marginal_gain") or 0.0 for m in ledger]
     # Colour by significance, not just sign: a positive point estimate that fails
     # the paired test is amber (not the confident cobalt), matching the ledger verdict.
     colors = []
     for m, v in zip(ledger, y):
-        p = m.get("marginal_gain_p")
+        p = m.get("foldmean_marginal_gain_p")
         sig = (p is not None) and (v > GAIN_EPS) and (p < GAIN_ALPHA)
         colors.append(COBALT if sig else (AMBER if v > GAIN_EPS else VERMILLION))
     fig = go.Figure(go.Bar(x=x, y=y, marker_color=colors,
-                           customdata=[m.get("marginal_gain_p") for m in ledger],
-                           hovertemplate="%{x}: gain %{y:+.3f}<br>paired p = %{customdata:.3f}<extra></extra>"))
+                           customdata=[m.get("foldmean_marginal_gain_p") for m in ledger],
+                           hovertemplate="%{x}: fold-mean gain %{y:+.3f}<br>corrected paired p = %{customdata:.3f}<extra></extra>"))
     fig.add_hline(y=0, line_color="#94A3B8")
-    _base_layout(fig, ytitle="marginal gain (fusion − leave-one-out)")
+    _base_layout(fig, ytitle="mean outer-fold gain (fusion − leave-one-out)")
     fig.update_layout(showlegend=False)
     return _fig_html(fig, include_js)
 
 
-def fig_attribution(models: dict, include_js: bool) -> str:
+def fig_attribution(models: dict, include_js: bool, display_top_k: int = 20) -> str:
     fusion = next((r for r in models.get("classical", []) if r["name"].endswith("::FUSION")
                    and r.get("feature_importance")), None)
     if not fusion:
         return "<p class='muted'>No feature attribution available.</p>"
     imp = fusion["feature_importance"]
-    top = sorted(imp.items(), key=lambda kv: kv[1], reverse=True)[:20]
+    top = sorted(imp.items(), key=lambda kv: kv[1], reverse=True)[:display_top_k]
     top.reverse()
     labels = [k for k, _ in top]
     vals = [v for _, v in top]
@@ -538,10 +547,11 @@ def _model_rows(models: dict, single: bool = False) -> tuple[list[str], list[lis
     classification = models.get("task") == "classification"
     if classification:
         header = ["model", "type", metric, "AUPRC", "balanced acc", "95% CI",
-                  "n_features", "modalities", "folds"]
+                  "n_features", "modalities", "folds", "split_plan_status", "control_execution_receipt"]
         numeric = {2, 3, 4, 6}
     else:
-        header = ["model", "type", metric, "95% CI", "n_features", "modalities", "folds"]
+        header = ["model", "type", metric, "95% CI", "n_features", "modalities", "folds",
+                  "split_plan_status", "control_execution_receipt"]
         numeric = {2, 4}
     rows = []
     allr = list(models.get("classical", [])) + list(models.get("neural", {}).get("results", []))
@@ -556,7 +566,9 @@ def _model_rows(models: dict, single: bool = False) -> tuple[list[str], list[lis
         base = [r["name"], label, r.get("primary")]
         if classification:
             base += [met.get("auprc"), met.get("balanced_accuracy")]
-        base += [ci, r.get("n_features"), "+".join(r.get("modalities", [])), r.get("n_splits")]
+        receipt = r.get("control_execution_receipt")
+        base += [ci, r.get("n_features"), "+".join(r.get("modalities", [])), r.get("n_splits"),
+                 r.get("split_plan_status"), json.dumps(receipt, sort_keys=True) if receipt is not None else None]
         rows.append(base)
     return header, rows, numeric
 
@@ -752,14 +764,29 @@ def build_report(audit: dict, out_dir: str | Path, config=None) -> dict[str, Pat
     _write_csv(out / "model_metrics.csv", mheader, mrows)
     assets["model_metrics"] = out / "model_metrics.csv"
 
-    led_header = ["modality", "n_features", "standalone", "marginal_gain", "gain_p",
-                  "redundancy_cka", "redundant_with", "batch_confounded", "verdict"]
+    led_header = [
+        "modality", "n_features", "standalone", "foldmean_marginal_gain", "foldmean_marginal_gain_p",
+        "pooled_oof_marginal_gain", "pooled_oof_gain_ci_low", "pooled_oof_gain_ci_high", "gain_status",
+        "gain_eligible", "paired_resampling_unit", "redundancy_cka",
+        "similarity_with", "batch_column", "batch_confounded", "missingness_biased", "verdict",
+    ]
     led_rows = [[m["modality"], m.get("n_features"), m.get("standalone_primary"),
-                 m.get("marginal_gain_classical"), m.get("marginal_gain_p"),
-                 m.get("redundancy_max_cka"), m.get("redundant_with"),
-                 m.get("batch_confounded"), m.get("verdict")] for m in util.get("modality_ledger", [])]
+                 m.get("foldmean_marginal_gain"), m.get("foldmean_marginal_gain_p"),
+                 m.get("pooled_oof_marginal_gain"), (m.get("pooled_oof_marginal_gain_ci") or {}).get("low"),
+                 (m.get("pooled_oof_marginal_gain_ci") or {}).get("high"), m.get("marginal_gain_status"),
+                 (m.get("marginal_gain_eligibility") or {}).get("eligible"),
+                 (m.get("pooled_oof_marginal_gain_ci") or {}).get("resampling_unit"), m.get("redundancy_max_cka"),
+                 m.get("similarity_with"), m.get("batch_column"), m.get("batch_confounded"),
+                 m.get("missingness_biased"), m.get("verdict")]
+                for m in util.get("modality_ledger", [])]
     _write_csv(out / "modality_ledger.csv", led_header, led_rows)
     assets["modality_ledger"] = out / "modality_ledger.csv"
+    _write_csv(out / "verdict_ledger.csv", led_header, led_rows)
+    assets["verdict_ledger"] = out / "verdict_ledger.csv"
+
+    attribution_header, attribution_rows = _full_attr_rows(models)
+    _write_csv(out / "feature_attribution.csv", attribution_header, attribution_rows)
+    assets["feature_attribution"] = out / "feature_attribution.csv"
 
     diag_header = ["modality", "test", "association", "statistic", "p_value", "p_adj", "flag"]
     diag_rows = [[t["modality"], t["test"], t["association"], t.get("statistic"),
@@ -773,17 +800,19 @@ def build_report(audit: dict, out_dir: str | Path, config=None) -> dict[str, Pat
     cal_html = fig_calibration(util, include_js=False)
     miss_html = fig_missingness(missing, include_js=False)
     gain_html = fig_marginal_gain(util, include_js=False)
-    attr_html = fig_attribution(models, include_js=False)
+    display_top_k = _display_top_k(audit)
+    attr_html = fig_attribution(models, include_js=False, display_top_k=display_top_k)
 
     # -- tables ------------------------------------------------------------ #
     model_table = render_table("tbl-models", mheader, mrows, numeric_cols=mnum)
-    ledger_table = render_table("tbl-ledger", led_header, led_rows, numeric_cols={1, 2, 3, 4, 5})
+    ledger_table = render_table("tbl-ledger", led_header, led_rows, numeric_cols={1, 2, 3, 4, 5, 6, 7, 11})
     diag_table = render_table("tbl-diag", diag_header, diag_rows, numeric_cols={3, 4, 5})
-    attr_rows, attr_header = _attr_rows(models)
+    attr_rows, attr_header = _attr_rows(models, display_top_k=display_top_k)
     attr_table = render_table("tbl-attr", attr_header, attr_rows, numeric_cols={2, 3})
 
     # -- render template --------------------------------------------------- #
-    control_vals = [c.get("primary") for c in util.get("controls", []) if c.get("primary") is not None]
+    control_vals = [c.get("primary") for c in util.get("controls", [])
+                    if c.get("primary") is not None and c.get("global_chance_evidence", False)]
     control_max = max(control_vals) if control_vals else None
 
     summary = audit.get("summary", {})
@@ -832,13 +861,35 @@ def build_report(audit: dict, out_dir: str | Path, config=None) -> dict[str, Pat
     return assets
 
 
-def _attr_rows(models: dict):
+def _display_top_k(audit: dict) -> int:
+    """Resolve a display limit without changing the complete scientific export."""
+    requested = ((audit.get("config", {}).get("xai") or {}).get("top_k", 40))
+    try:
+        requested = int(requested)
+    except (TypeError, ValueError):
+        return 40
+    return max(1, requested)
+
+
+def _full_attr_rows(models: dict) -> tuple[list[str], list[list[Any]]]:
+    header = ["rank", "feature", "importance", "importance_sd_across_folds", "source_model"]
+    fusion = next((r for r in models.get("classical", []) if r["name"].endswith("::FUSION")
+                   and r.get("feature_importance")), None)
+    if not fusion:
+        return header, []
+    stds = fusion.get("feature_importance_std", {})
+    values = sorted(fusion["feature_importance"].items(), key=lambda kv: kv[1], reverse=True)
+    return header, [[i + 1, name, value, stds.get(name), fusion["name"]]
+                    for i, (name, value) in enumerate(values)]
+
+
+def _attr_rows(models: dict, display_top_k: int = 40):
     header = ["rank", "feature (modality::name)", "importance", "±SD across folds"]
     fusion = next((r for r in models.get("classical", []) if r["name"].endswith("::FUSION")
                    and r.get("feature_importance")), None)
     if not fusion:
         return [], header
-    imp = sorted(fusion["feature_importance"].items(), key=lambda kv: kv[1], reverse=True)[:40]
+    imp = sorted(fusion["feature_importance"].items(), key=lambda kv: kv[1], reverse=True)[:display_top_k]
     stds = fusion.get("feature_importance_std", {})
     return [[i + 1, k, v, stds.get(k)] for i, (k, v) in enumerate(imp)], header
 
@@ -950,7 +1001,7 @@ _TEMPLATE = r"""<!doctype html>
         <div class="plain">{{ dataset.get('n_dropped',0) }} dropped for a missing outcome.</div></div>
       <div class="card {{ 'card--risk' if util.leakage_warning else 'card--optimal' }}"><div class="k">Control check {{ tip('Control baseline (shuffled target)') }}</div>
         <div class="v mono">{{ '%.3f'|format(control_max) if control_max is not none else '—' }}</div>
-        <div class="plain">{{ 'Above chance — leakage flag.' if util.leakage_warning else 'Near chance — no target/pipeline leakage.' }}</div></div>
+        <div class="plain">{{ 'Above chance — control alarm.' if util.leakage_warning else ('No global-chance control was eligible.' if util.control_alarm_status == 'not_evaluable_no_global_chance_eligible_control' else 'Near chance — no global-chance control alarm.') }}</div></div>
     </div>
   </section>
 
@@ -962,7 +1013,7 @@ _TEMPLATE = r"""<!doctype html>
         <span class="ledger-name">{{ m.modality }}</span>
         <span class="badge {{ m.badge.css_class }}">{{ m.badge.icon }} {{ m.badge.label }}</span>
       </div>
-      <div class="ledger-stats">{{ m.n_features }} features · standalone {{ '%.3f'|format(m.standalone_primary) if m.standalone_primary is not none else '—' }} · marginal gain {{ tip('Marginal gain') }} {{ '%+.3f'|format(m.marginal_gain_classical) if m.marginal_gain_classical is not none else '—' }}{% if m.redundant_with %} · overlaps {{ m.redundant_with }} (CKA {{ tip('Redundancy (CKA)') }} {{ '%.2f'|format(m.redundancy_max_cka) }}){% endif %}</div>
+      <div class="ledger-stats">{{ m.n_features }} features · standalone {{ '%.3f'|format(m.standalone_primary) if m.standalone_primary is not none else '—' }} · mean outer-fold gain {{ tip('Marginal gain') }} {{ '%+.3f'|format(m.foldmean_marginal_gain) if m.foldmean_marginal_gain is not none else '—' }}{% if m.similarity_with %} · similarity with {{ m.similarity_with }} (CKA {{ tip('Redundancy (CKA)') }} {{ '%.2f'|format(m.redundancy_max_cka) }}){% endif %}</div>
       <div class="ledger-rec">{{ m.recommendation }}</div>
     </div>
     {% endfor %}

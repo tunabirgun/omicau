@@ -250,6 +250,13 @@ class _Aligned:
         ]
         return matrix, names
 
+    @property
+    def n_samples(self):
+        return len(self.y)
+
+    def feature_counts(self):
+        return {name: matrix.shape[1] for name, matrix in self._matrices.items()}
+
 
 def test_supplied_plan_is_used_exactly_and_receipt_is_aggregate_only():
     result = _run_base(_plan())
@@ -432,7 +439,7 @@ def test_classical_result_carries_only_aggregate_plan_status():
     )
 
 
-def test_plan_with_legacy_controls_fails_before_any_estimator(monkeypatch):
+def test_plan_with_target_control_missing_its_contract_fails_before_any_estimator(monkeypatch):
     config = _config()
     config.controls.enabled = True
     config.controls.shuffle_target = True
@@ -448,7 +455,7 @@ def test_plan_with_legacy_controls_fails_before_any_estimator(monkeypatch):
 
     monkeypatch.setattr(classical, "_estimator_factory", watched_factory)
     with pytest.raises(
-        ValueError, match="^validated_plan_feature_controls_require_c07_integration$"
+        ValueError, match="^validated_plan_target_control_contract_required$"
     ) as caught:
         classical.run_classical_benchmarks(
             _Aligned(), config, validated_plan=_plan()
@@ -570,6 +577,38 @@ def test_validated_target_control_runs_through_regression_pipeline():
     assert output["control_execution_receipt"]["decision"] == "development_only"
 
 
+def test_fixed_plan_runs_all_planned_controls_with_complete_receipts():
+    config = _config()
+    config.controls.enabled = True
+    config.controls.shuffle_target = True
+    config.controls.shuffle_features = True
+    config.controls.random_noise = True
+    output = classical.run_classical_benchmarks(
+        _Aligned(),
+        config,
+        validated_plan=_plan(),
+        validated_control_contract=_control_contract(),
+    )
+    controls = {control.name: control for control in output["controls"]}
+    assert set(controls) == {
+        "control::group_permuted_target",
+        "control::shuffled_features",
+        "control::random_noise",
+    }
+    for name in ("control::shuffled_features", "control::random_noise"):
+        receipt = controls[name].extra["control_execution_receipt"]
+        assert receipt == {
+            "assessment_truth_status": "preserved",
+            "control_kind": name.removeprefix("control::"),
+            "decision": "eligible",
+            "expected_null_scope": "global",
+            "global_chance_eligible": True,
+            "scope": "outer_train_and_assessment_transformed_separately",
+            "transform_role": "feature_association_stress_control",
+        }
+        assert np.array_equal(controls[name].oof_true, _Aligned.y.to_numpy())
+
+
 def test_legacy_controls_still_run_without_validated_plan():
     config = _config()
     config.controls.enabled = True
@@ -583,6 +622,79 @@ def test_legacy_controls_still_run_without_validated_plan():
         "control::shuffled_features",
         "control::random_noise",
     }
+    target = next(control for control in output["controls"] if control.name == "control::shuffled_target")
+    assert target.extra["control_execution_receipt"] == {
+        "assessment_truth_status": "not_preserved",
+        "decision": "unsupported_for_group_safe_control",
+        "scope": "rowwise_target_shuffle",
+        "transform_role": "stress_control_only_not_inferential_randomization",
+    }
+    for name in ("control::shuffled_features", "control::random_noise"):
+        receipt = next(control for control in output["controls"] if control.name == name).extra[
+            "control_execution_receipt"
+        ]
+        assert receipt == {
+            "assessment_truth_status": "preserved",
+            "control_kind": name.removeprefix("control::"),
+            "decision": "descriptive_legacy_stress_control",
+            "eligibility_reason": "feature_transform_not_fold_local_under_dynamic_splits",
+            "expected_null_scope": "not_evaluable_legacy",
+            "global_chance_eligible": False,
+            "scope": "whole_dataset_feature_transform_before_split",
+            "transform_role": "feature_association_stress_control",
+        }
+
+
+def test_legacy_stacking_is_omitted_at_the_outer_information_boundary(monkeypatch):
+    monkeypatch.setattr(
+        classical,
+        "_run_stacking",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not run")),
+    )
+    output = classical.run_classical_benchmarks(_Aligned(), _config())
+    assert not any(result.name == "stacking::FUSION" for result in output["results"])
+    assert output["stacking"] == {
+        "status": "unavailable_legacy_nonnested_information_boundary"
+    }
+
+
+def test_fixed_plan_estimator_count_matches_the_runtime_plan(monkeypatch):
+    from omicau.cli import estimate_runtime
+
+    config = _config()
+    config.controls.enabled = True
+    config.controls.shuffle_target = True
+    config.controls.shuffle_features = True
+    config.controls.random_noise = True
+    config.cv.split_manifest = "fixed_splits.json"
+    config.cv.inner_splits = 2
+    config.neural = SimpleNamespace(enabled=False)
+    observed = 0
+    original = classical._estimator_factory
+
+    def counted_factory(*args, **kwargs):
+        nonlocal observed
+        factory = original(*args, **kwargs)
+
+        def build():
+            nonlocal observed
+            observed += 1
+            return factory()
+
+        return build
+
+    monkeypatch.setattr(classical, "_estimator_factory", counted_factory)
+    output = classical.run_classical_benchmarks(
+        _Aligned(),
+        config,
+        validated_plan=_plan(),
+        validated_control_contract=_control_contract(),
+    )
+    estimate = estimate_runtime(_Aligned(), config, "cpu", 1)
+    assert observed == estimate["breakdown"]["classical_fits"] == 30
+    assert estimate["breakdown"]["nested_stacking_model_fits"] == 14
+    assert output["stacking"]["status"] == "nested_inner_oof"
+    assert any(result.name == "stacking::FUSION" for result in output["results"])
 
 
 def test_plan_bound_batch_adjustment_is_not_silently_skipped():

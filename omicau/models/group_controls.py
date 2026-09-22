@@ -336,7 +336,7 @@ def _group_context(
 
 def _bind_contracts(
     strata_schema: Mapping[str, Any],
-    permutation_registry: Mapping[str, Any],
+    permutation_registry: Mapping[str, Any] | None,
     exchangeability_contract: Mapping[str, Any],
 ) -> tuple[str, str, str]:
     if not isinstance(strata_schema, Mapping) or strata_schema.get("target_derived") is not False:
@@ -354,8 +354,12 @@ def _bind_contracts(
         _fail("c07_contract_invalid", "exchangeability_contract")
     return (
         _canonical_sha256(strata_schema, "strata_schema_canonical"),
-        _validate_private_registry_binding(
-            permutation_registry, "group_endpoint_permutation"
+        (
+            "not_required_public_contract"
+            if permutation_registry is None
+            else _validate_private_registry_binding(
+                permutation_registry, "group_endpoint_permutation"
+            )
         ),
         _contract_sha256(exchangeability_contract, "exchangeability_contract_canonical"),
     )
@@ -557,11 +561,13 @@ def validate_group_endpoint_permutation(
     blocks = _blocks(context)
     attainable, _ = _attainable(blocks, context["group_objects"], minimum)
     _validate_candidate(context, task, candidate)
+    expected_null_scope = "global" if len(blocks) == 1 else "conditional"
     return {
         "attainable_permutation_count": attainable,
         "claim_id": "C07",
         "control_kind": "group_endpoint_permutation_audit",
         "decision": "valid",
+        "expected_null_scope": expected_null_scope,
         "exchangeability_contract_sha256": contract_sha,
         "outer_train_group_count": len(context["train_groups"]),
         "minimum_distinct_nonidentity_assignments": minimum,
@@ -578,7 +584,7 @@ def execute_group_endpoint_permutation(
     groups: Sequence[Any],
     strata: Sequence[Any],
     strata_schema: Mapping[str, Any],
-    permutation_registry: Mapping[str, Any],
+    permutation_registry: Mapping[str, Any] | None,
     exchangeability_contract: Mapping[str, Any],
     task: str,
     outer_train_indices: Sequence[Any],
@@ -638,12 +644,21 @@ def execute_group_endpoint_permutation(
     )
     if any(not np.array_equal(before[key], current_arrays[key][assessment]) for key in before):
         _fail("c07_permutation_scope_invalid", "assessment_outcomes_unchanged")
+    expected_null_scope = "global" if len(blocks) == 1 else "conditional"
     return {
+        "assessment_truth_status": "preserved",
+        "assignment_policy": "forced_nonidentity_blockwise_endpoint_assignment",
         "attainable_permutation_count": attainable,
         "claim_id": "C07",
         "control_kind": "group_endpoint_permutation",
         "decision": "eligible",
+        "exchangeability_assumption": (
+            "declared_design_strata_target_independent_and_within_block_groups_exchangeable"
+        ),
         "exchangeability_contract_sha256": contract_sha,
+        "expected_null_scope": expected_null_scope,
+        "fixed_point_policy": "group_endpoint_fixed_points_allowed_when_endpoint_values_repeat",
+        "global_chance_eligible": expected_null_scope == "global",
         "outer_train_group_count": len(context["train_groups"]),
         "minimum_distinct_nonidentity_assignments": minimum,
         "permutation_registry_sha256": None,
@@ -665,7 +680,7 @@ def _execute_fold_endpoint_permutations(
     event: Sequence[Any] | None = None,
 ) -> tuple[tuple[dict[str, np.ndarray], ...], dict[str, Any]]:
     """Build private per-fold training endpoints and an aggregate public receipt."""
-    expected = {
+    legacy_expected = {
         "exchangeability_contract",
         "fold_seeds",
         "minimum_distinct_nonidentity_assignments",
@@ -673,8 +688,14 @@ def _execute_fold_endpoint_permutations(
         "strata",
         "strata_schema",
     }
-    if not isinstance(contract, Mapping) or set(contract) != expected:
+    public_expected = legacy_expected | {"schema_version"}
+    if not isinstance(contract, Mapping):
         _fail("c07_contract_invalid", "fold_contract_schema")
+    public_contract = contract.get("schema_version") == "omicau_public_group_control_v1"
+    if set(contract) != (public_expected if public_contract else legacy_expected):
+        _fail("c07_contract_invalid", "fold_contract_schema")
+    if public_contract and contract.get("permutation_registry") is not None:
+        _fail("c07_contract_invalid", "public_contract_registry")
     if isinstance(outer_splits, (str, bytes)) or not outer_splits:
         _fail("c07_contract_invalid", "outer_splits")
     fold_seeds = contract["fold_seeds"]
@@ -701,7 +722,7 @@ def _execute_fold_endpoint_permutations(
             groups=groups,
             strata=contract["strata"],
             strata_schema=contract["strata_schema"],
-            permutation_registry=contract["permutation_registry"],
+            permutation_registry=None if public_contract else contract["permutation_registry"],
             exchangeability_contract=contract["exchangeability_contract"],
             task=task,
             outer_train_indices=split[0],
@@ -721,9 +742,13 @@ def _execute_fold_endpoint_permutations(
 
     first = receipts[0]
     stable_keys = (
+        "assessment_truth_status",
+        "assignment_policy",
         "claim_id",
         "control_kind",
+        "exchangeability_assumption",
         "exchangeability_contract_sha256",
+        "fixed_point_policy",
         "minimum_distinct_nonidentity_assignments",
         "permutation_registry_sha256",
         "permutation_registry_status",
@@ -736,24 +761,90 @@ def _execute_fold_endpoint_permutations(
     ):
         _fail("c07_contract_invalid", "fold_contract_consistency")
     public_receipt = {key: first[key] for key in stable_keys}
+    expected_null_scope = (
+        "global"
+        if all(receipt["expected_null_scope"] == "global" for receipt in receipts)
+        else "conditional"
+    )
+    global_chance_eligible = bool(
+        expected_null_scope == "global"
+        and all(receipt["global_chance_eligible"] for receipt in receipts)
+        and all(receipt["assessment_truth_status"] == "preserved" for receipt in receipts)
+    )
     public_receipt.update(
         {
-            "decision": "development_only",
+            "decision": "eligible" if public_contract else "development_only",
             "fold_count": len(receipts),
+            "expected_null_scope": expected_null_scope,
+            "global_chance_eligible": global_chance_eligible,
             "fold_summaries": [
                 {
                     "attainable_permutation_count": receipt[
                         "attainable_permutation_count"
                     ],
                     "outer_train_group_count": receipt["outer_train_group_count"],
+                    "expected_null_scope": receipt["expected_null_scope"],
                     "stratum_count": receipt["stratum_count"],
                 }
                 for receipt in receipts
             ],
-            "production_status": "pending_frozen_registry_and_fit_ancestry_inventory",
+            "production_status": (
+                "public_train_only_group_permutation_verified"
+                if public_contract
+                else "pending_frozen_registry_and_fit_ancestry_inventory"
+            ),
         }
     )
     return tuple(candidates), public_receipt
+
+
+def build_public_group_control_contract(
+    *,
+    groups: Sequence[Any],
+    strata: Sequence[Any],
+    fields: Sequence[str],
+    outer_fold_count: int,
+    seed: int,
+) -> dict[str, Any]:
+    """Construct an in-memory, train-only group-permutation control contract.
+
+    The caller supplies declared design strata from the clinical table. They are
+    not inferred from outcomes and are never copied to the public receipt.
+    """
+    if isinstance(fields, (str, bytes)) or not fields or any(
+        not isinstance(field, str) or not field for field in fields
+    ):
+        _fail("c07_contract_invalid", "public_strata_fields")
+    if isinstance(outer_fold_count, (bool, np.bool_)) or not isinstance(
+        outer_fold_count, Integral
+    ) or int(outer_fold_count) < 2:
+        _fail("c07_contract_invalid", "public_outer_fold_count")
+    if isinstance(seed, (bool, np.bool_)) or not isinstance(seed, Integral):
+        _fail("c07_contract_invalid", "public_seed")
+    if len(groups) != len(strata) or not len(groups):
+        _fail("c07_contract_invalid", "public_strata_shape")
+    sequence = np.random.SeedSequence(int(seed))
+    fold_seeds = [
+        int(child.generate_state(1, dtype=np.uint32)[0])
+        for child in sequence.spawn(int(outer_fold_count))
+    ]
+    return {
+        "schema_version": "omicau_public_group_control_v1",
+        "strata": list(strata),
+        "strata_schema": {
+            "name": "declared_clinical_design_strata",
+            "version": "1",
+            "fields": list(fields),
+            "target_derived": False,
+        },
+        "permutation_registry": None,
+        "exchangeability_contract": {
+            "scope": "outer_train_only",
+            "unit": "whole_group_within_declared_stratum",
+        },
+        "minimum_distinct_nonidentity_assignments": 1,
+        "fold_seeds": fold_seeds,
+    }
 
 
 def validate_target_fit_ancestry(

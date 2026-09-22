@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "omicau"
-version = "0.4.0"
-description = "Omics Audit: a reproducible, leakage-safe multi-omics data-audit and fusion-benchmarking CLI."
+version = "0.5.0"
+description = "Omics Audit: a reproducible multi-omics data-audit and fusion-benchmarking CLI with explicit split and control limitations."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
@@ -44,7 +44,7 @@ cptac = ["cptac>=1.5"]
 yaml = ["pyyaml>=6.0"]
 # Opt-in local web UI (localhost only). The core stays a CLI tool without it.
 ui = ["fastapi>=0.110", "uvicorn>=0.27", "python-multipart>=0.0.9"]
-dev = ["pytest>=7.4", "pytest-cov>=4.1"]
+dev = ["pytest>=7.4", "pytest-cov>=4.1", "pyyaml>=6.0"]
 # `all` = every cross-platform runtime feature, so `pip install omicau[all]`
 # succeeds on Windows/macOS/Linux. CPTAC stays opt-in via [cptac]; test tooling
 # stays in [dev].

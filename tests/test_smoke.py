@@ -474,7 +474,13 @@ def test_leakage_gate_is_task_aware():
     off = {"enabled": False, "results": []}
     base = build_utility_ledger(ad, cl, off, batch, miss)
     assert base["chance_level"] == 0.0
-    cl["controls"].append(types.SimpleNamespace(name="control::inject", primary=0.30))
+    cl["controls"].append(types.SimpleNamespace(
+        name="control::inject", primary=0.30,
+        extra={"control_execution_receipt": {
+            "decision": "eligible", "expected_null_scope": "global",
+            "global_chance_eligible": True, "assessment_truth_status": "preserved",
+        }},
+    ))
     hit = build_utility_ledger(ad, cl, off, batch, miss)
     assert hit["leakage_warning"] is True          # 0.30 > 0.0 + 0.12
     assert 0.30 < 0.62                              # would have passed under the old fixed threshold
@@ -493,13 +499,20 @@ def test_batch_verdict_requires_outcome_confounding():
     off = {"enabled": False, "results": []}
     assert any(v.get("flag") for v in batch["per_modality"].values())   # a structured modality exists
 
-    batch["confounding"] = {"tested": True, "flag": False}
-    clean = build_utility_ledger(ad, cl, off, dict(batch), miss)
+    # The verdict must use the target-association test belonging to each mapped
+    # modality batch, rather than the unrelated legacy global batch summary.
+    import copy
+    clean_batch = copy.deepcopy(batch)
+    for entry in clean_batch["per_modality"].values():
+        entry["target_confounding"] = {"tested": True, "flag": False}
+    clean = build_utility_ledger(ad, cl, off, clean_batch, miss)
     assert not any(m["batch_confounded"] for m in clean["modality_ledger"])
     assert not any("correct the batch effect" in m["recommendation"] for m in clean["modality_ledger"])
 
-    batch["confounding"] = {"tested": True, "flag": True}
-    conf = build_utility_ledger(ad, cl, off, dict(batch), miss)
+    conf_batch = copy.deepcopy(clean_batch)
+    structured = next(name for name, entry in conf_batch["per_modality"].items() if entry.get("flag"))
+    conf_batch["per_modality"][structured]["target_confounding"] = {"tested": True, "flag": True}
+    conf = build_utility_ledger(ad, cl, off, conf_batch, miss)
     assert any(m["batch_confounded"] for m in conf["modality_ledger"])
 
 

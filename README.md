@@ -1,8 +1,10 @@
 # omicau
 
-`omicau` v0.4.0 is a local-first command-line tool for leakage-aware multi-omics data auditing and fusion benchmarking. It aligns molecular layers, audits missingness and batch structure, evaluates models with group-aware resampling, records value-level provenance, and writes a self-contained HTML report with machine-readable results.
+`omicau` v0.5.0 is a local-first command-line tool for multi-omics data auditing and fusion benchmarking. It aligns molecular layers, audits missingness and batch structure, evaluates models with group-aware resampling, records value-level provenance, and writes a self-contained HTML report with machine-readable results. Its diagnostics and controls describe the evaluated workflow; they do not prove that every form of leakage or bias is absent.
 
 Source and release code: [github.com/tunabirgun/omicau](https://github.com/tunabirgun/omicau). Frozen benchmark suite: [https://doi.org/10.5281/zenodo.22304152](https://doi.org/10.5281/zenodo.22304152).
+
+Ordinary users run `omicau run` or the optional local browser interface. The bundled `benchmarks/` harness and `benchmark_record/` files are archived evaluation materials; they are not invoked by the ordinary run or UI paths.
 
 Research use only. Predictive performance does not establish clinical utility, individual risk, treatment benefit, or causal biology.
 
@@ -38,6 +40,12 @@ Python 3.10 or later is required.
 
 ```bash
 python -m pip install "omicau==0.4.0"
+```
+
+For the reviewed v0.5.0 prerelease, install the supplied wheel from a local review directory rather than PyPI:
+
+```bash
+python -m pip install ./omicau-0.5.0-py3-none-any.whl
 ```
 
 From a source checkout:
@@ -121,6 +129,12 @@ The clinical table identifies the sample, prediction target, and outermost indep
 ```
 
 `seed` anchors stochastic steps. Choose `n_splits` only when each training and assessment partition remains suitable for the target prevalence and grouping structure. Set `cores` to a value compatible with available memory; a higher value is not automatically a faster or safer analysis.
+
+## Fixed split manifests and controls
+
+For a pre-specified nested evaluation, set `cv.split_manifest` and `cv.inner_splits` before fitting. A public manifest uses `omicau_public_split_manifest_v2` and is bound to aligned values, ordered group identities, and declared design strata. Stacking requires this validated nested plan; ordinary dynamic-split runs record stacking as unavailable rather than producing a nonnested estimate.
+
+If a fixed-plan target-permutation control is enabled, declare `clinical.permutation_strata` before analysis. The control permutes endpoint-constant groups within declared training strata and is conditional on its exchangeability assumption. Feature shuffling, random noise, and legacy dynamic-split controls are descriptive stress controls; they do not establish group-safe randomization, universal leakage safety, causal validity, or external generalization.
 
 ## Commands
 

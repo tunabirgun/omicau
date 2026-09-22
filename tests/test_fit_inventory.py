@@ -46,7 +46,7 @@ def test_live_static_inventory_is_exact_and_development_only() -> None:
 @pytest.mark.parametrize(
     ("path", "old", "new"),
     [
-        ("omicau/models/base.py", "pipe.fit(X[train_idx], training_target)", "pipe.predict(X[train_idx])"),
+        ("omicau/models/base.py", "pipe.fit(X_train, training_target)", "pipe.predict(X_train)"),
         ("omicau/models/classical.py", "meta.fit(meta_train, y[outer_train])", "meta.predict(meta_train)"),
         ("omicau/models/neural.py", "selected = _selected_columns(matrix, fit_idx, max_features)", "selected = np.arange(matrix.shape[1])"),
         ("omicau/models/neural.py", "mean, std = _masked_stats(values, fit_idx)", "mean, std = (0.0, 1.0)"),
@@ -83,7 +83,7 @@ def test_new_package_module_fit_call_fails(tmp_path: Path) -> None:
 
 def test_receiver_or_scope_drift_fails(tmp_path: Path) -> None:
     root = _temporary_repository(tmp_path)
-    _replace(root, "omicau/models/base.py", "pipe.fit(X[train_idx], training_target)", "candidate.fit(X[train_idx], training_target)")
+    _replace(root, "omicau/models/base.py", "pipe.fit(X_train, training_target)", "candidate.fit(X_train, training_target)")
     with pytest.raises(FitInventoryError) as error:
         derive_fit_callsite_inventory(root)
     assert error.value.invariant == "fit_callsite_set_exact"
