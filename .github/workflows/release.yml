@@ -35,9 +35,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Install AppImage packaging tool
+        if: runner.os == 'Linux'
+        run: |
+          curl --fail --location --retry 3 https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage --output /tmp/appimagetool
+          sudo install -m 755 /tmp/appimagetool /usr/local/bin/appimagetool
       - name: Build
         run: ${{ matrix.script }}
         env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
           # Signing secrets are injected only in the release environment.
           OMICAU_SIGN_CERT: ${{ secrets.WINDOWS_SIGN_CERT }}
           OMICAU_SIGN_PASS: ${{ secrets.WINDOWS_SIGN_PASS }}
@@ -47,3 +53,4 @@ jobs:
         with:
           name: omicau-${{ matrix.os }}
           path: ${{ matrix.artifact }}
+          if-no-files-found: error

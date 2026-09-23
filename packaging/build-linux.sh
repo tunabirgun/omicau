@@ -17,7 +17,11 @@ test -x dist/omicau/omicau || { echo "build failed"; exit 1; }
 
 echo "== AppImage =="
 APPDIR=dist/omicau.AppDir
-rm -rf "$APPDIR"; mkdir -p "$APPDIR/usr/bin"
+if [ -e "$APPDIR" ]; then
+  echo "AppDir already exists: $APPDIR" >&2
+  exit 1
+fi
+mkdir -p "$APPDIR/usr/bin"
 cp -r dist/omicau/* "$APPDIR/usr/bin/"
 cat > "$APPDIR/omicau.desktop" <<'DESK'
 [Desktop Entry]
@@ -28,8 +32,7 @@ Icon=omicau
 Categories=Science;
 Terminal=true
 DESK
-# a placeholder icon keeps appimagetool happy
-touch "$APPDIR/omicau.png"
+cp packaging/omicau.png "$APPDIR/omicau.png"
 cat > "$APPDIR/AppRun" <<'RUN'
 #!/bin/sh
 HERE="$(dirname "$(readlink -f "$0")")"
@@ -40,5 +43,6 @@ if command -v appimagetool >/dev/null 2>&1; then
   appimagetool "$APPDIR" dist/omicau-x86_64.AppImage
   echo "Built dist/omicau-x86_64.AppImage"
 else
-  echo "appimagetool not found — AppDir is ready at $APPDIR (run appimagetool to package)"
+  echo "appimagetool not found; cannot create the AppImage" >&2
+  exit 1
 fi
