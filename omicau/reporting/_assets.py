@@ -134,7 +134,7 @@ BADGES = {
         "css_class": "badge--neutral"
     },
     "not_additive": {
-        "label": "Not additive",
+        "label": "Gain inconclusive",
         "icon": "△",
         "css_class": "badge--neutral"
     }

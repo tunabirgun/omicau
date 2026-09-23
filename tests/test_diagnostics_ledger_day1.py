@@ -233,9 +233,11 @@ def test_reporting_exports_complete_attribution_and_verdict_schema(tmp_path):
         "config": {"xai": {"top_k": 1}}, "cost_estimate": {},
     }
     assets = build_report(audit, tmp_path)
+    html = assets["html"].read_text(encoding="utf-8")
     attribution = pd.read_csv(assets["feature_attribution"])
     verdict = pd.read_csv(assets["verdict_ledger"])
 
     assert list(attribution["feature"]) == ["signal::sig", "noise::n1"]
     assert set(("foldmean_marginal_gain", "foldmean_marginal_gain_p", "pooled_oof_marginal_gain", "pooled_oof_gain_ci_low", "pooled_oof_gain_ci_high", "gain_status", "gain_eligible", "paired_resampling_unit")) <= set(verdict.columns)
     assert verdict.loc[0, "gain_status"] == "inconclusive_positive"
+    assert "Gain inconclusive" in html and "Not additive" not in html

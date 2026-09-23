@@ -70,7 +70,7 @@ def _verdict_status(verdict: str) -> str:
     if "no detectable" in v or "control-like" in v:
         return "control_like"
     if v.startswith("informative"):
-        return "not_additive"   # predictive alone but not a significant fusion contributor
+        return "not_additive"   # standalone signal; incremental evidence inconclusive
     return "not_additive"
 
 
