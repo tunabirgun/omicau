@@ -343,10 +343,9 @@ def test_regression_uses_the_same_supplied_outer_partitions():
 
 def test_regression_support_recheck_tolerates_manifest_roundoff():
     y = np.asarray([
-        0.8598811846127368, 1.761661236511811, 0.993323775951811,
-        -0.29152142609843873, 0.7281275578891427, -1.2616003169196963,
-        1.4299385266887068, -0.15647532482940535, -0.6737591499870575,
-        -0.6390601004322052, -0.061361327620372906, -0.39278492256994324,
+        0.0, 10.0, 0.0, 10.0, 0.0, 12.0, 0.0, 12.0,
+        -0.19435120713688978, 0.8792007033797342,
+        0.11057950560511856, 0.02036198525889148,
     ])
     outer_folds = []
     for fold in range(3):
@@ -366,6 +365,10 @@ def test_regression_support_recheck_tolerates_manifest_roundoff():
         minimum_assessment_groups=2, minimum_regression_assessment_groups=2,
         minimum_regression_assessment_variance=0.0,
     )
+    minimum = plan.receipt()["support_summary"]["minimum_realized_assessment_variance"]
+    lexical_group_order = np.asarray([10, 11, 8, 9])
+    recomputed = float(np.var(y[lexical_group_order]))
+    assert 0 < minimum - recomputed < 1e-12
     result = _run_base(
         plan, y=y, groups=[f"g{index}" for index in range(12)],
         X=np.arange(24, dtype=float).reshape(12, 2), n_splits=3, task="regression",
