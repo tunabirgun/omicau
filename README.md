@@ -2,7 +2,7 @@
 
 `omicau` v0.5.2 is a local command-line and browser-based workflow for multi-omics data auditing and fusion evaluation. It aligns molecular layers, examines missingness and batch information, compares single-layer and fusion models with group-aware resampling, and writes a self-contained HTML report with machine-readable results. The report distinguishes a layer's standalone predictive signal from its added contribution to a specified model and endpoint.
 
-Source and release code: [github.com/tunabirgun/omicau](https://github.com/tunabirgun/omicau). Frozen benchmark suite: [https://doi.org/10.5281/zenodo.22304152](https://doi.org/10.5281/zenodo.22304152).
+Source and release code: [github.com/tunabirgun/omicau](https://github.com/tunabirgun/omicau). Published evaluation results and reproduction materials: [DOI 10.5281/zenodo.22922940](https://doi.org/10.5281/zenodo.22922940).
 
 Ordinary users run `omicau run` or the optional local browser interface. The repository's `benchmarks/` harness and `benchmark_record/` files are archived evaluation materials; they are not invoked by the ordinary run or UI paths.
 
@@ -17,11 +17,11 @@ Research use only. Predictive performance does not establish clinical utility, i
 
 ## Evaluation materials
 
-The [frozen benchmark suite](https://doi.org/10.5281/zenodo.22304152) provides the registered evaluation protocol and executable materials. Its archived scripts are separate from the ordinary `omicau run` and browser workflows. The report from an ordinary run includes its own split, model, control, and runtime records so that a user can assess the specific analysis performed.
+The [published evaluation archive](https://doi.org/10.5281/zenodo.22922940) is a separate post-execution record with aggregate results, case banks, reproduction scripts, and figure inputs. It includes synthetic experiments, diagnostic grids, released-CLI molecular cohorts, and task-matched comparator analyses. The [earlier frozen suite](https://doi.org/10.5281/zenodo.22304152) remains the historical pre-execution protocol and source-registry context. Neither archive is invoked by an ordinary `omicau run` or browser session. The evaluation does not establish universal software superiority or clinical utility.
 
 ## Installation
 
-Python 3.10 or later is required. Install the wheel supplied with the release:
+Python 3.10 or later is required. Download the v0.5.2 wheel from the [GitHub release](https://github.com/tunabirgun/omicau/releases/tag/v0.5.2), then install it:
 
 ```bash
 python -m pip install ./omicau-0.5.2-py3-none-any.whl
@@ -33,16 +33,18 @@ From a source checkout:
 python -m pip install .
 ```
 
-Install optional capabilities only when needed:
+From a source checkout, install optional capabilities only when needed:
 
 ```bash
-python -m pip install "omicau[ui]"
-python -m pip install "omicau[data]"
-python -m pip install "omicau[cptac]"
-python -m pip install "omicau[dev]"
+python -m pip install ".[ui]"
+python -m pip install ".[data]"
+python -m pip install ".[cptac]"
+python -m pip install ".[dev]"
 ```
 
 `ui` provides a local browser interface. `data` enables supported public-data connectors. `cptac` is separate because its dependency requirements may need a compiler toolchain. `dev` installs test tooling.
+
+The v0.5.2 release also provides a portable Windows x86-64 ZIP, Linux x86-64 AppImage, and macOS Apple Silicon disk image. As checked on 23 September 2026, [PyPI](https://pypi.org/project/omicau/) lists v0.4.0; an unpinned `pip install omicau` does not install v0.5.2.
 
 ## Minimal usage
 
@@ -152,16 +154,17 @@ These safeguards reduce specific, testable sources of optimistic bias. They do n
 
 | Public item | Identifier | Role |
 | --- | --- | --- |
-| Software release | [`omicau` v0.5.2](https://github.com/tunabirgun/omicau/releases/tag/v0.5.2) | Installable command-line software and archived source code. |
+| Software release | [`omicau` v0.5.2](https://github.com/tunabirgun/omicau/releases/tag/v0.5.2) | Wheel, source archive, Windows ZIP, Linux AppImage, and macOS arm64 disk image. |
 | Source repository | [github.com/tunabirgun/omicau](https://github.com/tunabirgun/omicau) | Release code, configuration schema, and documentation. |
-| Frozen benchmark suite | [DOI 10.5281/zenodo.22304152](https://doi.org/10.5281/zenodo.22304152) | Pre-execution protocol, code, partitions, and environment specification. |
+| Published evaluation archive | [DOI 10.5281/zenodo.22922940](https://doi.org/10.5281/zenodo.22922940) | Post-execution aggregate results and reproduction materials. |
+| Historical frozen suite | [DOI 10.5281/zenodo.22304152](https://doi.org/10.5281/zenodo.22304152) | Pre-execution protocol and source-registry context. |
 
 Each run records the resolved configuration, aligned-value SHA-256 provenance, relevant dependency versions, diagnostics, and output paths in `audit.json`. Re-run `omicau verify` against the source configuration and stored audit to detect changes in aligned inputs or feature footprints.
 
 For development checks:
 
 ```bash
-python -m pip install "omicau[dev]"
+python -m pip install ".[dev]"
 python -m pytest
 ```
 

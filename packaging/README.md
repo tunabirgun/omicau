@@ -1,52 +1,25 @@
-# Packaging omicau as a desktop app
+# Desktop packaging
 
-omicau is primarily a `pip`-installable CLI. This directory builds an optional
-**no-install desktop app** that bundles a private Python runtime (including
-CPU-only PyTorch) so a non-coder downloads one installer and double-clicks —
-double-clicking opens the local web UI in a browser; the same binary also works
-as the `omicau` CLI.
+The [Omicau v0.5.2 release](https://github.com/tunabirgun/omicau/releases/tag/v0.5.2) includes these desktop bundles alongside its Python wheel and source archive:
 
-PyInstaller **cannot cross-compile**, so each OS is built on its own machine (or
-CI runner). The canonical path is CI: `.github/workflows/release.yml` builds all
-three on `windows-latest`, `ubuntu-latest`, and `macos-14` (arm64) on a `v*` tag.
+| Platform | Release asset | Use |
+| --- | --- | --- |
+| Windows x86-64 | `omicau-0.5.2-windows-x86_64.zip` | Extract the portable bundle and run `omicau.exe`. |
+| Linux x86-64 | `omicau-x86_64.AppImage` | Make the AppImage executable and run it. |
+| macOS Apple Silicon | `omicau-arm64.dmg` | Open the disk image and run the bundled app. |
+
+Opening a frozen app without command-line arguments starts the local browser interface. Passing arguments uses the same `run`, `bootstrap`, `verify`, `check-env`, and `ui` commands as the Python package. The Windows release is a portable ZIP, not an installer. The v0.5.2 macOS disk image is not notarized.
 
 ## Build locally
 
-| OS | Command | Output |
+PyInstaller builds each platform on its own operating system. The build scripts install CPU-only PyTorch where applicable and use [`omicau.spec`](omicau.spec) to produce a directory bundle.
+
+| Platform | Command | Output |
 | --- | --- | --- |
-| Windows | `powershell -File packaging/build-windows.ps1` | `dist/omicau/` + `packaging/Output/omicau-setup-*.exe` (Inno Setup) |
-| Linux | `bash packaging/build-linux.sh` | `dist/omicau/` + `dist/omicau-x86_64.AppImage` |
-| macOS (arm64) | `bash packaging/build-macos.sh` | `dist/omicau-arm64.dmg` |
+| Windows | `powershell -File packaging/build-windows.ps1` | `dist/omicau/`; optionally `packaging/Output/omicau-setup-*.exe` if Inno Setup is installed. |
+| Linux | `bash packaging/build-linux.sh` | `dist/omicau-x86_64.AppImage`. |
+| macOS arm64 | `bash packaging/build-macos.sh` | `dist/omicau-arm64.dmg`. |
 
-All three drive the same [`omicau.spec`](omicau.spec): **onedir** (never onefile —
-torch would unpack hundreds of MB to temp on every launch and trip AV), **no UPX**
-(it corrupts torch's shared libraries), `torchvision`/`torchaudio` excluded, built
-against **CPU-only torch** (`--index-url https://download.pytorch.org/whl/cpu`).
+Signing is conditional on the local signing environment. The Windows script signs the executable only when a signing certificate is configured; the macOS script signs or notarizes only when its corresponding credentials are configured. A local build does not establish that the published asset was signed or notarized.
 
-## Size — state it honestly
-
-torch is the whole size story. CPU-only wheels: ~109 MB (Windows), ~75 MB
-(macOS arm64), ~170–190 MB (Linux, vs ~900 MB with the default CUDA wheel).
-Realistic installed footprint ~450–850 MB; compressed installer download
-~250–450 MB. That floor cannot be shrunk further and should be stated on the
-download page.
-
-## Signing (required for a smooth non-coder install)
-
-An unsigned double-click is a hard stop at Gatekeeper / SmartScreen. Reuse the
-BulkSeq Studio signing identities so per-certificate reputation carries over.
-
-- **Windows** — sign the inner `omicau.exe` and the installer (`signtool`, or
-  Azure Trusted Signing). Expect one SmartScreen prompt on a brand-new
-  certificate that fades as reputation accrues. Set `OMICAU_SIGN_CERT` /
-  `OMICAU_SIGN_PASS`.
-- **macOS** — **arm64 only** (no modern x86_64 torch wheel). Sign every nested
-  torch `.dylib`/`.so` inside-out, then the app, with a Developer ID + hardened
-  runtime + secure timestamp; `notarytool submit --wait` then `stapler staple`
-  so first launch works offline. Set `OMICAU_SIGN_ID` / `OMICAU_NOTARY_PROFILE`.
-- **Linux** — AppImage needs no signing.
-
-## Non-goal
-
-The desktop GUI is not for HPC/headless clusters — the `pip` package + `omicau
-run` CLI already serve those. Do not ship the GUI there.
+The [`build-desktop` workflow](../.github/workflows/release.yml) runs on a published GitHub Release or manual dispatch. It uploads build products as CI artifacts and runs frozen-app smoke checks. Its permissions do not attach assets to the GitHub Release; attaching reviewed release files is a separate step.

@@ -1,87 +1,22 @@
-# Releasing omicau (automatic PyPI + conda sync)
+# Releasing omicau
 
-Shipping a new version is one deliberate act — **bump the version and merge to
-`main`** — and pip (then conda) update on their own. No manual `twine`, no tags to
-push, no tokens anywhere in the repo (publishing uses OIDC trusted publishing).
+The [GitHub v0.5.2 release](https://github.com/tunabirgun/omicau/releases/tag/v0.5.2) contains a Python wheel and source archive, a portable Windows x86-64 ZIP, a Linux x86-64 AppImage, and a macOS Apple Silicon disk image. As checked on 23 September 2026, [PyPI](https://pypi.org/project/omicau/) still lists v0.4.0. A GitHub release and a PyPI publication are separate actions.
 
-## Why a version bump is unavoidable
+## Python package
 
-PyPI **permanently rejects re-uploading an existing version** (`0.1.0` is frozen),
-and conda-forge tracks PyPI. So "publish on every push" is impossible: a push that
-does not change the version has nothing new to ship. The version bump *is* the
-release signal.
+1. Update and review the version in `pyproject.toml`. PyPI does not allow replacing files for an already published version.
+2. Merge the reviewed version change to `main`. The [`publish-pypi` workflow](.github/workflows/publish-pypi.yml) detects a version change, builds the wheel and source distribution, checks their metadata, and stores them as CI artifacts. This push run is validation only.
+3. Review the build and validation results. When publication is authorized, dispatch the same workflow with `publish=true`. It rebuilds and publishes through the `pypi` environment using OIDC trusted publishing.
+4. Verify the resulting version and files on PyPI. Until that check succeeds, installation instructions for a newer GitHub release should use its release wheel rather than an unpinned `pip install omicau`.
 
-## One-time setup (~2 minutes, once ever)
+A manual dispatch with `publish=false` builds validation artifacts without publishing.
 
-Register this repo as a PyPI **trusted publisher** so CI uploads with no stored
-token: <https://pypi.org/manage/account/publishing/> →
+## Desktop bundles
 
-| Field | Value |
-| --- | --- |
-| PyPI project | `omicau` |
-| Owner | `tunabirgun` |
-| Repository | `omicau` |
-| Workflow | `publish-pypi.yml` |
-| Environment | `pypi` |
+The [`build-desktop` workflow](.github/workflows/release.yml) runs when a GitHub Release is published or when manually dispatched. It builds and smoke-tests frozen bundles on Windows, Linux, and macOS. The workflow stores the products as CI artifacts and has read-only repository permissions; it does not attach files to a GitHub Release.
 
-The binding is keyed to the workflow **filename + environment** — never rename
-`publish-pypi.yml` or add a second publishing workflow, or OIDC will fail.
+Review the platform artifacts and their smoke results before attaching any desktop bundles to a release. Describe the actual attached files. The v0.5.2 Windows asset is a portable ZIP rather than an installer, and the macOS arm64 disk image is not notarized. Local build commands and outputs are documented in [packaging/README.md](packaging/README.md).
 
-## Shipping an update (the automatic part)
+## Conda-forge
 
-```bash
-# edit pyproject.toml:  version = "0.4.0"
-git checkout -b performance-fusion-v0.4.0
-git commit -am "release: v0.4.0"
-git push -u origin performance-fusion-v0.4.0
-# open a PR, review, merge to main
-```
-
-On merge, [`publish-pypi.yml`](.github/workflows/publish-pypi.yml) detects that
-`pyproject.toml`'s version changed (git-diff against the previous commit), builds
-the sdist + wheel, runs `twine check`, and publishes to PyPI via OIDC. Within a
-minute or two `pip install --upgrade omicau` resolves the new version for
-everyone. (`workflow_dispatch` is available as a manual override; `skip-existing`
-makes re-runs no-ops.)
-
-Keeping `main` behind PR review is the safety gate: a version bump ships only
-after the PR that carries it is merged.
-
-## Desktop installers are separate (and deliberate)
-
-[`release.yml`](.github/workflows/release.yml) builds the signed Windows / macOS /
-Linux desktop apps. It runs **only on a published GitHub Release** (or manual
-dispatch) — *not* on a version bump — so the code-signing / notarization pipeline
-never fires by accident. Cut a GitHub Release when you actually want new installers.
-
-## conda: automatic *after* a one-time human gate
-
-conda-forge follows **PyPI**, not this repo. The recipe is prepared at
-[`packaging/conda-forge/meta.yaml`](packaging/conda-forge/meta.yaml) with the real
-sdist sha256. To create the feedstock (one time):
-
-1. **Verify the current recipe format first.** conda-forge is migrating toward a v1
-   `recipe.yaml`; confirm whether staged-recipes today expects the classic
-   `recipes/omicau/meta.yaml` or the v1 schema, per its live CONTRIBUTING docs.
-2. (optional) Lint locally — point it at the recipe **directory**, not the file:
-   `pipx run conda-smithy recipe-lint packaging/conda-forge`. Note `conda-smithy`
-   pulls in `conda-build` and usually needs a conda environment, so `pipx run`
-   may fail on a plain pip setup — that's fine: staged-recipes CI lints the PR
-   automatically (the lint bot comments), so local linting is optional.
-3. Fork <https://github.com/conda-forge/staged-recipes>, add the recipe under
-   `recipes/omicau/`, open a PR, and answer the bot + reviewer thread until it
-   merges. This lists you as a standing recipe maintainer, so it needs your own
-   account and consent — do it yourself rather than delegate it.
-
-After the feedstock exists it is automatic: the conda-forge **autotick bot** opens
-a version-bump PR on every new PyPI release; enable *automerge* and those merge
-themselves once CI passes, so `conda install -c conda-forge omicau` stays current
-with no manual step.
-
-## Summary
-
-| Channel | Automatic on a version bump merged to `main`? | Manual step |
-| --- | --- | --- |
-| PyPI (`pip` / `pipx`) | **Yes** — CI builds + publishes via OIDC | bump version; one-time trusted-publisher setup |
-| conda-forge (`conda` / `mamba`) | **Yes, after the feedstock exists** — autotick bot + automerge | one-time staged-recipes PR (you, maintainer-reviewed) |
-| Desktop installers | No — deliberate, on a GitHub Release | cut a Release when you want installers |
+The repository contains a proposed [conda-forge recipe](packaging/conda-forge/meta.yaml). A recipe in this repository does not itself publish a conda package or keep one synchronized. Check current staged-recipes requirements and the package's actual channel availability before submitting or describing a conda-forge distribution. Feedstock creation and later updates follow conda-forge's own review and automation.
