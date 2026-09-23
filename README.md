@@ -1,6 +1,6 @@
 # omicau
 
-`omicau` v0.5.0 is a local-first command-line tool for multi-omics data auditing and fusion benchmarking. It aligns molecular layers, audits missingness and batch structure, evaluates models with group-aware resampling, records value-level provenance, and writes a self-contained HTML report with machine-readable results. Its diagnostics and controls describe the evaluated workflow; they do not prove that every form of leakage or bias is absent.
+`omicau` v0.5.2 is a local command-line and browser-based workflow for multi-omics data auditing and fusion evaluation. It aligns molecular layers, examines missingness and batch information, compares single-layer and fusion models with group-aware resampling, and writes a self-contained HTML report with machine-readable results. The report distinguishes a layer's standalone predictive signal from its added contribution to a specified model and endpoint.
 
 Source and release code: [github.com/tunabirgun/omicau](https://github.com/tunabirgun/omicau). Frozen benchmark suite: [https://doi.org/10.5281/zenodo.22304152](https://doi.org/10.5281/zenodo.22304152).
 
@@ -15,37 +15,16 @@ Research use only. Predictive performance does not establish clinical utility, i
 - Compare single-modality, classical fusion, and neural fusion models under shared group-aware splits.
 - Produce an HTML report, auditable JSON and CSV outputs, a model card, runtime record, and provenance checks.
 
-## Completed benchmark summary
+## Evaluation materials
 
-Omicau v0.4.0 was evaluated under the frozen suite at [DOI 10.5281/zenodo.22304152](https://doi.org/10.5281/zenodo.22304152). That pre-execution archive contains the protocol and executable suite, not benchmark results. The completed analysis recorded 13,507 of 13,507 registered units with zero execution failures across binary and continuous synthetic families, five internal real cohorts, and an exploratory CPTAC cohort.
-
-| Benchmark check | Recorded result |
-| --- | --- |
-| Execution completeness | 13,507/13,507 registered units; zero execution failures |
-| Synthetic coverage | Binary and continuous families |
-| Real-data coverage | Five internal cohorts; CPTAC exploratory (27 units) |
-| Required-method null safeguards | Each required method: 0/40 false alarms in both synthetic families |
-| Required-method signal safeguards | Each required method: 40/40 detections in both synthetic families |
-| Supplemental synthetic controls | DIABLO: 0/40 false alarms and 40/40 detections in the binary family; block-PLS: 0/40 and 33/40 in the continuous family |
-| Omicau 0.3.0/0.4.0 fitting-time ratio | 15.2–25.2× across matched 45-unit internal workloads |
-| Selected established-software comparator/Omicau 0.4.0 runtime ratio | 14.2–17.4× per registered unit on internal cohorts |
-| Public-release mapping | 73/73 submitted source files matched the PyPI source distribution; 47/47 implementation files matched the source distribution, wheel, and release tag |
-| Released-software tests | 244/244 passed on the exact PyPI source distribution |
-
-The efficiency ratios are registered-environment, complete-pipeline fitting-time measurements for the stated benchmark design. They are not end-to-end, energy-use, or hardware-general estimates. Predictive effects were cohort-specific; they do not establish overall predictive superiority for omicau or any fusion method.
+The [frozen benchmark suite](https://doi.org/10.5281/zenodo.22304152) provides the registered evaluation protocol and executable materials. Its archived scripts are separate from the ordinary `omicau run` and browser workflows. The report from an ordinary run includes its own split, model, control, and runtime records so that a user can assess the specific analysis performed.
 
 ## Installation
 
-Python 3.10 or later is required.
+Python 3.10 or later is required. Install the wheel supplied with the release:
 
 ```bash
-python -m pip install "omicau==0.4.0"
-```
-
-For the reviewed v0.5.0 prerelease, install the supplied wheel from a local review directory rather than PyPI:
-
-```bash
-python -m pip install ./omicau-0.5.0-py3-none-any.whl
+python -m pip install ./omicau-0.5.2-py3-none-any.whl
 ```
 
 From a source checkout:
@@ -166,23 +145,18 @@ If a fixed-plan target-permutation control is enabled, declare `clinical.permuta
 - Missingness, batch, and group diagnostics are reported as risks to investigate, not as causal findings.
 - Null controls, target shuffling, and negative-control modalities remain controls rather than recommended analyses.
 - Failed methods and incomplete runs are recorded rather than silently removed.
-- Each required gate method produced 0/40 null false alarms and 40/40 injected detections in both synthetic families. Supplemental block-PLS produced 0/40 false alarms and 33/40 continuous detections; supplemental DIABLO produced 0/40 and 40/40 in its eligible binary family.
 
 These safeguards reduce specific, testable sources of optimistic bias. They do not make an observational dataset clinically valid, eliminate confounding, or convert a model association into a biological mechanism.
 
-## Reproducibility and public release mapping
+## Reproducibility and release materials
 
 | Public item | Identifier | Role |
 | --- | --- | --- |
-| Software release | [`omicau` v0.4.0](https://github.com/tunabirgun/omicau/releases/tag/v0.4.0) | Installable command-line software and archived source code. |
+| Software release | [`omicau` v0.5.2](https://github.com/tunabirgun/omicau/releases/tag/v0.5.2) | Installable command-line software and archived source code. |
 | Source repository | [github.com/tunabirgun/omicau](https://github.com/tunabirgun/omicau) | Release code, configuration schema, and documentation. |
 | Frozen benchmark suite | [DOI 10.5281/zenodo.22304152](https://doi.org/10.5281/zenodo.22304152) | Pre-execution protocol, code, partitions, and environment specification. |
 
 Each run records the resolved configuration, aligned-value SHA-256 provenance, relevant dependency versions, diagnostics, and output paths in `audit.json`. Re-run `omicau verify` against the source configuration and stored audit to detect changes in aligned inputs or feature footprints.
-
-The benchmark mapping compared extracted file bytes without normalization. All 73 submitted source files matched the PyPI source distribution, and all 47 implementation files matched across the source distribution, wheel, and v0.4.0 release tag. The exact PyPI source distribution passed 244 software tests; those tests establish defined behavior and failure handling, not biological or clinical validity.
-
-The aggregate results on this page summarize the completed analysis prepared for the companion article; they are distinct from the frozen pre-execution Zenodo archive.
 
 For development checks:
 
