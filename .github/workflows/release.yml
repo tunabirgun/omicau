@@ -54,3 +54,63 @@ jobs:
           name: omicau-${{ matrix.os }}
           path: ${{ matrix.artifact }}
           if-no-files-found: error
+
+  smoke:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: omicau-${{ matrix.os }}
+          path: artifact
+      - name: Run frozen Windows application
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = Join-Path $PWD 'artifact/omicau.exe'
+          if (-not (Test-Path -LiteralPath $exe)) { throw 'Windows executable missing' }
+          & $exe --version
+          if ($LASTEXITCODE -ne 0) { throw 'version smoke failed' }
+          & $exe check-env
+          if ($LASTEXITCODE -ne 0) { throw 'environment smoke failed' }
+          & $exe bootstrap --dataset mock --out-dir demo
+          if ($LASTEXITCODE -ne 0) { throw 'bootstrap smoke failed' }
+          & $exe run --config demo/config.json --cores 2
+          if ($LASTEXITCODE -ne 0) { throw 'run smoke failed' }
+          & $exe verify --config demo/config.json --audit demo/run/audit.json
+          if ($LASTEXITCODE -ne 0) { throw 'provenance smoke failed' }
+      - name: Run frozen Linux AppImage
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+        run: |
+          set -euo pipefail
+          chmod +x artifact/omicau-x86_64.AppImage
+          artifact/omicau-x86_64.AppImage --version
+          artifact/omicau-x86_64.AppImage check-env
+          artifact/omicau-x86_64.AppImage bootstrap --dataset mock --out-dir demo
+          artifact/omicau-x86_64.AppImage run --config demo/config.json --cores 2
+          artifact/omicau-x86_64.AppImage verify --config demo/config.json --audit demo/run/audit.json
+      - name: Run frozen macOS disk image
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mount="$RUNNER_TEMP/omicau-mount"
+          mkdir -p "$mount"
+          hdiutil attach artifact/omicau-arm64.dmg -mountpoint "$mount" -nobrowse -quiet
+          binary="$(find "$mount" -maxdepth 3 -type f -name omicau -perm -111 -print -quit)"
+          test -n "$binary"
+          "$binary" --version
+          "$binary" check-env
+          "$binary" bootstrap --dataset mock --out-dir demo
+          "$binary" run --config demo/config.json --cores 2
+          "$binary" verify --config demo/config.json --audit demo/run/audit.json
+          hdiutil detach "$mount" -quiet
