@@ -2,7 +2,7 @@
 
 `omicau` v0.5.2 is a local command-line and browser-based workflow for multi-omics data auditing and fusion evaluation. It aligns molecular layers, examines missingness and batch information, compares single-layer and fusion models with group-aware resampling, and writes a self-contained HTML report with machine-readable results. The report distinguishes a layer's standalone predictive signal from its added contribution to a specified model and endpoint.
 
-Source and release code: [github.com/tunabirgun/omicau](https://github.com/tunabirgun/omicau). Published evaluation results and reproduction materials: [DOI 10.5281/zenodo.22922940](https://doi.org/10.5281/zenodo.22922940).
+Source and release code: [github.com/tunabirgun/omicau](https://github.com/tunabirgun/omicau). Published evaluation results and reproduction materials: [DOI 10.5281/zenodo.22922940](https://zenodo.org/records/22922940).
 
 Ordinary users run `omicau run` or the optional local browser interface. The repository's `benchmarks/` harness and `benchmark_record/` files are archived evaluation materials; they are not invoked by the ordinary run or UI paths.
 
@@ -17,7 +17,7 @@ Research use only. Predictive performance does not establish clinical utility, i
 
 ## Evaluation materials
 
-The [published evaluation archive](https://doi.org/10.5281/zenodo.22922940) is a separate post-execution record with aggregate results, case banks, reproduction scripts, and figure inputs. It includes synthetic experiments, diagnostic grids, released-CLI molecular cohorts, and task-matched comparator analyses. The [earlier frozen suite](https://doi.org/10.5281/zenodo.22304152) remains the historical pre-execution protocol and source-registry context. Neither archive is invoked by an ordinary `omicau run` or browser session. The evaluation does not establish universal software superiority or clinical utility.
+The [published evaluation archive](https://zenodo.org/records/22922940) is a separate post-execution record with aggregate results, case banks, reproduction scripts, and figure inputs. It includes synthetic experiments, diagnostic grids, released-CLI molecular cohorts, and task-matched comparator analyses. The [earlier frozen suite](https://doi.org/10.5281/zenodo.22304152) remains the historical pre-execution protocol and source-registry context. Neither archive is invoked by an ordinary `omicau run` or browser session. The evaluation does not establish universal software superiority or clinical utility.
 
 ## Installation
 
@@ -156,7 +156,7 @@ These safeguards reduce specific, testable sources of optimistic bias. They do n
 | --- | --- | --- |
 | Software release | [`omicau` v0.5.2](https://github.com/tunabirgun/omicau/releases/tag/v0.5.2) | Wheel, source archive, Windows ZIP, Linux AppImage, and macOS arm64 disk image. |
 | Source repository | [github.com/tunabirgun/omicau](https://github.com/tunabirgun/omicau) | Release code, configuration schema, and documentation. |
-| Published evaluation archive | [DOI 10.5281/zenodo.22922940](https://doi.org/10.5281/zenodo.22922940) | Post-execution aggregate results and reproduction materials. |
+| Published evaluation archive | [DOI 10.5281/zenodo.22922940](https://zenodo.org/records/22922940) | Post-execution aggregate results and reproduction materials. |
 | Historical frozen suite | [DOI 10.5281/zenodo.22304152](https://doi.org/10.5281/zenodo.22304152) | Pre-execution protocol and source-registry context. |
 
 Each run records the resolved configuration, aligned-value SHA-256 provenance, relevant dependency versions, diagnostics, and output paths in `audit.json`. Re-run `omicau verify` against the source configuration and stored audit to detect changes in aligned inputs or feature footprints.
