@@ -9,13 +9,13 @@ omicau run --config demo/config.json --cores 8 --device cpu --no-llm
 omicau verify --config demo/config.json --audit demo/run/audit.json
 ```
 
-For candidate evaluation, install the reviewed wheel from the local review directory:
+Install the wheel from the GitHub release:
 
 ```bash
-python -m pip install ./omicau-0.5.0-py3-none-any.whl
+python -m pip install ./omicau-0.5.2-py3-none-any.whl
 ```
 
-This candidate installation route does not use PyPI.
+This installation route uses the release asset directly.
 
 `omicau ui --host 127.0.0.1` starts the optional local browser interface after installation with `omicau[ui]`. The interface binds to localhost; it does not provide an external-holdout workflow.
 

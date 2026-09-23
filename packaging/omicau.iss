@@ -1,13 +1,12 @@
 ; Inno Setup script for omicau (Windows installer).
-; Compile:  iscc packaging/omicau.iss   (produces packaging/Output/omicau-setup.exe)
+; Compile through packaging/build-windows.ps1, which injects the package version.
 ; Sign the resulting installer and the inner omicau.exe with the same identity so
 ; SmartScreen reputation accrues to one certificate.
 
 #define AppName "omicau"
-; Version is injected by build-windows.ps1 from pyproject.toml (iscc /DAppVersion=X.Y.Z);
-; the default here is a fallback for a bare `iscc` invocation and must track pyproject.
+; Version is injected by build-windows.ps1 from pyproject.toml (iscc /DAppVersion=X.Y.Z).
 #ifndef AppVersion
-  #define AppVersion "0.4.0"
+  #error AppVersion must be supplied from pyproject.toml by build-windows.ps1
 #endif
 #define AppPublisher "Tuna Birgun"
 #define AppURL "https://github.com/tunabirgun/omicau"
