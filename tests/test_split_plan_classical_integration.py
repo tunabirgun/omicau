@@ -341,6 +341,38 @@ def test_regression_uses_the_same_supplied_outer_partitions():
     assert np.isfinite(result.oof_pred).all()
 
 
+def test_regression_support_recheck_tolerates_manifest_roundoff():
+    y = np.asarray([
+        0.8598811846127368, 1.761661236511811, 0.993323775951811,
+        -0.29152142609843873, 0.7281275578891427, -1.2616003169196963,
+        1.4299385266887068, -0.15647532482940535, -0.6737591499870575,
+        -0.6390601004322052, -0.061361327620372906, -0.39278492256994324,
+    ])
+    outer_folds = []
+    for fold in range(3):
+        assessment = list(range(4 * fold, 4 * fold + 4))
+        train = [index for index in range(12) if index not in assessment]
+        outer_folds.append({
+            "train": train, "assessment": assessment,
+            "inner_folds": [
+                {"train": train[:4], "assessment": train[4:]},
+                {"train": train[4:], "assessment": train[:4]},
+            ],
+        })
+    plan = validate_split_manifest(
+        {"outer_folds": outer_folds}, n_samples=12,
+        groups=[f"g{index}" for index in range(12)], y=y, task="regression",
+        requested_outer_k=3, requested_inner_k=2, minimum_training_groups=2,
+        minimum_assessment_groups=2, minimum_regression_assessment_groups=2,
+        minimum_regression_assessment_variance=0.0,
+    )
+    result = _run_base(
+        plan, y=y, groups=[f"g{index}" for index in range(12)],
+        X=np.arange(24, dtype=float).reshape(12, 2), n_splits=3, task="regression",
+    )
+    assert np.isfinite(result.oof_pred).all()
+
+
 def test_plan_task_mismatch_fails_closed():
     with pytest.raises(TypeError, match="runtime_universe_mismatch"):
         _run_base(_plan(), y=np.arange(8, dtype=float), task="regression")
