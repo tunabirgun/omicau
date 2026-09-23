@@ -56,12 +56,12 @@ document.documentElement.setAttribute('data-theme',t);})();
   <p class="lead">omicau aligns molecular assays and outcomes, compares single-layer and fusion predictors, and writes an auditable report. Use the command line for scripted analyses or the local browser interface for guided setup.</p>
   <div class="btns">
     <a class="btn btn-primary" href="#quickstart">Quick start</a>
-    <a class="btn btn-ghost" href="https://doi.org/10.5281/zenodo.22304152">Suite DOI</a>
+    <a class="btn btn-ghost" href="https://doi.org/10.5281/zenodo.22922940">Evaluation archive</a>
     <a class="btn btn-ghost" href="https://github.com/tunabirgun/omicau">GitHub</a>
   </div>
   <div class="callout repro" style="margin-top:24px">
-    <span class="lbl">Frozen benchmark suite</span>
-    The pre-execution protocol and executable suite are archived at <a href="https://doi.org/10.5281/zenodo.22304152">doi:10.5281/zenodo.22304152</a>. The archive excludes benchmark results, raw data, local paths, and caches.
+    <span class="lbl">Published evaluation</span>
+    Aggregate results and reproduction materials are archived at <a href="https://doi.org/10.5281/zenodo.22922940">doi:10.5281/zenodo.22922940</a>. The <a href="https://doi.org/10.5281/zenodo.22304152">earlier frozen suite</a> is the historical pre-execution protocol.
   </div>
 </section>
 
@@ -95,12 +95,13 @@ document.documentElement.setAttribute('data-theme',t);})();
 
 <section id="quickstart" class="reveal">
   <h2>Quick start</h2>
-  <p>Install the wheel from the GitHub release, create the bundled synthetic example, run it, verify its provenance, and inspect the resulting report.</p>
+  <p>Download the v0.5.2 wheel from the <a href="https://github.com/tunabirgun/omicau/releases/tag/v0.5.2">GitHub release</a>, create the bundled synthetic example, run it, verify its provenance, and inspect the resulting report. Python 3.10 or later is required.</p>
   <pre><code>python -m pip install ./omicau-0.5.2-py3-none-any.whl
 omicau bootstrap --dataset mock --out-dir demo
 omicau run --config demo/config.json --cores 8
 omicau verify --config demo/config.json --audit demo/run/audit.json</code></pre>
   <p>Open <code>demo/run/report.html</code> after the run. Choose a core count appropriate to the available memory and workload.</p>
+  <p>The release also provides a portable Windows x86-64 ZIP, Linux x86-64 AppImage, and macOS Apple Silicon disk image. As checked on 23 September 2026, <a href="https://pypi.org/project/omicau/">PyPI</a> lists v0.4.0; an unpinned <code>pip install omicau</code> does not install v0.5.2.</p>
 </section>
 
 <section id="inputs" class="reveal">
@@ -119,13 +120,14 @@ omicau verify --config demo/config.json --audit demo/run/audit.json</code></pre>
 
 <section id="reproducibility" class="reveal">
   <h2>Reproducibility and release materials</h2>
-  <p>Each run records its resolved configuration, input identity, group-aware split, diagnostics, model outputs, and runtime. The archived benchmark suite provides a separate evaluation protocol and executable materials; it is not invoked by ordinary command-line or browser runs.</p>
+  <p>Each run records its resolved configuration, input identity, group-aware split, diagnostics, model outputs, and runtime. The published evaluation archive contains post-execution aggregate results and reproduction materials. The earlier frozen suite documents the pre-execution protocol. Neither archive is invoked by ordinary command-line or browser runs, and the evaluation does not establish universal software superiority or clinical utility.</p>
   <div class="tablewrap"><table>
     <thead><tr><th>Resource</th><th>Use</th></tr></thead>
     <tbody>
-      <tr><td><a href="https://github.com/tunabirgun/omicau/releases/tag/v0.5.2">Omicau v0.5.2 release</a></td><td>Current software, wheel, source, and desktop packages</td></tr>
+      <tr><td><a href="https://github.com/tunabirgun/omicau/releases/tag/v0.5.2">Omicau v0.5.2 release</a></td><td>Wheel, source archive, Windows ZIP, Linux AppImage, and macOS arm64 disk image</td></tr>
       <tr><td><a href="https://github.com/tunabirgun/omicau">GitHub repository</a></td><td>Source and usage documentation</td></tr>
-      <tr><td><a href="https://doi.org/10.5281/zenodo.22304152">Frozen suite DOI</a></td><td>Pre-execution protocol, code, partitions, and environment specification</td></tr>
+      <tr><td><a href="https://doi.org/10.5281/zenodo.22922940">Published evaluation archive</a></td><td>Post-execution aggregate results and reproduction materials</td></tr>
+      <tr><td><a href="https://doi.org/10.5281/zenodo.22304152">Historical frozen suite</a></td><td>Pre-execution protocol and source-registry context</td></tr>
     </tbody>
   </table></div>
   <pre><code>omicau verify --config config.json --audit run/audit.json</code></pre>
@@ -145,7 +147,7 @@ omicau verify --config demo/config.json --audit demo/run/audit.json</code></pre>
   <div class="btns">
     <a class="btn btn-primary" href="https://github.com/tunabirgun/omicau">GitHub</a>
     <a class="btn btn-ghost" href="https://github.com/tunabirgun/omicau/releases/tag/v0.5.2">Release</a>
-    <a class="btn btn-ghost" href="https://doi.org/10.5281/zenodo.22304152">Suite DOI</a>
+    <a class="btn btn-ghost" href="https://doi.org/10.5281/zenodo.22922940">Evaluation archive</a>
   </div>
   <p style="color:var(--ink-500);font-size:14px;margin-top:32px">Article: work in progress.</p>
 </section>
