@@ -4,7 +4,7 @@
 
 Source and release code: [github.com/tunabirgun/omicau](https://github.com/tunabirgun/omicau). Frozen benchmark suite: [https://doi.org/10.5281/zenodo.22304152](https://doi.org/10.5281/zenodo.22304152).
 
-Ordinary users run `omicau run` or the optional local browser interface. The bundled `benchmarks/` harness and `benchmark_record/` files are archived evaluation materials; they are not invoked by the ordinary run or UI paths.
+Ordinary users run `omicau run` or the optional local browser interface. The repository's `benchmarks/` harness and `benchmark_record/` files are archived evaluation materials; they are not invoked by the ordinary run or UI paths.
 
 Research use only. Predictive performance does not establish clinical utility, individual risk, treatment benefit, or causal biology.
 
