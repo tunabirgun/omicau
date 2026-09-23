@@ -162,12 +162,12 @@ function renderLanding() {
   wrap.append(el("h1", {}, "Audit your multi-omic dataset"));
   wrap.append(el("p", { class: "lead" },
     "Point omicau at your own files — one matrix per omic layer plus a clinical " +
-    "table — and it runs the full leakage-safe audit and opens the interactive " +
+    "table — and it runs a local predictive audit with held-out evaluation and opens an interactive " +
     "report. Everything runs on this computer; no data is uploaded."));
   const card = el("div", { class: "hero-card" });
   card.append(el("span", { class: "eyebrow" }, "What omicau does"));
   const row = el("div", { class: "feature-row" });
-  [["Adversarial hygiene", "Tests for batch effects, target-linked missingness, and information leakage with shuffled-label controls."],
+  [["Adversarial hygiene", "Checks available batch information and target-linked missingness; shuffled-label controls probe optimistic prediction."],
    ["Fusion benchmarks", "Group-aware cross-validated classical + neural models, with each layer's marginal gain and redundancy."],
    ["Provenance", "A value-level SHA-256 fingerprint of your exact inputs, so the report is tied to the data."]]
     .forEach(([k, v]) => row.append(el("div", { class: "feature" },
@@ -362,7 +362,7 @@ RENDERERS.roles = async () => {
       msg.append(el("div", { class: "msg-ok" }, "Roles look good — " + r.omics.join(", ") + " + clinical."));
       if (r.single_modality)
         msg.append(el("div", { class: "consequence" },
-          "One omic layer detected — omicau will run its single-modality leakage-safe honesty check (fusion and redundancy need 2+ layers)."));
+          "One omic layer detected — omicau will assess it with the available predictive controls (fusion and redundancy require 2+ layers)."));
     }
     else r.errors.forEach((e) => msg.append(el("div", { class: "msg-error" }, e)));
     const b = foot.querySelector(".btn-primary");
@@ -444,7 +444,7 @@ RENDERERS.clinical = async () => {
 
   const wrap = el("div");
   wrap.append(h("Map the clinical columns",
-    "Tell omicau which column is the outcome to predict, which identifies the sample, and (recommended) which groups repeated samples so cross-validation stays leakage-safe."));
+    "Tell omicau which column is the outcome to predict, which identifies the sample, and (recommended) which groups repeated samples so related observations remain together in cross-validation."));
 
   const survival = state.clinical.task === "survival";
   const taskSel = el("select", { style: "min-width:280px" });

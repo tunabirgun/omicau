@@ -477,7 +477,9 @@ def resolve_validated_cv_splits(
                 [group_outcomes[group] for group in assessment_groups],
                 dtype=float,
             )
-            if len(values) < required_count or np.var(values) < required_variance:
+            variance = float(np.var(values))
+            tolerance = max(1e-12, abs(float(required_variance)) * 1e-12)
+            if len(values) < required_count or variance + tolerance < required_variance:
                 raise ValueError("validated_split_plan_regression_support_invalid")
 
     return outer, inner, receipt

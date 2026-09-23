@@ -51,9 +51,16 @@ def _linear_cka(A: np.ndarray, B: np.ndarray) -> float:
     B = _prep_cka(B)
     if A is None or B is None:
         return float("nan")
-    cross = np.linalg.norm(A.T @ B) ** 2
-    na = np.linalg.norm(A.T @ A)
-    nb = np.linalg.norm(B.T @ B)
+    if max(A.shape[1], B.shape[1]) <= A.shape[0]:
+        cross = np.linalg.norm(A.T @ B) ** 2
+        na = np.linalg.norm(A.T @ A)
+        nb = np.linalg.norm(B.T @ B)
+    else:
+        gram_a = A @ A.T
+        gram_b = B @ B.T
+        cross = float(np.sum(gram_a * gram_b))
+        na = np.linalg.norm(gram_a)
+        nb = np.linalg.norm(gram_b)
     denom = na * nb
     return float(cross / denom) if denom > 0 else float("nan")
 

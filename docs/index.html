@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>omicau v0.4.0 — multi-omics benchmarking</title>
-<meta name="description" content="omicau v0.4.0 is a research-use multi-omics benchmarking tool with a frozen protocol, completed benchmark summary, and reproducible outputs.">
+<title>omicau v0.5.2 — multi-omics audit and fusion evaluation</title>
+<meta name="description" content="omicau v0.5.2 aligns multi-omics data, compares predictive models, and reports each molecular layer's contribution through a local command-line and browser workflow.">
 <link rel="stylesheet" href="assets/fonts.css">
 <link rel="stylesheet" href="assets/site.css">
 <script>
@@ -24,12 +24,12 @@ document.documentElement.setAttribute('data-theme',t);})();
 <nav class="sidebar" id="sidebar" aria-label="Page sections">
   <span class="nav-marker" aria-hidden="true"></span>
   <div class="brand">omicau</div>
-  <div class="tagline">multi-omics benchmarking</div>
+  <div class="tagline">multi-omics audit and fusion</div>
   <div class="nav-group">
     <div class="h">Release</div>
     <a class="nav" href="#overview">Overview</a>
-    <a class="nav" href="#evidence">Benchmark summary</a>
-    <a class="nav" href="#safeguards">Safeguards</a>
+    <a class="nav" href="#evidence">Workflow</a>
+    <a class="nav" href="#safeguards">Analysis checks</a>
   </div>
   <div class="nav-group">
     <div class="h">Use</div>
@@ -51,9 +51,9 @@ document.documentElement.setAttribute('data-theme',t);})();
 
 <main class="content" id="main-content">
 <section id="overview" class="hero">
-  <div class="eyebrow">Release v0.4.0</div>
-  <h1>Multi-omics benchmarking with explicit safeguards</h1>
-  <p class="lead">omicau evaluates multi-omics predictive workflows and records the evidence needed to interpret their results. It is intended for research benchmarking, not clinical decision-making.</p>
+  <div class="eyebrow">Release v0.5.2</div>
+  <h1>Evaluate what each omic layer adds</h1>
+  <p class="lead">omicau aligns molecular assays and outcomes, compares single-layer and fusion predictors, and writes an auditable report. Use the command line for scripted analyses or the local browser interface for guided setup.</p>
   <div class="btns">
     <a class="btn btn-primary" href="#quickstart">Quick start</a>
     <a class="btn btn-ghost" href="https://doi.org/10.5281/zenodo.22304152">Suite DOI</a>
@@ -66,42 +66,37 @@ document.documentElement.setAttribute('data-theme',t);})();
 </section>
 
 <section id="evidence" class="reveal">
-  <h2>Completed benchmark summary</h2>
-  <p>The completed v0.4.0 run recorded 13,507 of 13,507 registered units with zero failures across binary and continuous synthetic families, five internal cohorts, and a 27-unit exploratory CPTAC analysis. The aggregate results are prepared for the companion article and are distinct from the frozen pre-execution archive. The CPTAC analysis is exploratory and is not used to support a general superiority claim.</p>
+  <h2>Workflow</h2>
+  <p>A run starts with modality matrices, an endpoint, and an independent grouping unit. It records alignment and data-quality checks, fits reference and fusion models under shared partitions, and reports prediction, calibration, control, and layer-level results in one local output directory.</p>
   <div class="tablewrap"><table>
-    <thead><tr><th>Evidence area</th><th>Verified result</th></tr></thead>
+    <thead><tr><th>Stage</th><th>Output for the analyst</th></tr></thead>
     <tbody>
-      <tr><td>Evaluation completion</td><td>13,507 / 13,507 registered units completed; zero failures</td></tr>
-      <tr><td>Benchmark coverage</td><td>Binary and continuous synthetic families; five internal cohorts; CPTAC exploratory analysis (27 units)</td></tr>
-      <tr><td>Required-method null safeguards</td><td>Each required method: 0 / 40 false alarms in both synthetic families</td></tr>
-      <tr><td>Required-method signal safeguards</td><td>Each required method: 40 / 40 detections in both synthetic families</td></tr>
-      <tr><td>Supplemental synthetic controls</td><td>DIABLO: 0 / 40 false alarms and 40 / 40 detections in the binary family; block-PLS: 0 / 40 and 33 / 40 in the continuous family</td></tr>
-      <tr><td>Omicau 0.3.0/0.4.0 fitting-time ratio</td><td>15.2–25.2× across matched 45-unit internal workloads</td></tr>
-      <tr><td>Selected established-software comparator/Omicau 0.4.0 runtime ratio</td><td>14.2–17.4× per registered unit on internal cohorts</td></tr>
-      <tr><td>Public-release mapping</td><td>73 / 73 submitted source files matched the PyPI source distribution; 47 / 47 implementation files matched the source distribution, wheel, and release tag</td></tr>
-      <tr><td>Released-software tests</td><td>244 / 244 passed on the exact PyPI source distribution</td></tr>
+      <tr><td>Prepare</td><td>Aligned samples, modality availability, feature counts, missingness, and available batch information</td></tr>
+      <tr><td>Evaluate</td><td>Single-layer, fusion, and leave-one-layer-out model metrics under shared group-aware splits</td></tr>
+      <tr><td>Interpret</td><td>Modality ledger, paired gain intervals, calibration, controls, and model card</td></tr>
+      <tr><td>Reproduce</td><td>Resolved configuration, input provenance, machine-readable audit, and runtime record</td></tr>
     </tbody>
   </table></div>
   <div class="callout plain">
-    <span class="lbl">Interpretation</span>
-    The efficiency ratios are registered-environment, complete-pipeline fitting-time measurements, not end-to-end, energy-use, or hardware-general estimates. Predictive effects are cohort-specific. These results support benchmark-specific efficiency and safeguard performance; they do not establish that one method is superior across cohorts or applications.
+    <span class="lbl">Read the result</span>
+    A layer's standalone predictive score and its added contribution to fusion answer different questions. The ledger presents both measurements with their analysis conditions.
   </div>
 </section>
 
 <section id="safeguards" class="reveal">
-  <h2>Safeguards</h2>
-  <p>Safeguards were evaluated under null and injected conditions in both synthetic families. Each required gate method produced zero false alarms across 40 null cases and recovered all 40 injected cases in both families. Supplemental DIABLO produced 0/40 and 40/40 in its eligible binary family; supplemental block-PLS produced 0/40 false alarms and 33/40 detections in the continuous family.</p>
+  <h2>Analysis checks</h2>
+  <p>Omicau keeps independent groups together across assessment splits and fits learned preprocessing within training data. It records diagnostic and control results beside predictive estimates so that users can inspect the conditions of an individual run.</p>
   <ul>
-    <li><strong>Required-method null checks:</strong> 0 / 40 false alarms in both families.</li>
-    <li><strong>Required-method injected checks:</strong> 40 / 40 detections in both families.</li>
-    <li><strong>Interpretation:</strong> read performance estimates together with the recorded safeguard outcomes and cohort context.</li>
+    <li><strong>Input review:</strong> sample alignment, missingness, group structure, and available batch labels.</li>
+    <li><strong>Model review:</strong> shared partitions, single-layer baselines, fusion comparisons, and calibration.</li>
+    <li><strong>Control review:</strong> eligible target and feature controls with their exact scope recorded in the audit.</li>
   </ul>
 </section>
 
 <section id="quickstart" class="reveal">
   <h2>Quick start</h2>
-  <p>Install the exact release, create the bundled synthetic example, run it, verify its provenance, and inspect the resulting report.</p>
-  <pre><code>python -m pip install "omicau==0.4.0"
+  <p>Install the wheel from the GitHub release, create the bundled synthetic example, run it, verify its provenance, and inspect the resulting report.</p>
+  <pre><code>python -m pip install ./omicau-0.5.2-py3-none-any.whl
 omicau bootstrap --dataset mock --out-dir demo
 omicau run --config demo/config.json --cores 8
 omicau verify --config demo/config.json --audit demo/run/audit.json</code></pre>
@@ -123,15 +118,14 @@ omicau verify --config demo/config.json --audit demo/run/audit.json</code></pre>
 </section>
 
 <section id="reproducibility" class="reveal">
-  <h2>Reproducibility and public mapping</h2>
-  <p>The Zenodo DOI identifies the frozen protocol and executable suite, not a completed-results deposit. Subsequent byte-level release mapping found that all 73 submitted source files matched the PyPI source distribution and all 47 implementation files matched across the source distribution, wheel, and v0.4.0 release tag. The exact PyPI source distribution passed 244 software tests; these tests establish defined behavior and failure handling, not biological or clinical validity.</p>
+  <h2>Reproducibility and release materials</h2>
+  <p>Each run records its resolved configuration, input identity, group-aware split, diagnostics, model outputs, and runtime. The archived benchmark suite provides a separate evaluation protocol and executable materials; it is not invoked by ordinary command-line or browser runs.</p>
   <div class="tablewrap"><table>
     <thead><tr><th>Resource</th><th>Use</th></tr></thead>
     <tbody>
-      <tr><td><a href="https://github.com/tunabirgun/omicau/releases/tag/v0.4.0">Omicau v0.4.0 release</a></td><td>Archived software and source</td></tr>
+      <tr><td><a href="https://github.com/tunabirgun/omicau/releases/tag/v0.5.2">Omicau v0.5.2 release</a></td><td>Current software, wheel, source, and desktop packages</td></tr>
       <tr><td><a href="https://github.com/tunabirgun/omicau">GitHub repository</a></td><td>Source and usage documentation</td></tr>
       <tr><td><a href="https://doi.org/10.5281/zenodo.22304152">Frozen suite DOI</a></td><td>Pre-execution protocol, code, partitions, and environment specification</td></tr>
-      <tr><td><a href="https://pypi.org/project/omicau/">PyPI</a></td><td>Package index entry</td></tr>
     </tbody>
   </table></div>
   <pre><code>omicau verify --config config.json --audit run/audit.json</code></pre>
@@ -143,14 +137,14 @@ omicau verify --config demo/config.json --audit demo/run/audit.json</code></pre>
     <span class="lbl">Research use only</span>
     omicau is not a diagnostic device. It does not diagnose disease, recommend treatment, or determine an individual’s risk. Do not use its outputs for clinical decisions.
   </div>
-  <p>Benchmark findings are conditional on the evaluated cohorts, data, comparators, and safeguards. A predictive result should be interpreted as cohort-specific evidence, not a claim of general clinical utility or method superiority.</p>
+  <p>Interpret a predictive result for the cohort, endpoint, grouping, and assays that generated it. Follow-up biological and clinical questions need study designs suited to those purposes.</p>
 </section>
 
 <section id="links" class="reveal">
   <h2>Links</h2>
   <div class="btns">
     <a class="btn btn-primary" href="https://github.com/tunabirgun/omicau">GitHub</a>
-    <a class="btn btn-ghost" href="https://pypi.org/project/omicau/">PyPI</a>
+    <a class="btn btn-ghost" href="https://github.com/tunabirgun/omicau/releases/tag/v0.5.2">Release</a>
     <a class="btn btn-ghost" href="https://doi.org/10.5281/zenodo.22304152">Suite DOI</a>
   </div>
   <p style="color:var(--ink-500);font-size:14px;margin-top:32px">Article: work in progress.</p>

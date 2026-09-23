@@ -341,6 +341,41 @@ def test_regression_uses_the_same_supplied_outer_partitions():
     assert np.isfinite(result.oof_pred).all()
 
 
+def test_regression_support_recheck_tolerates_manifest_roundoff():
+    y = np.asarray([
+        0.0, 10.0, 0.0, 10.0, 0.0, 12.0, 0.0, 12.0,
+        -0.19435120713688978, 0.8792007033797342,
+        0.11057950560511856, 0.02036198525889148,
+    ])
+    outer_folds = []
+    for fold in range(3):
+        assessment = list(range(4 * fold, 4 * fold + 4))
+        train = [index for index in range(12) if index not in assessment]
+        outer_folds.append({
+            "train": train, "assessment": assessment,
+            "inner_folds": [
+                {"train": train[:4], "assessment": train[4:]},
+                {"train": train[4:], "assessment": train[:4]},
+            ],
+        })
+    plan = validate_split_manifest(
+        {"outer_folds": outer_folds}, n_samples=12,
+        groups=[f"g{index}" for index in range(12)], y=y, task="regression",
+        requested_outer_k=3, requested_inner_k=2, minimum_training_groups=2,
+        minimum_assessment_groups=2, minimum_regression_assessment_groups=2,
+        minimum_regression_assessment_variance=0.0,
+    )
+    minimum = plan.receipt()["support_summary"]["minimum_realized_assessment_variance"]
+    lexical_group_order = np.asarray([10, 11, 8, 9])
+    recomputed = float(np.var(y[lexical_group_order]))
+    assert 0 < minimum - recomputed < 1e-12
+    result = _run_base(
+        plan, y=y, groups=[f"g{index}" for index in range(12)],
+        X=np.arange(24, dtype=float).reshape(12, 2), n_splits=3, task="regression",
+    )
+    assert np.isfinite(result.oof_pred).all()
+
+
 def test_plan_task_mismatch_fails_closed():
     with pytest.raises(TypeError, match="runtime_universe_mismatch"):
         _run_base(_plan(), y=np.arange(8, dtype=float), task="regression")

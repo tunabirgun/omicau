@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "omicau"
-version = "0.5.0"
+version = "0.5.2"
 description = "Omics Audit: a reproducible multi-omics data-audit and fusion-benchmarking CLI with explicit split and control limitations."
 readme = "README.md"
 requires-python = ">=3.10"

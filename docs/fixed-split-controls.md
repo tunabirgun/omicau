@@ -9,17 +9,17 @@ omicau run --config demo/config.json --cores 8 --device cpu --no-llm
 omicau verify --config demo/config.json --audit demo/run/audit.json
 ```
 
-For candidate evaluation, install the reviewed wheel from the local review directory:
+Install the wheel from the GitHub release:
 
 ```bash
-python -m pip install ./omicau-0.5.0-py3-none-any.whl
+python -m pip install ./omicau-0.5.2-py3-none-any.whl
 ```
 
-This candidate installation route does not use PyPI.
+This installation route uses the release asset directly.
 
 `omicau ui --host 127.0.0.1` starts the optional local browser interface after installation with `omicau[ui]`. The interface binds to localhost; it does not provide an external-holdout workflow.
 
-The shipped `benchmarks/` harness and `benchmark_record/` are archived evaluation materials. They are separate from the ordinary `omicau run` and UI execution paths.
+The repository's `benchmarks/` harness and `benchmark_record/` are archived evaluation materials. They are separate from the ordinary `omicau run` and UI execution paths.
 
 For a pre-specified nested evaluation, create and freeze a JSON manifest before model fitting, then add its relative or absolute path as `cv.split_manifest` and its nested fold count as `cv.inner_splits`. A public manifest has exactly these top-level fields:
 
