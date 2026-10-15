@@ -1,5 +1,5 @@
 {% set name = "omicau" %}
-{% set version = "0.2.0" %}
+{% set version = "0.6.0" %}
 {% set python_min = "3.10" %}
 
 package:
@@ -7,8 +7,8 @@ package:
   version: {{ version }}
 
 source:
-  url: https://pypi.org/packages/source/{{ name[0] }}/{{ name }}/{{ name }}-{{ version }}.tar.gz
-  sha256: b9e06ccbaf014f3b266d7f5268374d65391a203cd5d2ccbcf7be15404a19c130
+  url: https://github.com/tunabirgun/omicau/releases/download/v{{ version }}/omicau-{{ version }}.tar.gz
+  sha256: 9f1ee9a2f684090a71d00dc7e1e052a12307a1709f2301deb24e73b4c9eae516
 
 build:
   noarch: python
@@ -21,7 +21,7 @@ requirements:
   host:
     - python {{ python_min }}
     - pip
-    - setuptools >=68
+    - setuptools >=77
     - wheel
   run:
     - python >={{ python_min }}
@@ -50,13 +50,11 @@ about:
   home: https://github.com/tunabirgun/omicau
   license: MIT
   license_file: LICENSE
-  summary: Omics Audit -- a reproducible, leakage-safe multi-omics data-audit and fusion-benchmarking CLI.
+  summary: Local multi-omics diagnostics, predictive comparisons and paired layer assessment.
   description: |
-    omicau audits multi-omic datasets: flexible ingestion and alignment,
-    value-level cryptographic provenance, missingness-bias and batch-effect
-    diagnostics, leakage-safe classical and PyTorch fusion benchmarks under
-    group-aware cross-validation, permutation-importance attribution, a
-    modality-utility ledger, and a self-contained interactive HTML dashboard.
+    omicau aligns molecular inputs, reports data-quality diagnostics,
+    compares predictive models and presents paired layer assessments
+    through command-line and local browser workflows.
   doc_url: https://tunabirgun.github.io/omicau/
   dev_url: https://github.com/tunabirgun/omicau
 
