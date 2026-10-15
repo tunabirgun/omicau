@@ -87,6 +87,10 @@ class CVSpec:
     #: master seed, so a run is reproducible from that single value.
     seed: int = 42
     shuffle: bool = True
+    #: Required when no source-group column is available. This explicit contract
+    #: states that rows are independent resampling units; it is never inferred
+    #: from missing groups or unique row identifiers.
+    independent_rows: bool = False
     #: Group-level bootstrap resamples for the primary-metric confidence interval.
     n_bootstrap: int = 1000
     #: Opt-in cross-site stress test: also cross-validate the reference fusion with

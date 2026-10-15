@@ -1,8 +1,8 @@
 # omicau
 
-`omicau` v0.5.2 is a local command-line and browser-based workflow for multi-omics data auditing and fusion evaluation. It aligns molecular layers, examines missingness and batch information, compares single-layer and fusion models with group-aware resampling, and writes a self-contained HTML report with machine-readable results. The report distinguishes a layer's standalone predictive signal from its added contribution to a specified model and endpoint.
+`omicau` v0.6.0 is a local command-line and browser-based workflow for multi-omics data auditing and fusion evaluation. It aligns molecular layers, examines missingness and batch information, compares single-layer and fusion models with group-aware resampling, and writes a self-contained HTML report with machine-readable results. The report distinguishes a layer's standalone predictive performance from its added contribution to a specified model and endpoint.
 
-Source and release code: [github.com/tunabirgun/omicau](https://github.com/tunabirgun/omicau). Published evaluation results and reproduction materials: [DOI 10.5281/zenodo.22922940](https://zenodo.org/records/22922940).
+Source and release code: [github.com/tunabirgun/omicau](https://github.com/tunabirgun/omicau). Current RF validation materials accompany the [0.6.0 release](https://github.com/tunabirgun/omicau/releases/download/v0.6.0/omicau-validation-0.6.0.zip).
 
 Ordinary users run `omicau run` or the optional local browser interface. The repository's `benchmarks/` harness and `benchmark_record/` files are archived evaluation materials; they are not invoked by the ordinary run or UI paths.
 
@@ -17,14 +17,20 @@ Research use only. Predictive performance does not establish clinical utility, i
 
 ## Evaluation materials
 
-The [published evaluation archive](https://zenodo.org/records/22922940) is a separate post-execution record with aggregate results, case banks, reproduction scripts, and figure inputs. It includes synthetic experiments, diagnostic grids, released-CLI molecular cohorts, and task-matched comparator analyses. The [earlier frozen suite](https://doi.org/10.5281/zenodo.22304152) remains the historical pre-execution protocol and source-registry context. Neither archive is invoked by an ordinary `omicau run` or browser session. The evaluation does not establish universal software superiority or clinical utility.
+The [0.6.0 validation materials](https://github.com/tunabirgun/omicau/releases/download/v0.6.0/omicau-validation-0.6.0.zip) provide the current RF protocol, aggregate results, environment pins and separate readable reproduction phases. The [earlier protocol](https://doi.org/10.5281/zenodo.22304152) and [earlier results](https://doi.org/10.5281/zenodo.22922940) remain explicitly historical records. The protocol is not a preregistration. Evaluation scripts are separate from the ordinary `omicau run` and browser workflows. The report from an ordinary run includes its own split, model, control, and runtime records so that a user can assess the specific analysis performed.
+
+## Reading layer results
+
+Each layer has three distinct report elements. The standalone score is descriptive context. The contribution category compares paired held-out predictions from the full reference model and the same analysis with that layer removed. It is **increased held-out performance** only when the unrounded family decision interval is entirely above zero, **reduced held-out performance** only when it is entirely below zero, and **unresolved** when it spans or touches zero. The ordinary 95% interval is shown separately from the family decision interval. Missingness, batch, and control alarms are diagnostic warnings; they do not recategorize an otherwise valid paired contrast.
+
+The categories are conditional on the cohort, endpoint, locked split plan and reference-model ledger. They do not establish biological mechanism, causal benefit, clinical utility, or general model superiority. With one layer, contribution is not applicable.
 
 ## Installation
 
-Python 3.10 or later is required. Download the v0.5.2 wheel from the [GitHub release](https://github.com/tunabirgun/omicau/releases/tag/v0.5.2), then install it:
+Python 3.10 or later is required. Install the wheel supplied with the release:
 
 ```bash
-python -m pip install ./omicau-0.5.2-py3-none-any.whl
+python -m pip install ./omicau-0.6.0-py3-none-any.whl
 ```
 
 From a source checkout:
@@ -33,7 +39,7 @@ From a source checkout:
 python -m pip install .
 ```
 
-From a source checkout, install optional capabilities only when needed:
+From the extracted source directory, install optional capabilities only when needed:
 
 ```bash
 python -m pip install ".[ui]"
@@ -43,8 +49,6 @@ python -m pip install ".[dev]"
 ```
 
 `ui` provides a local browser interface. `data` enables supported public-data connectors. `cptac` is separate because its dependency requirements may need a compiler toolchain. `dev` installs test tooling.
-
-The v0.5.2 release also provides a portable Windows x86-64 ZIP, Linux x86-64 AppImage, and macOS Apple Silicon disk image. As checked on 23 September 2026, [PyPI](https://pypi.org/project/omicau/) lists v0.4.0; an unpinned `pip install omicau` does not install v0.5.2.
 
 ## Minimal usage
 
@@ -111,6 +115,14 @@ The clinical table identifies the sample, prediction target, and outermost indep
 
 `seed` anchors stochastic steps. Choose `n_splits` only when each training and assessment partition remains suitable for the target prevalence and grouping structure. Set `cores` to a value compatible with available memory; a higher value is not automatically a faster or safer analysis.
 
+If rows are truly independent and no grouping variable exists, declare that assumption explicitly under `cv`:
+
+```json
+"independent_rows": true
+```
+
+Use this only when the source material explicitly supports the assumption that rows are independent and repeated, related, longitudinal, aliquot, or family-linked samples are absent. Otherwise provide validated `clinical.group` metadata for the independent unit.
+
 ## Fixed split manifests and controls
 
 For a pre-specified nested evaluation, set `cv.split_manifest` and `cv.inner_splits` before fitting. A public manifest uses `omicau_public_split_manifest_v2` and is bound to aligned values, ordered group identities, and declared design strata. Stacking requires this validated nested plan; ordinary dynamic-split runs record stacking as unavailable rather than producing a nonnested estimate.
@@ -134,7 +146,7 @@ If a fixed-plan target-permutation control is enabled, declare `clinical.permuta
 | `report.html` | Self-contained interactive report. |
 | `audit.json` | Configuration, diagnostics, metrics, provenance, and environment record. |
 | `model_metrics.csv` | Per-model metrics and confidence intervals. |
-| `modality_ledger.csv` | Standalone scores, marginal gains, redundancy, and verdicts. |
+| `modality_ledger.csv` | Descriptive standalone scores, paired contribution estimates and intervals, diagnostic flags, and retained legacy scalar fields. |
 | `missingness_tests.csv` | Missingness-bias tests and adjusted p-values. |
 | `MODEL_CARD.md` | Intended use, data, methods, metrics, and limitations. |
 | `runtime_log.txt` | Stage-level wall time and normalized compute information. |
@@ -154,10 +166,10 @@ These safeguards reduce specific, testable sources of optimistic bias. They do n
 
 | Public item | Identifier | Role |
 | --- | --- | --- |
-| Software release | [`omicau` v0.5.2](https://github.com/tunabirgun/omicau/releases/tag/v0.5.2) | Wheel, source archive, Windows ZIP, Linux AppImage, and macOS arm64 disk image. |
+| Software release | [`omicau` v0.6.0](https://github.com/tunabirgun/omicau/releases/tag/v0.6.0) | Installable command-line software and archived source code. |
 | Source repository | [github.com/tunabirgun/omicau](https://github.com/tunabirgun/omicau) | Release code, configuration schema, and documentation. |
-| Published evaluation archive | [DOI 10.5281/zenodo.22922940](https://zenodo.org/records/22922940) | Post-execution aggregate results and reproduction materials. |
-| Historical frozen suite | [DOI 10.5281/zenodo.22304152](https://doi.org/10.5281/zenodo.22304152) | Pre-execution protocol and source-registry context. |
+| Current RF validation | [0.6.0 validation archive](https://github.com/tunabirgun/omicau/releases/download/v0.6.0/omicau-validation-0.6.0.zip) | Current scientific protocol, complete aggregate results and readable reproduction phases. |
+| Historical evaluation | [Protocol](https://doi.org/10.5281/zenodo.22304152) and [results](https://doi.org/10.5281/zenodo.22922940) | Earlier version-specific settings and results; not the current paired-ledger evaluation. |
 
 Each run records the resolved configuration, aligned-value SHA-256 provenance, relevant dependency versions, diagnostics, and output paths in `audit.json`. Re-run `omicau verify` against the source configuration and stored audit to detect changes in aligned inputs or feature footprints.
 
@@ -176,10 +188,10 @@ python -m pytest
 - Diagnostics flag potential data-quality or design problems; they do not prove their cause or correct the underlying data.
 - External validation, domain review, and appropriate governance remain the user's responsibility.
 
+## Article
+
+The software documentation is complete independently of any manuscript submission. Cite the archived software release and the relevant benchmark or analysis record when using this workflow.
+
 ## License
 
 omicau is distributed under the [MIT License](LICENSE).
-
-## Article
-
-Work in progress.

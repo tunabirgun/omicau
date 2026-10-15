@@ -58,7 +58,7 @@ const state = {
   clinicalCols: null,
   clinical: { target: "", sample_id: "", group: "", batch: "", task: "auto" },
   options: { run_name: "my_audit", n_splits: 5, neural: true,
-             batch_blocked: false, batch_adjust_sensitivity: false, normalization: "none",
+             independent_rows: false, batch_blocked: false, batch_adjust_sensitivity: false, normalization: "none",
              llm: { enabled: false, provider: "anthropic", model: "claude-sonnet-5", base_url: "" } },
   align: null, preflight: null, run: null,
 };
@@ -578,6 +578,9 @@ RENDERERS.options = async () => {
   const neuralIn = el("input", { type: "checkbox" });
   if (o.neural) neuralIn.setAttribute("checked", "checked");
   neuralIn.addEventListener("change", () => (o.neural = neuralIn.checked));
+  const independentRowsIn = el("input", { type: "checkbox" });
+  if (o.independent_rows) independentRowsIn.setAttribute("checked", "checked");
+  independentRowsIn.addEventListener("change", () => (o.independent_rows = independentRowsIn.checked));
   const blockIn = el("input", { type: "checkbox" });
   if (o.batch_blocked) blockIn.setAttribute("checked", "checked");
   blockIn.addEventListener("change", () => (o.batch_blocked = blockIn.checked));
@@ -596,6 +599,8 @@ RENDERERS.options = async () => {
     field("Audit name", nameIn),
     field("Cross-validation folds", splitsIn),
     field("Neural fusion model (slower, adds a deep-learning benchmark)", neuralIn),
+    field("Rows represent independent source units", independentRowsIn,
+      "Use only when no group column is available and the study design supports independent rows. Repeated samples from one subject require a group column."),
     field("Sample-ID matching", normSel),
     field("Cross-site stress test (batch-blocked CV; needs a batch column, 3+ batches)", blockIn),
     field("Batch-adjustment sensitivity probe (in-fold; auto-skipped if batch is confounded)", adjIn));
@@ -606,9 +611,15 @@ RENDERERS.options = async () => {
   wrap.append(footer({ back: true, next: advance }));
   return wrap;
 
-  function field(label, input) {
+  function field(label, input, help) {
+    const inputId = `option-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+    const helpId = help ? `${inputId}-help` : null;
+    input.id = inputId;
+    if (helpId) input.setAttribute("aria-describedby", helpId);
     return el("div", { style: "margin:14px 0;display:flex;align-items:center;gap:14px" },
-      el("label", { style: "min-width:340px;font-weight:600" }, label), input);
+      el("div", { style: "min-width:340px" },
+        el("label", { for: inputId, style: "font-weight:600" }, label),
+        help ? el("div", { id: helpId, class: "consequence", style: "margin-top:4px" }, help) : null), input);
   }
   async function advance() {
     await api(`/api/session/${state.session}/options`, {

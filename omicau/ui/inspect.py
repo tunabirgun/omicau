@@ -292,6 +292,7 @@ def build_config_dict(session: dict) -> dict[str, Any]:
         "clinical": clinical_block,
         "cv": {"n_splits": session.get("n_splits", 5), "seed": session.get("seed", 42),
                "n_bootstrap": session.get("n_bootstrap", 1000),
+               "independent_rows": bool(session.get("independent_rows", False)),
                "batch_blocked": bool(session.get("batch_blocked", False)),
                "batch_adjust_sensitivity": bool(session.get("batch_adjust_sensitivity", False)) and not confounded},
         "neural": {"enabled": session.get("neural", True)},

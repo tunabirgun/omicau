@@ -12,7 +12,7 @@ omicau verify --config demo/config.json --audit demo/run/audit.json
 Install the wheel from the GitHub release:
 
 ```bash
-python -m pip install ./omicau-0.5.2-py3-none-any.whl
+python -m pip install ./omicau-0.6.0-py3-none-any.whl
 ```
 
 This installation route uses the release asset directly.

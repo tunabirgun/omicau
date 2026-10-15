@@ -4,8 +4,9 @@ Early-fusion (feature-concatenation) models are cross-validated for every
 modality alone, for the full fusion, and for each leave-one-modality-out subset
 (so the interpretation layer can measure a modality's marginal contribution).
 Three control baselines -- shuffled target, column-shuffled features, and random
-noise -- are run through the identical pipeline to prove the harness does not
-leak: a well-behaved pipeline scores at chance on all three.
+noise -- are stress diagnostics run through the same pipeline. Their scope
+depends on the control contract: a training-only target shuffle need not define
+a formal global null, and chance-like scores cannot prove that leakage is absent.
 """
 
 from __future__ import annotations
@@ -33,6 +34,35 @@ from omicau.models.base import (
     score_predictions,
 )
 from omicau.models.group_controls import _execute_fold_endpoint_permutations
+
+
+class ClassicalBenchmarkFailure(RuntimeError):
+    """A required fit failed before a utility ledger could be emitted."""
+
+    def __init__(
+        self,
+        *,
+        fit_name: str,
+        intended_candidate_layers: list[str],
+        reference_estimator: str,
+        error: Exception,
+    ) -> None:
+        self.failure_receipt = {
+            "status": "not_emitted_whole_benchmark_failed",
+            "fit_name": fit_name,
+            "failure_reason": type(error).__name__,
+            "reference_estimator": reference_estimator,
+            "intended_candidate_layers": list(intended_candidate_layers),
+            "intended_family_size": (
+                len(intended_candidate_layers) if len(intended_candidate_layers) > 1 else 0
+            ),
+        }
+        super().__init__(
+            "classical_benchmark_fit_failed:"
+            + fit_name
+            + ":"
+            + type(error).__name__
+        )
 
 
 def resolve_cores(config) -> int:
@@ -305,6 +335,20 @@ def run_classical_benchmarks(
     y = aligned.y.to_numpy()
     groups = aligned.groups.to_numpy() if aligned.groups is not None else None
     mods = aligned.modality_names
+    configured_layers = [str(spec.name) for spec in config.modalities if spec.name]
+    intended_candidate_layers = configured_layers or list(mods)
+    if len(set(intended_candidate_layers)) != len(intended_candidate_layers):
+        raise ValueError("intended_candidate_layers_not_unique")
+    if configured_layers and set(mods) != set(intended_candidate_layers):
+        raise ClassicalBenchmarkFailure(
+            fit_name="alignment",
+            intended_candidate_layers=intended_candidate_layers,
+            reference_estimator=ref_key,
+            error=ValueError("configured_layer_absent_or_unexpected_after_alignment"),
+        )
+    intended_family_size = (
+        len(intended_candidate_layers) if len(intended_candidate_layers) > 1 else 0
+    )
 
     def run(
         name,
@@ -317,6 +361,14 @@ def run_classical_benchmarks(
         control_contract=None,
         feature_control=None,
     ):
+        if name == f"{ref_key}::FUSION":
+            model_role = "full"
+        elif name.startswith(f"{ref_key}::FUSION-minus-"):
+            model_role = "reduced:" + name[len(f"{ref_key}::FUSION-minus-"):]
+        elif name.startswith(f"{ref_key}::"):
+            model_role = "standalone"
+        else:
+            model_role = "auxiliary"
         factory = _estimator_factory(ref_key if imp else current_key, task, seed, n_jobs)
         return cross_validate_estimator(
             name, X, yy, gg, task, factory,
@@ -326,7 +378,23 @@ def run_classical_benchmarks(
             validated_plan=validated_plan,
             validated_control_contract=control_contract,
             validated_feature_control=feature_control,
+            row_keys=np.asarray(aligned.sample_ids, dtype=object),
+            model_role=model_role,
+            independent_rows=config.cv.independent_rows,
         )
+
+    def run_required(name, X, feats, modalities, **kwargs):
+        try:
+            return run(name, X, feats, modalities, **kwargs)
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception as error:
+            raise ClassicalBenchmarkFailure(
+                fit_name=name,
+                intended_candidate_layers=intended_candidate_layers,
+                reference_estimator=ref_key,
+                error=error,
+            ) from error
 
     results: list[CVResult] = []
     X_all, feats_all = aligned.concat_matrix(mods)
@@ -347,16 +415,18 @@ def run_classical_benchmarks(
         # single-modality baselines
         for m in mods:
             Xm, fm = aligned.concat_matrix([m])
-            results.append(run(f"{current_key}::{m}", Xm, fm, [m]))
+            results.append(run_required(f"{current_key}::{m}", Xm, fm, [m]))
         # full fusion (compute attribution only on the reference estimator)
         want_imp = (current_key == ref_key) and config.xai.enabled
-        results.append(run(f"{current_key}::FUSION", X_all, feats_all, mods, imp=want_imp))
+        results.append(run_required(f"{current_key}::FUSION", X_all, feats_all, mods, imp=want_imp))
         # leave-one-modality-out
         if len(mods) > 1:
             for m in mods:
                 subset = [x for x in mods if x != m]
                 Xs, fs = aligned.concat_matrix(subset)
-                results.append(run(f"{current_key}::FUSION-minus-{m}", Xs, fs, subset))
+                results.append(
+                    run_required(f"{current_key}::FUSION-minus-{m}", Xs, fs, subset)
+                )
 
     # -- control baselines (reference estimator on the full fusion) -------- #
     current_key = ref_key
@@ -506,6 +576,9 @@ def run_classical_benchmarks(
         "task": task,
         "primary_metric": PRIMARY_METRIC[task],
         "reference_estimator": ref_key,
+        "reference_estimator_declared_before_fit": ref_key,
+        "intended_candidate_layers": intended_candidate_layers,
+        "intended_family_size": intended_family_size,
         "estimator_keys": keys,
         "results": results,
         "controls": controls,

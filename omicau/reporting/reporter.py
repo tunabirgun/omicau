@@ -14,6 +14,7 @@ import copy
 import csv
 import html
 import json
+import textwrap
 from pathlib import Path
 from typing import Any
 
@@ -24,10 +25,6 @@ from jinja2 import Template
 from omicau.reporting._assets import (
     DASHBOARD_CSS, TOOLTIP_JS, GLOSSARY, SECTION_COPY, BADGES, FONT_FACES,
 )
-# Single source of truth for the fusion/marginal-gain plain-language bands, so the
-# executive answer strip, headline card, and summary flags cannot disagree on the
-# same number (e.g. read "Marginally" above "does not beat").
-from omicau.interpretation.utility import GAIN_EPS, GAIN_STRONG, GAIN_ALPHA
 
 # --------------------------------------------------------------------------- #
 # Color-blind-safe palette (Okabe-Ito) + semantic mapping
@@ -48,30 +45,111 @@ SLATE = "#4477AA"
 SKY = OKABE_ITO["sky"]   # distinct Okabe-Ito hue for single-modality bars (not a 2nd blue)
 TEAL = OKABE_ITO["green"]
 AMBER = OKABE_ITO["orange"]
-INK = "#1A202C"
+INK = "#000000"
 BORDER = "#E2E8F0"
 
-PLOTLY_FONT = "IBM Plex Sans, -apple-system, system-ui, sans-serif"
+PLOTLY_FONT = "Times New Roman, Times, serif"
 PLOTLY_CONFIG = {"responsive": True, "displaylogo": False,
                  "toImageButtonOptions": {"format": "svg", "scale": 2}}
+
+
+def _metric_label(metric: str) -> str:
+    return "R²" if str(metric).lower() in {"r2", "r²"} else str(metric).upper()
 
 
 # --------------------------------------------------------------------------- #
 # Plain-language badge + answer-strip helpers (from the design system)
 # --------------------------------------------------------------------------- #
-def _verdict_status(verdict: str) -> str:
-    v = (verdict or "").lower()
-    if v.startswith("predictive"):
-        return "predictive"
-    if "inconclusive" in v:
-        return "not_additive"
-    if "batch-confounded" in v:
-        return "batch_confounded"
-    if "no detectable" in v or "control-like" in v:
-        return "control_like"
-    if v.startswith("informative"):
-        return "not_additive"   # standalone signal; incremental evidence inconclusive
-    return "not_additive"
+_INCREMENTAL_LABELS = {
+    "increased_held_out_performance": "Increased held-out performance",
+    "reduced_held_out_performance": "Reduced held-out performance",
+    "unresolved": "Unresolved",
+    "unavailable": "Unavailable",
+    "not_applicable": "Not applicable",
+}
+
+
+def _incremental_assessment(row: dict[str, Any]) -> dict[str, Any]:
+    """Return the canonical v2 assessment, failing closed for archived ledgers.
+
+    Version-1 reports retain their scalar fields for reading and export, but do
+    not have the family-adjusted paired interval required by the revised rule.
+    They therefore cannot be recategorised from their legacy prose or p-values.
+    """
+    assessment = row.get("incremental_assessment")
+    if isinstance(assessment, dict) and assessment.get("status") in _INCREMENTAL_LABELS:
+        return assessment
+    if row.get("ledger_schema_version") == 2:
+        return {"status": "unavailable", "reason": "missing_incremental_assessment"}
+    if row.get("single_modality"):
+        return {"status": "not_applicable", "reason": "one_layer"}
+    return {
+        "status": "unavailable",
+        "reason": "archived_ledger_without_family_decision_interval",
+    }
+
+
+def _standalone_assessment(row: dict[str, Any]) -> dict[str, Any]:
+    assessment = row.get("standalone_assessment")
+    if isinstance(assessment, dict):
+        return assessment
+    value = row.get("standalone_primary")
+    return {
+        "status": "descriptive" if isinstance(value, (int, float)) else "unavailable",
+        "estimate": value,
+        "ordinary_95_ci": None,
+        "reason": "archived_ledger_without_standalone_interval",
+    }
+
+
+def _verdict_status(row: dict[str, Any]) -> str:
+    status = _incremental_assessment(row).get("status")
+    return {
+        "increased_held_out_performance": "increased",
+        "reduced_held_out_performance": "reduced",
+        "unresolved": "unresolved",
+        "unavailable": "unavailable",
+        "not_applicable": "not_applicable",
+    }.get(status, "unavailable")
+
+
+def _interval_text(interval: dict[str, Any] | None) -> str:
+    if not isinstance(interval, dict):
+        return "—"
+    low, high = interval.get("lower"), interval.get("upper")
+    if not isinstance(low, (int, float)) or not isinstance(high, (int, float)):
+        return "—"
+    return f"{low:+.4f} to {high:+.4f}"
+
+
+def _ledger_recommendation(row: dict[str, Any], assessment: dict[str, Any]) -> str:
+    status = assessment.get("status")
+    if status == "increased_held_out_performance":
+        return ("The locked paired comparison favours retaining this layer for this analysis. "
+                "This is a conditional held-out performance result, not biological benefit.")
+    if status == "reduced_held_out_performance":
+        return ("The locked paired comparison favours the model without this layer. Consider a simpler "
+                "model for this analysis and investigate whether the added layer destabilises fitting.")
+    if status == "unresolved":
+        return ("The family decision interval crosses zero. This analysis does not resolve whether the "
+                "layer changes held-out performance.")
+    if status == "not_applicable":
+        return "One available layer: there is no leave-one-layer-out comparison."
+    reason = assessment.get("reason") or "paired comparison records are unavailable"
+    return f"No contribution category was assigned because {reason}."
+
+
+def _absolute_score_note(assessment: dict[str, Any], task: str | None) -> str:
+    absolute = assessment.get("absolute_scores")
+    if not isinstance(absolute, dict) or task != "regression":
+        return ""
+    full, reduced = absolute.get("full"), absolute.get("reduced")
+    estimate = assessment.get("estimate")
+    if (isinstance(full, (int, float)) and isinstance(reduced, (int, float))
+            and isinstance(estimate, (int, float)) and estimate > 0 and full < 0 and reduced < 0):
+        return ("Both held-out R² values remain below the conventional outcome-mean reference (R²=0); "
+                "the positive difference is only a relative score increase.")
+    return ""
 
 
 def _rating_status(rating: str) -> str:
@@ -88,32 +166,36 @@ def _badge(status: str) -> dict:
 
 
 def _answer_strip(util: dict, rating_status: str) -> list[dict]:
-    gain = util.get("fusion_gain_over_best_single")
     leak = util.get("leakage_warning")
     single = util.get("single_modality", False)
     ledger = util.get("modality_ledger", [])
-    confounded = [m["modality"] for m in ledger if m.get("batch_confounded")]
-    dead = [m["modality"] for m in ledger if "no detectable" in str(m.get("verdict", ""))]
-    useful = [m["modality"] for m in ledger if str(m.get("verdict", "")).startswith("predictive")]
+    confounded = [m["modality"] for m in ledger if (m.get("diagnostic_flags") or {}).get(
+        "batch_confounded", m.get("batch_confounded"))]
     miss_biased = [m["modality"] for m in ledger if m.get("missingness_biased")]
+    increased = [m["modality"] for m in ledger
+                 if _incremental_assessment(m).get("status") == "increased_held_out_performance"]
+    reduced = [m["modality"] for m in ledger
+               if _incremental_assessment(m).get("status") == "reduced_held_out_performance"]
+    unresolved = [m["modality"] for m in ledger
+                  if _incremental_assessment(m).get("status") == "unresolved"]
 
-    # Bands share GAIN_EPS/GAIN_STRONG with the headline card and summary flags, so
-    # the same number never reads "Marginally" here and "does not beat" below.
     if single:
         q1 = ("Single-layer honesty check", "•", "answer--neutral")
-    elif isinstance(gain, (int, float)) and gain >= GAIN_STRONG:
-        q1 = ("Yes — fusion adds signal", "✚", "answer--added")
-    elif isinstance(gain, (int, float)) and gain > GAIN_EPS:
-        q1 = ("Yes — a modest gain", "△", "answer--mid")
+    elif increased:
+        q1 = ("Increased held-out performance", "✚", "answer--added")
+    elif reduced:
+        q1 = ("Reduced held-out performance", "▲", "answer--warn")
+    elif unresolved:
+        q1 = ("Incremental effect unresolved", "△", "answer--mid")
     else:
-        q1 = ("Incremental benefit is inconclusive", "•", "answer--neutral")
+        q1 = ("Contribution comparison unavailable", "•", "answer--neutral")
 
     if leak or rating_status == "high":
-        q2 = ("No — serious flags", "▲", "answer--warn")
+        q2 = ("Raised diagnostic flags", "▲", "answer--warn")
     elif rating_status == "moderate":
-        q2 = ("With caveats", "△", "answer--mid")
+        q2 = ("Raised diagnostic flags", "△", "answer--mid")
     else:
-        q2 = ("Yes — clean", "✓", "answer--ok")
+        q2 = ("No raised diagnostic flags", "•", "answer--neutral")
 
     if leak:
         q3 = ("Re-check that no subject or group is split across train and test (leakage)", "▲", "answer--warn")
@@ -121,21 +203,19 @@ def _answer_strip(util: dict, rating_status: str) -> list[dict]:
         q3 = (f"Distrust {confounded[0]}: its signal tracks the processing batch, not biology", "▲", "answer--warn")
     elif miss_biased:
         q3 = (f"Investigate outcome-linked missingness in {miss_biased[0]} before trusting any gain", "▲", "answer--warn")
-    elif single and useful:
-        q3 = ("This layer predicts on its own — validate externally", "✓", "answer--ok")
     elif single:
-        q3 = ("This layer does not beat chance here", "•", "answer--neutral")
-    elif dead:
-        q3 = (f"Consider dropping {dead[0]}", "△", "answer--mid")
-    elif useful and isinstance(gain, (int, float)) and gain > GAIN_EPS:
-        q3 = ("Adopt the fusion model", "✓", "answer--ok")
+        q3 = ("Interpret standalone performance descriptively", "•", "answer--neutral")
+    elif increased:
+        q3 = (f"Interpret {increased[0]}'s layer-specific contrast within this locked analysis", "•", "answer--neutral")
+    elif reduced:
+        q3 = (f"Consider the model without {reduced[0]}", "△", "answer--mid")
     else:
-        q3 = ("Treat the descriptive best model cautiously", "•", "answer--neutral")
+        q3 = ("Interpret the declared reference model within this locked analysis", "•", "answer--neutral")
 
-    q1_label = "What kind of check is this?" if single else "Does combining layers help?"
+    q1_label = "What kind of check is this?" if single else "What do layer comparisons show?"
     return [
         {"q": q1_label, "a": q1[0], "icon": q1[1], "cls": q1[2]},
-        {"q": "Is the data trustworthy?", "a": q2[0], "icon": q2[1], "cls": q2[2]},
+        {"q": "What did diagnostics flag?", "a": q2[0], "icon": q2[1], "cls": q2[2]},
         {"q": "What should you do next?", "a": q3[0], "icon": q3[1], "cls": q3[2]},
     ]
 
@@ -171,19 +251,26 @@ def _trust_checklist(audit: dict, util: dict, missing: dict, batch: dict,
     # Grouping status: whether samples were keyed to independent subjects. The
     # controls above cannot detect group leakage, so surface it explicitly rather
     # than leaving the CLI's pseudoreplication warning invisible on the dashboard.
-    grouped = bool((audit.get("config", {}).get("clinical") or {}).get("group"))
-    n_groups = ds.get("n_groups")
-    if grouped and n_groups:
-        gnote = (f"a group id is set; cross-validation keeps each of the {n_groups} groups wholly in "
-                 "train or test, so repeated samples from one subject cannot leak across the split.")
-        gstatus = "pass"
+    assessments = [
+        (_standalone_assessment(row) if util.get("single_modality") else _incremental_assessment(row))
+        for row in util.get("modality_ledger", [])
+    ]
+    contracts = [assessment.get("resampling_contract") for assessment in assessments
+                 if isinstance(assessment.get("resampling_contract"), dict)]
+    units = {contract.get("unit") for contract in contracts}
+    if contracts and units == {"group"}:
+        group_note = ("The assessment contract declares group-level resampling. This is a reported design "
+                      "property; inspect the evaluation record for the group definition and split details.")
+        group_status = "pass"
+    elif contracts and units == {"sample"} and all(contract.get("sample_independence_declared") for contract in contracts):
+        group_note = ("The assessment contract declares rows independent and uses sample-level resampling. "
+                      "Confirm that repeated or related samples are absent before relying on this declaration.")
+        group_status = "caution"
     else:
-        gnote = ("no group column was set — every row is treated as an independent sample. If your data "
-                 "has repeated samples per subject (aliquots, timepoints), set a group id, or scores can "
-                 "be inflated by pseudoreplication that the shuffled-target control cannot detect.")
-        gstatus = "caution"
-    checks.append({"label": "Samples keyed to independent subjects",
-                   "status": gstatus, "note": gnote})
+        group_note = ("Not declared in this public report. The report cannot confirm whether repeated samples "
+                      "were kept together across resampling; inspect the run configuration and evaluation record.")
+        group_status = "caution"
+    checks.append({"label": "Independent-unit contract", "status": group_status, "note": group_note})
 
     if n is not None:
         # key on independent units (groups), not raw rows — replicates of one
@@ -193,7 +280,7 @@ def _trust_checklist(audit: dict, util: dict, missing: dict, batch: dict,
         eff = n_groups if n_groups else n
         unit = "independent groups" if n_groups else "samples"
         ss = "pass" if eff >= 40 else "caution"
-        checks.append({"label": "Adequate sample size", "status": ss,
+        checks.append({"label": "Sample-count context", "status": ss,
                        "note": (f"{n} aligned samples"
                                 + (f" across {n_groups} independent groups." if n_groups else ".")
                                 if ss == "pass"
@@ -210,16 +297,16 @@ def _trust_checklist(audit: dict, util: dict, missing: dict, batch: dict,
                                     else f"imbalanced (smallest {min(vals)}, largest {max(vals)}); classes are uneven, so judge the rare class with AUPRC and balanced accuracy (both defined in the glossary), not overall accuracy.")})
 
     conf = [m["modality"] for m in util.get("modality_ledger", []) if m.get("batch_confounded")]
-    checks.append({"label": "No batch confounding",
-                   "status": "caution" if conf else "pass",
-                   "note": (f"in {', '.join(conf)}, processing batch lines up with the outcome, so their apparent signal may be a technical artifact, not biology — treat it as untrustworthy."
-                            if conf else "no mapped layer met this batch-confounding flag; this is not evidence that all batch effects are absent.")})
+    checks.append({"label": "Batch-confounding flags",
+                   "status": "caution" if conf else "caution",
+                   "note": (f"Raised for {', '.join(conf)}; processing batch lines up with the outcome, so apparent signal may be technical."
+                            if conf else "No batch-confounding flag was raised by the configured checks; this does not establish that batch effects are absent.")})
 
     flagged = [t for t in missing.get("tests", []) if t.get("flag")]
-    checks.append({"label": "No target-linked missingness",
-                   "status": "caution" if flagged else "pass",
-                   "note": (f"{len(flagged)} test(s) show that where a value is missing lines up with the outcome, which can fake a signal (missing-not-at-random bias)."
-                            if flagged else "missing values look unrelated to the outcome.")})
+    checks.append({"label": "Target-linked missingness flags",
+                   "status": "caution" if flagged else "caution",
+                   "note": (f"{len(flagged)} test(s) show that where a value is missing lines up with the outcome, which can affect apparent performance."
+                            if flagged else "No target-linked missingness flag was raised by the configured checks; this does not establish missingness is unrelated to the outcome.")})
 
     for c in checks:
         c["icon"] = ic[c["status"]]
@@ -234,10 +321,10 @@ FLOWCHART_STEPS = [
     ("Alignment & masking", "sample intersection, drop missing endpoints, NaN masks", COBALT),
     ("Provenance SHA-256", "immutable hash of sample index + feature footprints", TEAL),
     ("Cost / runtime estimate", "N x P_m, K folds, E epochs, device, cores", AMBER),
-    ("Group-aware CV", "impute + scale + select fitted inside train folds only (leakage-safe)", COBALT),
-    ("Fusion benchmarks", "classical concat + masked global-pooling neural network", SLATE),
-    ("Leakage-safe XAI", "permutation importance on held-out folds", SLATE),
-    ("Utility & redundancy audit", "marginal gain, CKA, batch/missingness/control gates", TEAL),
+    ("Locked resampling", "groups where configured; preprocessing fitted within training partitions", COBALT),
+    ("Fusion models", "classical fusion; optional neural model when enabled", SLATE),
+    ("Held-out feature attribution", "optional permutation importance for model inspection", SLATE),
+    ("Paired layer ledger", "paired contrasts, descriptive CKA, advisory diagnostics", TEAL),
     ("Dual reporting", "clinical + research dashboard, multi-format docs", COBALT),
 ]
 
@@ -270,7 +357,7 @@ def flowchart_svg(width: int = 900) -> str:
         )
         parts.append(
             f'<text x="{cx}" y="{y + 46}" text-anchor="middle" font-size="12.5" '
-            f'font-family="IBM Plex Mono, monospace" fill="#4A5568">{html.escape(sub)}</text>'
+            f'font-family="{PLOTLY_FONT}" fill="{INK}">{html.escape(sub)}</text>'
         )
         if i < n - 1:
             ay = y + box_h
@@ -341,6 +428,8 @@ def fig_performance(models: dict, include_js: bool, single: bool = False) -> str
     rows = [r for r in rows if r.get("primary") is not None]
     if single:  # the ::FUSION row is the single layer refit on identical data — drop the duplicate
         rows = [r for r in rows if not (r["name"].endswith("::FUSION") or r["name"] == "neural::FUSION")]
+    if not rows:
+        return "<p class='muted'>No model comparison available.</p>"
     rows.sort(key=lambda r: r["primary"], reverse=True)
     groups: dict[str, dict[str, list]] = {}
     for r in rows:
@@ -363,16 +452,18 @@ def fig_performance(models: dict, include_js: bool, single: bool = False) -> str
         fig.add_bar(name=label, x=g["x"], y=g["y"], marker_color=g["c"],
                     error_y=dict(type="data", symmetric=False, array=g["eplus"],
                                  arrayminus=g["eminus"], visible=True, color="#64748B"))
-    chance = 0.5 if models.get("task") == "classification" else 0.0
+    classification = models.get("task") == "classification"
+    chance = 0.5 if classification else 0.0
+    reference_label = "random-ranking reference" if classification else "outcome-mean reference (R²=0)"
     # Label the chance line just OUTSIDE the plot on the right, at the line height, so
     # it never lands on a bar. The inline "top left" label used to collide with the
     # tallest (left-most, best-scoring) bars.
     fig.add_hline(y=chance, line_dash="dot", line_color="#94A3B8")
     fig.add_annotation(xref="paper", x=1.0, xanchor="left", xshift=6,
                        yref="y", y=chance, yanchor="middle",
-                       text="chance", showarrow=False,
-                       font=dict(size=12, color="#94A3B8"))
-    _base_layout(fig, ytitle=metric.upper())
+                       text=reference_label, showarrow=False,
+                       font=dict(size=12, color=INK))
+    _base_layout(fig, ytitle=_metric_label(metric))
     fig.update_layout(xaxis_tickangle=-40, barmode="group",
                       margin=dict(l=60, r=72, t=20, b=90))   # room for the outside label
     return _fig_html(fig, include_js)
@@ -443,22 +534,36 @@ def fig_marginal_gain(util: dict, include_js: bool) -> str:
     ledger = util.get("modality_ledger", [])
     if not ledger:
         return "<p class='muted'>No modality ledger available.</p>"
-    x = [m["modality"] for m in ledger]
-    y = [m.get("foldmean_marginal_gain") or 0.0 for m in ledger]
-    # Colour by significance, not just sign: a positive point estimate that fails
-    # the paired test is amber (not the confident cobalt), matching the ledger verdict.
-    colors = []
-    for m, v in zip(ledger, y):
-        p = m.get("foldmean_marginal_gain_p")
-        sig = (p is not None) and (v > GAIN_EPS) and (p < GAIN_ALPHA)
-        colors.append(COBALT if sig else (AMBER if v > GAIN_EPS else VERMILLION))
+    x = ["<br>".join(textwrap.wrap(str(m["modality"]), width=18, break_long_words=True,
+                                    break_on_hyphens=False)) for m in ledger]
+    assessments = [_incremental_assessment(m) for m in ledger]
+    y = [a.get("estimate") if isinstance(a.get("estimate"), (int, float)) else 0.0
+         for a in assessments]
+    palette = {
+        "increased_held_out_performance": TEAL,
+        "reduced_held_out_performance": VERMILLION,
+        "unresolved": AMBER,
+        "unavailable": SLATE,
+        "not_applicable": SLATE,
+    }
+    colors = [palette.get(a.get("status"), SLATE) for a in assessments]
+    hover = [
+        (f"{m['modality']}: { _INCREMENTAL_LABELS.get(a.get('status'), 'Unavailable') }"
+         f"<br>paired held-out difference: {a.get('estimate'):+.4f}"
+         if isinstance(a.get("estimate"), (int, float)) else
+         f"{m['modality']}: { _INCREMENTAL_LABELS.get(a.get('status'), 'Unavailable') }")
+        + f"<br>ordinary 95% interval: {_interval_text(a.get('ordinary_95_ci'))}"
+        + f"<br>family decision interval: {_interval_text(a.get('decision_ci'))}"
+        for m, a in zip(ledger, assessments)
+    ]
     fig = go.Figure(go.Bar(x=x, y=y, marker_color=colors,
-                           customdata=[m.get("foldmean_marginal_gain_p") for m in ledger],
-                           hovertemplate="%{x}: fold-mean gain %{y:+.3f}<br>corrected paired p = %{customdata:.3f}<extra></extra>"))
+                           customdata=hover, hovertemplate="%{customdata}<extra></extra>"))
     fig.add_hline(y=0, line_color="#94A3B8")
-    _base_layout(fig, ytitle="mean outer-fold gain (fusion − leave-one-out)")
-    fig.update_layout(showlegend=False)
-    return _fig_html(fig, include_js)
+    _base_layout(fig, ytitle="paired held-out score difference (full − without layer)")
+    fig.update_layout(showlegend=False, margin=dict(l=60, r=30, t=20, b=110))
+    fig.update_xaxes(tickangle=0, automargin=True)
+    return ("<p class='muted'>Point estimates are shown here. Ordinary and family decision intervals "
+            "are listed in the layer ledger.</p>" + _fig_html(fig, include_js))
 
 
 def fig_attribution(models: dict, include_js: bool, display_top_k: int = 20) -> str:
@@ -546,11 +651,11 @@ def _model_rows(models: dict, single: bool = False) -> tuple[list[str], list[lis
     # numbers must be visible, not only in audit.json.
     classification = models.get("task") == "classification"
     if classification:
-        header = ["model", "type", metric, "AUPRC", "balanced acc", "95% CI",
+        header = ["model", "type", _metric_label(metric), "AUPRC", "balanced acc", "95% CI",
                   "n_features", "modalities", "folds", "split_plan_status", "control_execution_receipt"]
         numeric = {2, 3, 4, 6}
     else:
-        header = ["model", "type", metric, "95% CI", "n_features", "modalities", "folds",
+        header = ["model", "type", _metric_label(metric), "95% CI", "n_features", "modalities", "folds",
                   "split_plan_status", "control_execution_receipt"]
         numeric = {2, 4}
     rows = []
@@ -587,7 +692,7 @@ def _build_dome(audit: dict) -> dict:
     neural_on = bool(models.get("neural", {}).get("enabled"))
     single = bool(audit.get("utility", {}).get("single_modality"))
     if single:
-        regimes = "single modality (no fusion; standalone leakage-safe benchmark)"
+        regimes = "single modality (no fusion; descriptive standalone assessment)"
     else:
         regimes = "early (feature concatenation)"
         if neural_on:
@@ -612,7 +717,6 @@ def _build_dome(audit: dict) -> dict:
             "target": (cfg.get("clinical") or {}).get("target"),
             "task": ds.get("task"),
             "organism": meta.get("organism", "unspecified"),
-            "provenance_sha256": meta.get("provenance_hash"),
             "missing_values": miss_desc,
             "samples_dropped": ds.get("n_dropped", 0),
         },
@@ -620,7 +724,7 @@ def _build_dome(audit: dict) -> dict:
             "hyperparameter_tuning": "none (library defaults)",
             "feature_selection": fsel_desc,
             "preprocessing": "median-impute -> variance-filter -> standardize, fitted inside "
-                             "training folds only (leakage-safe)",
+                             "the applicable training partition only",
             "seed": meta.get("seed"),
         },
         "model": {
@@ -629,15 +733,15 @@ def _build_dome(audit: dict) -> dict:
             "primary_metric": models.get("primary_metric"),
         },
         "evaluation": {
-            "cross_validation": f"group-aware {actual_k}-fold cross-validation "
-                                f"with leakage-safe in-fold preprocessing",
+            "cross_validation": f"{actual_k}-fold resampling; the public assessment contract records the unit "
+                                "and preprocessing is fitted within training partitions",
             "uncertainty": f"{resample} bootstrap 95% confidence interval on the primary metric "
                            f"({cvc.get('n_bootstrap')} resamples)",
             "controls": controls_desc,
             "calibration": "Brier + ECE + reliability curve (binary classification)"
                            if util.get("calibration") else "not applicable",
             "limitations": [
-                "Internal group-aware cross-validation only; no external/independent validation.",
+                "Internal resampling only; no external or independent validation.",
                 "No hyperparameter tuning.",
                 "Permutation importance is unconditional (biased under feature collinearity).",
                 "Research use only; not a diagnostic device.",
@@ -699,6 +803,9 @@ def _model_card_md(audit: dict) -> str:
     env = audit.get("environment", {})
     best = util.get("best_model", {})
     mods = ", ".join(f"{m['name']} ({m['n_features']})" for m in ds.get("modalities", []))
+    assessments = [_incremental_assessment(row) for row in util.get("modality_ledger", [])]
+    status_counts = {status: sum(a.get("status") == status for a in assessments)
+                     for status in _INCREMENTAL_LABELS}
     lines = [
         f"# Model card — {meta.get('run_name', 'omicau audit')}",
         "",
@@ -716,11 +823,16 @@ def _model_card_md(audit: dict) -> str:
         f"- Provenance SHA-256: `{meta.get('provenance_hash')}`",
         "",
         "## Evaluation",
-        f"- {'Best model' if util.get('single_modality') else 'Best fusion model'}: "
-        f"**{best.get('name')}** — {util.get('primary_metric', 'score')} {best.get('primary')}",
-        "- Group-aware cross-validation with leakage-safe in-fold preprocessing; the primary "
-        "metric is reported with a bootstrap 95% confidence interval.",
+        f"- {'Declared reference single-layer model' if util.get('single_modality') else 'Declared reference fusion model'}: "
+        f"**{best.get('name')}** — {_metric_label(util.get('primary_metric', 'score'))} {best.get('primary')}",
+        "- The public assessment contract records the resampling unit; preprocessing is fitted "
+        "within the applicable training partition and the primary metric has bootstrap uncertainty.",
         "- Leakage controls (shuffled target/features/noise); calibration for binary classification.",
+        "- Standalone layer scores are descriptive. Contribution categories use the paired held-out "
+        "full-minus-without-layer contrast and its family decision interval; diagnostics are reported separately.",
+        "- Contribution categories: " + ", ".join(
+            f"{_INCREMENTAL_LABELS[k].lower()}={v}" for k, v in status_counts.items() if v
+        ),
         "",
         "## Caveats and limitations",
         "- No external validation and no hyperparameter tuning.",
@@ -732,6 +844,59 @@ def _model_card_md(audit: dict) -> str:
         f"Python {env.get('python', '')} · torch {env.get('torch', '')}.",
     ]
     return "\n".join(lines)
+
+
+def _ledger_csv_rows(ledger: list[dict[str, Any]]) -> tuple[list[str], list[list[Any]]]:
+    """Export the canonical v2 fields while retaining legacy scalar columns.
+
+    The two public CSV names intentionally carry identical rows for compatibility.
+    Consumers should read the v2 status and intervals; legacy fields remain only
+    so archived downstream scripts do not silently lose values.
+    """
+    header = [
+        "modality", "n_features", "ledger_schema_version",
+        "standalone_status", "standalone_estimate", "standalone_ci_low", "standalone_ci_high",
+        "standalone_resampling_unit", "standalone_n_valid_resamples", "standalone_n_attempts",
+        "standalone_reason", "incremental_status", "incremental_estimate",
+        "incremental_ordinary_95_ci_low", "incremental_ordinary_95_ci_high",
+        "incremental_decision_ci_low", "incremental_decision_ci_high",
+        "incremental_family_size", "incremental_family_alpha",
+        "incremental_resampling_unit", "incremental_n_valid_resamples", "incremental_n_attempts",
+        "incremental_reason", "batch_structured", "batch_confounded", "missingness_biased",
+        "leakage_warning", "redundancy_cka", "similarity_with",
+        "legacy_standalone", "legacy_foldmean_marginal_gain", "legacy_foldmean_marginal_gain_p",
+        "legacy_pooled_oof_marginal_gain", "legacy_pooled_oof_gain_ci_low",
+        "legacy_pooled_oof_gain_ci_high", "legacy_verdict", "legacy_fields_deprecated",
+    ]
+    rows: list[list[Any]] = []
+    for row in ledger:
+        standalone = _standalone_assessment(row)
+        incremental = _incremental_assessment(row)
+        standalone_ci = standalone.get("ordinary_95_ci") or {}
+        ordinary_ci = incremental.get("ordinary_95_ci") or {}
+        decision_ci = incremental.get("decision_ci") or {}
+        family = incremental.get("multiplicity_family") or {}
+        flags = row.get("diagnostic_flags") or {}
+        legacy_ci = row.get("pooled_oof_marginal_gain_ci") or {}
+        rows.append([
+            row.get("modality"), row.get("n_features"), row.get("ledger_schema_version", 1),
+            standalone.get("status"), standalone.get("estimate"), standalone_ci.get("lower"),
+            standalone_ci.get("upper"), standalone.get("resampling_unit"),
+            standalone.get("n_valid_resamples"), standalone.get("n_attempts"), standalone.get("reason"),
+            incremental.get("status"), incremental.get("estimate"), ordinary_ci.get("lower"),
+            ordinary_ci.get("upper"), decision_ci.get("lower"), decision_ci.get("upper"),
+            family.get("family_size"), family.get("family_alpha"), incremental.get("resampling_unit"),
+            incremental.get("n_valid_resamples"), incremental.get("n_attempts"), incremental.get("reason"),
+            flags.get("batch_structured", row.get("batch_structured")),
+            flags.get("batch_confounded", row.get("batch_confounded")),
+            flags.get("missingness_biased", row.get("missingness_biased")),
+            flags.get("leakage_warning", False), row.get("redundancy_max_cka"), row.get("similarity_with"),
+            row.get("standalone_primary"), row.get("foldmean_marginal_gain"),
+            row.get("foldmean_marginal_gain_p"), row.get("pooled_oof_marginal_gain"),
+            legacy_ci.get("low"), legacy_ci.get("high"), row.get("verdict"),
+            row.get("legacy_fields_deprecated", row.get("ledger_schema_version") == 2),
+        ])
+    return header, rows
 
 
 def build_report(audit: dict, out_dir: str | Path, config=None) -> dict[str, Path]:
@@ -764,21 +929,7 @@ def build_report(audit: dict, out_dir: str | Path, config=None) -> dict[str, Pat
     _write_csv(out / "model_metrics.csv", mheader, mrows)
     assets["model_metrics"] = out / "model_metrics.csv"
 
-    led_header = [
-        "modality", "n_features", "standalone", "foldmean_marginal_gain", "foldmean_marginal_gain_p",
-        "pooled_oof_marginal_gain", "pooled_oof_gain_ci_low", "pooled_oof_gain_ci_high", "gain_status",
-        "gain_eligible", "paired_resampling_unit", "redundancy_cka",
-        "similarity_with", "batch_column", "batch_confounded", "missingness_biased", "verdict",
-    ]
-    led_rows = [[m["modality"], m.get("n_features"), m.get("standalone_primary"),
-                 m.get("foldmean_marginal_gain"), m.get("foldmean_marginal_gain_p"),
-                 m.get("pooled_oof_marginal_gain"), (m.get("pooled_oof_marginal_gain_ci") or {}).get("low"),
-                 (m.get("pooled_oof_marginal_gain_ci") or {}).get("high"), m.get("marginal_gain_status"),
-                 (m.get("marginal_gain_eligibility") or {}).get("eligible"),
-                 (m.get("pooled_oof_marginal_gain_ci") or {}).get("resampling_unit"), m.get("redundancy_max_cka"),
-                 m.get("similarity_with"), m.get("batch_column"), m.get("batch_confounded"),
-                 m.get("missingness_biased"), m.get("verdict")]
-                for m in util.get("modality_ledger", [])]
+    led_header, led_rows = _ledger_csv_rows(util.get("modality_ledger", []))
     _write_csv(out / "modality_ledger.csv", led_header, led_rows)
     assets["modality_ledger"] = out / "modality_ledger.csv"
     _write_csv(out / "verdict_ledger.csv", led_header, led_rows)
@@ -795,17 +946,30 @@ def build_report(audit: dict, out_dir: str | Path, config=None) -> dict[str, Pat
     assets["missingness_tests"] = out / "missingness_tests.csv"
 
     # -- figures ----------------------------------------------------------- #
-    perf_html = fig_performance(models, include_js=True, single=_single)   # first figure bundles plotly.js
-    cka_html = fig_cka(util, include_js=False)
-    cal_html = fig_calibration(util, include_js=False)
-    miss_html = fig_missingness(missing, include_js=False)
-    gain_html = fig_marginal_gain(util, include_js=False)
+    # Each chart fragment executes immediately when the browser parses it. The
+    # performance chart is usually first, but a report with no fitted model rows
+    # has no performance fragment to bundle Plotly.js. Include the library in the
+    # first actual chart instead, preserving an offline self-contained report.
+    perf_html = fig_performance(models, include_js=True, single=_single)
+    plotly_loaded = "Plotly.newPlot" in perf_html
+    cka_html = fig_cka(util, include_js=not plotly_loaded)
+    plotly_loaded = plotly_loaded or "Plotly.newPlot" in cka_html
+    cal_html = fig_calibration(util, include_js=not plotly_loaded)
+    plotly_loaded = plotly_loaded or "Plotly.newPlot" in cal_html
+    miss_html = fig_missingness(missing, include_js=not plotly_loaded)
+    plotly_loaded = plotly_loaded or "Plotly.newPlot" in miss_html
+    gain_html = fig_marginal_gain(util, include_js=not plotly_loaded)
+    plotly_loaded = plotly_loaded or "Plotly.newPlot" in gain_html
     display_top_k = _display_top_k(audit)
-    attr_html = fig_attribution(models, include_js=False, display_top_k=display_top_k)
+    attr_html = fig_attribution(models, include_js=not plotly_loaded, display_top_k=display_top_k)
 
     # -- tables ------------------------------------------------------------ #
     model_table = render_table("tbl-models", mheader, mrows, numeric_cols=mnum)
-    ledger_table = render_table("tbl-ledger", led_header, led_rows, numeric_cols={1, 2, 3, 4, 5, 6, 7, 11})
+    ledger_table = render_table(
+        "tbl-ledger", led_header, led_rows,
+        numeric_cols={1, 2, 4, 5, 6, 8, 9, 12, 13, 14, 15, 16, 17, 18, 20, 21, 27,
+                      29, 30, 31, 32, 33, 34},
+    )
     diag_table = render_table("tbl-diag", diag_header, diag_rows, numeric_cols={3, 4, 5})
     attr_rows, attr_header = _attr_rows(models, display_top_k=display_top_k)
     attr_table = render_table("tbl-attr", attr_header, attr_rows, numeric_cols={2, 3})
@@ -818,18 +982,34 @@ def build_report(audit: dict, out_dir: str | Path, config=None) -> dict[str, Pat
     summary = audit.get("summary", {})
     rating_status = _rating_status(summary.get("data_hygiene_rating", ""))
     answers = _answer_strip(util, rating_status)
-    ledger_items = [
-        {**m, "badge": _badge(_verdict_status(m.get("verdict", "")))}
-        for m in util.get("modality_ledger", [])
-    ]
+    ledger_items = []
+    for m in util.get("modality_ledger", []):
+        incremental = _incremental_assessment(m)
+        standalone = _standalone_assessment(m)
+        flags = m.get("diagnostic_flags") or {}
+        flag_names = [name.replace("_", " ") for name, active in {
+            "batch confounded": flags.get("batch_confounded", m.get("batch_confounded")),
+            "missingness biased": flags.get("missingness_biased", m.get("missingness_biased")),
+            "leakage warning": flags.get("leakage_warning", False),
+        }.items() if active]
+        ledger_items.append({
+            **m,
+            "badge": _badge(_verdict_status(m)),
+            "standalone": standalone,
+            "incremental": incremental,
+            "incremental_label": _INCREMENTAL_LABELS.get(incremental.get("status"), "Unavailable"),
+            "ordinary_ci_text": _interval_text(incremental.get("ordinary_95_ci")),
+            "decision_ci_text": _interval_text(incremental.get("decision_ci")),
+            "recommendation_v2": _ledger_recommendation(m, incremental),
+            "absolute_score_note": _absolute_score_note(incremental, util.get("task")),
+            "diagnostic_text": ", ".join(flag_names) if flag_names else "no diagnostic flag",
+        })
 
     checklist = _trust_checklist(audit, util, missing, batch, control_max)
     ctx = {
         "audit": public_audit,
         "control_max": control_max,
         "checklist": checklist,
-        "gain_eps": GAIN_EPS,
-        "gain_strong": GAIN_STRONG,
         "dashboard_css": DASHBOARD_CSS,
         "font_faces": FONT_FACES,
         "tooltip_js": TOOLTIP_JS,
@@ -942,7 +1122,6 @@ _TEMPLATE = r"""<!doctype html>
   <div class="brand">omicau · omics audit</div>
   <h1>{{ meta.run_name or "Multi-omic data audit" }}</h1>
   <div class="sub">{{ dataset.task }} · {{ dataset.n_samples }} samples · {{ dataset.modalities|length }} modalities · {{ meta.organism or 'unspecified' }} · seed {{ meta.seed }}</div>
-  <div class="hashline">provenance SHA-256: {{ meta.provenance_hash }}</div>
 </header>
 
 <div class="tabs" role="tablist" aria-label="Report views">
@@ -983,18 +1162,13 @@ _TEMPLATE = r"""<!doctype html>
   <section>
     <span class="eyebrow">Headline numbers</span>
     <div class="grid cards">
-      <div class="card card--optimal"><div class="k">{% if util.single_modality %}Best model{% else %}Best fusion{% endif %} {{ models.primary_metric }} {% if models.task=='classification' %}{{ tip('AUROC') }}{% else %}{{ tip('R²') }}{% endif %}</div>
+      <div class="card card--neutral"><div class="k">{% if util.single_modality %}Declared reference single-layer score{% else %}Declared reference fusion {{ 'AUROC' if models.task=='classification' else 'R²' }}{% endif %}</div>
         <div class="v">{{ '%.3f'|format(util.best_model.primary) if util.best_model and util.best_model.primary is not none else '—' }}</div>
-        <div class="plain">Higher is better; chance is about {{ '%.1f'|format(util.chance_level) }}.</div></div>
+        <div class="plain">Observed under the declared reference analysis; {% if models.task=='regression' %}R²=0 is the conventional outcome-mean reference, not a random-chance baseline.{% else %}AUROC 0.5 is the random-ranking reference.{% endif %} It does not determine a layer category.</div></div>
       {% if util.single_modality %}
-      <div class="card card--neutral"><div class="k">Signal over chance</div>
+      <div class="card card--neutral"><div class="k">{% if models.task=='regression' %}Score relative to R²=0 reference{% else %}Score relative to AUROC 0.5{% endif %}</div>
         <div class="v {{ 'pos' if (util.best_model.primary or 0) > util.chance_level else 'neg' }}">{{ '%+.3f'|format(util.best_model.primary - util.chance_level) if util.best_model and util.best_model.primary is not none else '—' }}</div>
-        <div class="plain">The one layer's score above chance (single-modality run — no fusion to compare).</div></div>
-      {% else %}
-      <div class="card {{ 'card--positive' if (util.fusion_gain_over_best_single or 0) > gain_eps else 'card--neutral' }}"><div class="k">Fusion gain {{ tip('Fusion gain (leave-one-out)') }}</div>
-        <div class="v {{ 'pos' if (util.fusion_gain_over_best_single or 0) > gain_eps else '' }}">{{ '%+.3f'|format(util.fusion_gain_over_best_single) if util.fusion_gain_over_best_single is not none else '—' }}</div>
-        {% if util.fusion_gain_ci %}<div class="plain mono" style="font-size:12px">95% CI {{ '%+.3f'|format(util.fusion_gain_ci.low) }} to {{ '%+.3f'|format(util.fusion_gain_ci.high) }}{% if util.fusion_gain_ci.low is not none and util.fusion_gain_ci.high is not none %}{% if util.fusion_gain_ci.low <= 0 and util.fusion_gain_ci.high >= 0 %} · spans zero{% elif util.fusion_gain_ci.high < 0 %} · favors the single layer{% endif %}{% endif %}</div>{% endif %}
-        <div class="plain">How much combining layers beats the best single layer.</div></div>
+        <div class="plain">The declared reference score relative to {% if models.task=='regression' %}the conventional outcome-mean reference{% else %}the random-ranking reference{% endif %}; one layer provides no leave-one-layer-out comparison.</div></div>
       {% endif %}
       <div class="card"><div class="k">Samples aligned</div>
         <div class="v">{{ dataset.n_samples }}</div>
@@ -1013,18 +1187,21 @@ _TEMPLATE = r"""<!doctype html>
         <span class="ledger-name">{{ m.modality }}</span>
         <span class="badge {{ m.badge.css_class }}">{{ m.badge.icon }} {{ m.badge.label }}</span>
       </div>
-      <div class="ledger-stats">{{ m.n_features }} features · standalone {{ '%.3f'|format(m.standalone_primary) if m.standalone_primary is not none else '—' }} · mean outer-fold gain {{ tip('Marginal gain') }} {{ '%+.3f'|format(m.foldmean_marginal_gain) if m.foldmean_marginal_gain is not none else '—' }}{% if m.similarity_with %} · similarity with {{ m.similarity_with }} (CKA {{ tip('Redundancy (CKA)') }} {{ '%.2f'|format(m.redundancy_max_cka) }}){% endif %}</div>
-      <div class="ledger-rec">{{ m.recommendation }}</div>
+      <div class="ledger-verdict">{{ m.incremental_label }}</div>
+      <div class="ledger-stats">{{ m.n_features }} features · standalone score {{ '%.4f'|format(m.standalone.estimate) if m.standalone.estimate is not none else '—' }} (descriptive){% if m.incremental.estimate is not none %} · paired held-out difference {{ '%+.4f'|format(m.incremental.estimate) }}{% endif %}{% if m.similarity_with %} · similarity with {{ m.similarity_with }} (CKA {{ tip('Redundancy (CKA)') }} {{ '%.2f'|format(m.redundancy_max_cka) }}){% endif %}</div>
+      <div class="ledger-stats">ordinary 95% interval {{ m.ordinary_ci_text }} · family decision interval {{ m.decision_ci_text }} · diagnostics: {{ m.diagnostic_text }}</div>
+      <div class="ledger-rec">{{ m.recommendation_v2 }}</div>
+      {% if m.absolute_score_note %}<div class="ledger-rec">{{ m.absolute_score_note }}</div>{% endif %}
     </div>
     {% endfor %}
   </section>
 
   <section>
-    <h2>Data-hygiene flags</h2>
+    <h2>Raised data-hygiene flags</h2>
     <ul class="flags">
       {% set allflags = (missing.get('flags',[]) + batch.get('flags',[]) + util.get('summary_flags',[])) %}
       {% if allflags %}{% for f in allflags %}<li>{{ f }}</li>{% endfor %}
-      {% else %}<li class="clean">No missingness-bias or batch-effect flags raised.</li>{% endif %}
+      {% else %}<li>No data-hygiene flag was raised by the configured checks; this does not establish the absence of bias.</li>{% endif %}
     </ul>
   </section>
 
@@ -1047,7 +1224,7 @@ _TEMPLATE = r"""<!doctype html>
 <div id="research" class="panel" role="tabpanel" aria-labelledby="tab-research">
   <section>
     <h2>How this audit was computed</h2>
-    <p class="rc-sub">The end-to-end pipeline, in order. Every model is evaluated under group-aware cross-validation with all preprocessing (imputation, variance filtering, scaling, and optional feature selection) fitted inside the training folds only, so no validation sample informs training.</p>
+    <p class="rc-sub">The end-to-end pipeline, in order. The public assessment contract records the resampling unit. Imputation, variance filtering, scaling, and optional feature selection are fitted within the applicable training partition only.</p>
     <div class="figure">{{ flowchart_svg|safe }}</div>
   </section>
 
@@ -1108,7 +1285,7 @@ _TEMPLATE = r"""<!doctype html>
   {% if util.subgroups %}
   <section>
     <h2>Per-site performance</h2>
-    <p class="rc-sub">The best model's {{ util.subgroups.metric|upper }} re-scored within each level of <code>{{ util.subgroups.by }}</code> (the mapped batch/site column) — a global metric can hide performance that differs across sites. If <code>{{ util.subgroups.by }}</code> encodes a demographic or protected attribute, read this as a subgroup-fairness check (cf. Obermeyer et al., <em>Science</em> 2019). Strata below n={{ util.subgroups.min_stratum }} are shown but not scored (too few samples for a stable estimate). Each estimate carries a bootstrap 95% CI.</p>
+    <p class="rc-sub">The declared reference model's {{ 'R²' if util.subgroups.metric|lower in ['r2', 'r²'] else util.subgroups.metric|upper }} re-scored within each level of <code>{{ util.subgroups.by }}</code> (the mapped batch/site column) — a global metric can hide performance that differs across sites. If <code>{{ util.subgroups.by }}</code> encodes a demographic or protected attribute, read this as a subgroup-fairness check (cf. Obermeyer et al., <em>Science</em> 2019). Strata below n={{ util.subgroups.min_stratum }} are shown but not scored (too few samples for a stable estimate). Each estimate carries a bootstrap 95% CI.</p>
     <div class="preview-table"><table>
       <tr><th>{{ util.subgroups.by }}</th><th>n</th><th>{{ util.subgroups.metric|upper }}</th><th>95% CI</th></tr>
       {% for s in util.subgroups.strata %}
@@ -1147,11 +1324,9 @@ _TEMPLATE = r"""<!doctype html>
     <h2>Feature attribution {{ tip('Permutation importance') }}</h2>
     {{ means('feature_attribution') }}
     <div class="consequence consequence--warn">
-      Importances are <strong>unconditional permutation importance {{ tip('Collinearity (unconditional importance)') }}</strong>, which over-credits
-      correlated predictors and can split or inflate importance among collinear features (Hooker
-      et al. 2021; Strobl et al. 2008). Omic layers are highly collinear, so read the ranking as
-      indicative, not causal, and weigh the across-fold ±SD column — a large SD means an unstable,
-      low-confidence attribution.
+      Importances are <strong>unconditional permutation importance {{ tip('Collinearity (unconditional importance)') }}</strong>: the change in held-out score after one feature is shuffled.
+      Correlation and extrapolation can redistribute or distort this model-dependent quantity (Hooker et al. 2021; Strobl et al. 2008).
+      The across-fold SD describes variation across the recorded folds; it is not a confidence interval. Read the ranking as non-causal model inspection.
     </div>
     <div class="figure">{{ figs.attribution|safe }}</div>
     {{ tables.attr|safe }}
@@ -1161,7 +1336,6 @@ _TEMPLATE = r"""<!doctype html>
     <h2>Provenance &amp; environment</h2>
     {{ means('provenance') }}
     <div class="grid cards">
-      <div class="card"><div class="k">Provenance hash {{ tip('Provenance hash') }}</div><div class="v mono" style="font-size:13px;word-break:break-all">{{ meta.provenance_hash }}</div></div>
       <div class="card"><div class="k">Device / cores</div><div class="v mono">{{ meta.device }} / {{ meta.cores }}</div></div>
       <div class="card"><div class="k">Python / torch</div><div class="v mono" style="font-size:16px">{{ env.python }} · {{ env.torch }}</div></div>
       <div class="card"><div class="k">Core libraries</div><div class="v mono" style="font-size:13px;word-break:break-word">sklearn {{ env.get('sklearn','?') }} · scipy {{ env.get('scipy','?') }} · pandas {{ env.get('pandas','?') }}</div></div>

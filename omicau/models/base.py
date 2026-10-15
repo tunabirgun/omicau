@@ -11,6 +11,8 @@ predictions and are guarded against degenerate folds.
 
 from __future__ import annotations
 
+import json
+from collections.abc import Hashable
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -163,6 +165,20 @@ class CVResult:
     oof_score: Any = None     # score feeding the primary metric (binary: P(class1); mc: proba; reg: pred)
     oof_pred: Any = None      # hard predictions
     oof_groups: Any = None    # patient/group ids for group-level resampling (or None)
+    # Pairing identities are process-local validation evidence. They intentionally
+    # do not appear in to_dict or any public audit/report payload.
+    oof_row_keys: Any = None
+    oof_fold_ids: Any = None
+    split_identity: Any = None
+    split_receipt_identity: Any = None
+    model_role: str | None = None
+    resampling_unit: str | None = None
+    sample_independence_declared: bool = False
+    score_class_order: Any = None
+    score_positive_class: Any = None
+    score_class_fit_identity: Any = None
+    preprocessing_scope: str | None = None
+    preprocessing_fit_identity: Any = None
 
     @property
     def primary(self) -> float:
@@ -205,6 +221,46 @@ class CVResult:
 # --------------------------------------------------------------------------- #
 # CV splitting
 # --------------------------------------------------------------------------- #
+def _invalid_identifier(value: Any) -> bool:
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return True
+    try:
+        scalar = np.asarray(value)
+        if scalar.ndim == 0 and np.issubdtype(scalar.dtype, np.number):
+            if not np.isfinite(scalar.item()):
+                return True
+    except (TypeError, ValueError):
+        return True
+    try:
+        unequal = value != value
+        if bool(unequal):
+            return True
+    except (TypeError, ValueError):
+        return True
+    try:
+        hash(value)
+    except TypeError:
+        return True
+    return False
+
+
+def _validated_group_contract(
+    groups: np.ndarray | None,
+    n: int,
+    independent_rows: bool,
+) -> tuple[np.ndarray | None, str, bool]:
+    if groups is None:
+        return None, "sample", bool(independent_rows)
+    values = np.asarray(groups, dtype=object)
+    if values.ndim != 1 or len(values) != n:
+        raise ValueError("paired_assessment_group_length_invalid")
+    if any(_invalid_identifier(value) for value in values.tolist()):
+        raise ValueError("paired_assessment_group_id_invalid")
+    if len(set(values.tolist())) < 2:
+        raise ValueError("insufficient_independent_groups")
+    return values, "group", False
+
+
 def safe_n_splits(task: str, y: np.ndarray, groups: np.ndarray | None, requested: int) -> int:
     """Clamp fold count so every fold is populated (and both classes appear)."""
     n = max(2, requested)
@@ -507,10 +563,24 @@ def cross_validate_estimator(
     validated_plan: Any = None,
     validated_control_contract: Any = None,
     validated_feature_control: str | None = None,
+    row_keys: np.ndarray | list[str] | None = None,
+    model_role: str | None = None,
+    independent_rows: bool = False,
 ) -> CVResult:
     """Run leakage-safe CV for one estimator over feature matrix ``X``."""
     y = np.asarray(y)
     n = len(y)
+    groups, resampling_unit, sample_independence_declared = _validated_group_contract(
+        groups,
+        n,
+        independent_rows,
+    )
+    private_row_keys = None if row_keys is None else np.asarray(row_keys, dtype=object)
+    if private_row_keys is not None:
+        if private_row_keys.ndim != 1 or len(private_row_keys) != n:
+            raise ValueError("paired_assessment_row_keys_invalid")
+        if len(set(private_row_keys.tolist())) != n:
+            raise ValueError("paired_assessment_row_keys_not_unique")
     if validated_plan is None:
         k = safe_n_splits(task, y, groups, n_splits)
         splitter = make_cv_splitter(task, k, seed, shuffle, groups)
@@ -527,6 +597,29 @@ def cross_validate_estimator(
             if split_receipt.get("decision") == "validated"
             else "validated_development_plan"
         )
+
+    # A comparison is valid only when both results used identical partitions.
+    # This raw index receipt stays in memory and is deliberately not serialized.
+    private_split_identity = tuple(
+        (tuple(int(value) for value in train), tuple(int(value) for value in assessment))
+        for train, assessment in splits
+    )
+    private_split_receipt_identity = (
+        (
+            "validated_split_receipt",
+            json.dumps(split_receipt, sort_keys=True, separators=(",", ":"), allow_nan=False),
+        )
+        if split_receipt is not None
+        else (
+            "dynamic_split_receipt",
+            task,
+            int(k),
+            int(seed),
+            bool(shuffle),
+            resampling_unit,
+            bool(sample_independence_declared),
+        )
+    )
 
     fold_training_targets = None
     control_execution_receipt = None
@@ -580,6 +673,9 @@ def cross_validate_estimator(
 
     per_fold: list[dict[str, float]] = []
     fold_primary: list[float] = []
+    oof_fold_ids = np.full(n, -1, dtype=int)
+    preprocessing_fit_identity: list[tuple[int, ...]] = []
+    score_class_fit_identity: list[tuple[int, ...]] = []
     importance_stack: list[np.ndarray] = []   # per-fold permutation importances
 
     for fold, (train_idx, val_idx) in enumerate(splits):
@@ -603,10 +699,15 @@ def cross_validate_estimator(
             else fold_training_targets[fold]
         )
         pipe.fit(X_train, training_target)
+        preprocessing_fit_identity.append(tuple(int(value) for value in train_idx))
 
         if task == "classification":
             proba = pipe.predict_proba(X_validation)
             classes = pipe.named_steps["estimator"].classes_.astype(int)
+            expected_classes = np.unique(y).astype(int)
+            if not np.array_equal(classes, expected_classes):
+                raise RuntimeError("paired_assessment_score_class_order_invalid")
+            score_class_fit_identity.append(tuple(int(value) for value in classes))
             oof_score[np.ix_(val_idx, classes)] = proba
             preds = classes[proba.argmax(axis=1)]
             oof_pred[val_idx] = preds
@@ -624,6 +725,9 @@ def cross_validate_estimator(
 
         per_fold.append(fold_metrics)
         fold_primary.append(fold_metrics.get(PRIMARY_METRIC[task], np.nan))
+        if np.any(oof_fold_ids[val_idx] != -1):
+            raise RuntimeError("paired_assessment_duplicate_out_of_fold_rows")
+        oof_fold_ids[val_idx] = fold
 
         if compute_importance and len(val_idx) >= 5:
             # permutation_importance re-scores once per feature x repeat -- thousands of
@@ -662,6 +766,8 @@ def cross_validate_estimator(
         y, original_y, equal_nan=True
     ):
         raise RuntimeError("validated_feature_control_outcomes_changed")
+    if np.any(oof_fold_ids < 0):
+        raise RuntimeError("paired_assessment_incomplete_out_of_fold_rows")
 
     # Pooled OOF metrics.
     if task == "classification":
@@ -695,11 +801,33 @@ def cross_validate_estimator(
             "split_plan_status": split_status,
             "split_plan_receipt": split_receipt,
             "control_execution_receipt": control_execution_receipt,
+            "preprocessing_scope": "fold_local_pipeline",
+            "preprocessing_evidence": "pipeline.fit called on each training slice",
         },
         oof_true=y,
         oof_score=pooled_score,
         oof_pred=oof_pred,
         oof_groups=(np.asarray(groups) if groups is not None else None),
+        oof_row_keys=private_row_keys,
+        oof_fold_ids=oof_fold_ids,
+        split_identity=private_split_identity,
+        split_receipt_identity=private_split_receipt_identity,
+        model_role=model_role,
+        resampling_unit=resampling_unit,
+        sample_independence_declared=sample_independence_declared,
+        score_class_order=(
+            tuple(np.unique(y).astype(int).tolist()) if task == "classification" else None
+        ),
+        score_positive_class=(
+            int(np.unique(y).astype(int)[-1])
+            if task == "classification" and len(np.unique(y)) == 2
+            else None
+        ),
+        score_class_fit_identity=(
+            tuple(score_class_fit_identity) if task == "classification" else None
+        ),
+        preprocessing_scope="fold_local_pipeline",
+        preprocessing_fit_identity=tuple(preprocessing_fit_identity),
     )
 
 

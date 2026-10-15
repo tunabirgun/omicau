@@ -13,7 +13,7 @@ network are absent.
 
 from __future__ import annotations
 
-__version__ = "0.5.2"
+__version__ = "0.6.0"
 __author__ = "Tuna Birgun"
 
 # Lightweight, dependency-free symbols are re-exported for convenience. Heavy

@@ -143,3 +143,8 @@ renv/staging/
 Thumbs.db
 desktop.ini
 ~$*
+
+AGENTS.md
+CLAUDE.md
+**/AGENTS.md
+**/CLAUDE.md

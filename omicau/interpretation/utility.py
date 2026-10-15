@@ -1,14 +1,11 @@
 """Modality-utility interpretation.
 
-Fuses the classical and neural benchmark results with the data-hygiene
-diagnostics to answer the operational question: does each omic layer earn its
-place? For every modality it reports the standalone performance, the marginal
-gain from adding it to the fusion (leave-one-out delta with a paired test across
-folds), representational redundancy against the other layers (linear CKA), and a
-verdict that separates real predictive signal from batch artifacts and noise.
-The control baselines gate the whole ledger: if a shuffled-target run scores far
-above chance, a warning is raised. Passing these controls supports only the
-tested target/pipeline checks; it does not establish absence of all leakage.
+The ledger reports descriptive standalone performance, paired held-out
+full-minus-reduced contrasts, and diagnostic warnings as separate outputs.
+Its operational status uses only a validated paired bootstrap contrast; the
+corrected fold test remains secondary stability context. Batch, missingness,
+and control results are scope-limited diagnostics that do not override a valid
+contrast or establish absence of leakage.
 """
 
 from __future__ import annotations
@@ -17,6 +14,11 @@ from typing import Any
 
 import numpy as np
 from scipy import stats
+
+from omicau.interpretation.paired_assessment import (
+    assess_incremental,
+    assess_standalone,
+)
 
 CHANCE = {"classification": 0.5, "regression": 0.0, "survival": 0.5}
 # Heuristic decision thresholds. These are pragmatic cut-offs, not derived
@@ -91,8 +93,9 @@ def _paired_gain(fusion_folds: list[float], loo_folds: list[float]) -> tuple[flo
     """
     a = np.asarray(fusion_folds, float)
     b = np.asarray(loo_folds, float)
-    n = min(len(a), len(b))
-    a, b = a[:n], b[:n]
+    if a.ndim != 1 or b.ndim != 1 or len(a) != len(b):
+        raise ValueError("secondary_fold_test_requires_equal_arrays")
+    n = len(a)
     mask = np.isfinite(a) & np.isfinite(b)
     k = int(mask.sum())
     if k < 2:
@@ -321,8 +324,33 @@ def build_utility_ledger(
             else:
                 cka[i, j] = _linear_cka(Xs[mi], Xs[mj])
 
-    # standalone primaries per modality (reference estimator).
-    standalone = {m: (cl.get(f"{ref}::{m}").primary if f"{ref}::{m}" in cl else float("nan")) for m in mods}
+    # The reference estimator is declared before fitting by the classical runner.
+    # It is never selected retrospectively by its observed OOF score.
+    standalone = {
+        m: (cl.get(ref + "::" + m).primary if ref + "::" + m in cl else float("nan"))
+        for m in mods
+    }
+    intended_candidate_layers = classical_out.get("intended_candidate_layers")
+    family_size = classical_out.get("intended_family_size")
+    expected_family_size = (
+        0
+        if isinstance(intended_candidate_layers, list) and len(intended_candidate_layers) == 1
+        else len(intended_candidate_layers)
+        if isinstance(intended_candidate_layers, list) and len(intended_candidate_layers) > 1
+        else None
+    )
+    if (
+        not isinstance(intended_candidate_layers, list)
+        or not intended_candidate_layers
+        or len(set(intended_candidate_layers)) != len(intended_candidate_layers)
+        or not all(isinstance(layer, str) and layer for layer in intended_candidate_layers)
+        or isinstance(family_size, bool)
+        or not isinstance(family_size, int)
+        or family_size != expected_family_size
+    ):
+        intended_candidate_layers = None
+        family_size = None
+    single_modality = family_size == 0
 
     # -- per-modality ledger ---------------------------------------------- #
     ledger: list[dict[str, Any]] = []
@@ -330,21 +358,73 @@ def build_utility_ledger(
     miss_flags_by_mod = _missing_flags_by_modality(missing_diag)
 
     for i, m in enumerate(mods):
-        loo = cl.get(f"{ref}::FUSION-minus-{m}")
-        gain_c, gain_c_p = (
-            _paired_gain(fusion_ref.fold_primary, loo.fold_primary)
-            if fusion_ref and loo else (float("nan"), float("nan"))
+        loo = cl.get(ref + "::FUSION-minus-" + m)
+        single = cl.get(ref + "::" + m)
+        standalone_assessment = assess_standalone(single, task=task, seed=42)
+        incremental = assess_incremental(
+            fusion_ref,
+            loo,
+            task=task,
+            candidate=m,
+            family_size=family_size,
+            seed=42,
         )
-        gain_eligibility = _gain_eligibility(fusion_ref, loo)
-        pooled_oof_gain = _pooled_oof_gain(fusion_ref, loo, task)
-        pooled_oof_gain_ci = (
-            _paired_gain_ci(fusion_ref, loo, task, seed=42)
-            if gain_eligibility["eligible"] else None
+        if (
+            intended_candidate_layers is not None
+            and (
+                fusion_ref is None
+                or set(fusion_ref.modalities) != set(intended_candidate_layers)
+            )
+        ):
+            incremental = incremental | {
+                "status": "unavailable",
+                "estimate": None,
+                "ordinary_95_ci": None,
+                "decision_ci": None,
+                "reason": "full_model_intended_layer_mismatch",
+            }
+        if intended_candidate_layers is not None and m not in intended_candidate_layers:
+            incremental = incremental | {
+                "status": "unavailable",
+                "estimate": None,
+                "ordinary_95_ci": None,
+                "decision_ci": None,
+                "reason": "candidate_not_in_intended_family",
+            }
+        expected_reduced_layers = (
+            None
+            if intended_candidate_layers is None
+            else set(intended_candidate_layers) - {m}
         )
+        if (
+            expected_reduced_layers is not None
+            and loo is not None
+            and set(loo.modalities) != expected_reduced_layers
+        ):
+            incremental = incremental | {
+                "status": "unavailable",
+                "estimate": None,
+                "ordinary_95_ci": None,
+                "decision_ci": None,
+                "reason": "reduced_model_intended_layer_mismatch",
+            }
+        try:
+            gain_c, gain_c_p = _paired_gain(fusion_ref.fold_primary, loo.fold_primary)
+        except (AttributeError, TypeError, ValueError):
+            gain_c, gain_c_p = float("nan"), float("nan")
+        gain_eligibility = {
+            "eligible": incremental["status"] not in {"unavailable", "not_applicable"},
+            "reason": incremental.get("reason"),
+        }
+        pooled_oof_gain = incremental["estimate"]
+        pooled_oof_gain_ci = incremental["ordinary_95_ci"]
         gain_n, gain_n_p = float("nan"), float("nan")
-        nn_loo = nn.get(f"neural::FUSION-minus-{m}")
+        nn_loo = nn.get("neural::FUSION-minus-" + m)
         if nn_fusion and nn_loo:
-            gain_n, gain_n_p = _paired_gain(nn_fusion.fold_primary, nn_loo.fold_primary)
+            try:
+                gain_n, gain_n_p = _paired_gain(nn_fusion.fold_primary, nn_loo.fold_primary)
+            except ValueError:
+                gain_n, gain_n_p = float("nan"), float("nan")
 
         # redundancy: highest CKA with a modality that is individually stronger.
         red_partner, red_cka = None, float("nan")
@@ -359,51 +439,55 @@ def build_utility_ledger(
         batch_structured = bool(batch_pm.get(m, {}).get("flag", False))
         batch_confounding = batch_pm.get(m, {}).get("target_confounding", {})
         batch_confounded = batch_structured and bool(batch_confounding.get("flag", False))
-        standalone_useful = np.isfinite(standalone[m]) and standalone[m] > chance + USEFUL_MARGIN
-        # A positive point-estimate gain is not enough to claim the layer "adds
-        # signal": the leave-one-out delta must also clear the paired Nadeau-Bengio
-        # test. Three states drive the verdict/badge/figure so a noisy positive
-        # gain is never rendered as an established contribution.
-        gain_positive = np.isfinite(gain_c) and gain_c > GAIN_EPS
-        gain_significant = gain_positive and np.isfinite(gain_c_p) and gain_c_p < GAIN_ALPHA
-        gain_state = "adds_sig" if gain_significant else ("adds_ns" if gain_positive else "none")
-        # A fold-level test alone is not sufficient for a categorical positive
-        # verdict when the paired OOF records needed for its uncertainty check do
-        # not match. Preserve the measured fold quantities, but fail the verdict
-        # gate closed and expose the reason in the ledger.
-        if not gain_eligibility["eligible"]:
-            gain_state = "unavailable"
+        status = incremental["status"]
         similarity_observed = (red_partner is not None and np.isfinite(red_cka)
-                               and red_cka > CKA_REDUNDANT and gain_state != "adds_sig")
-        if not gain_eligibility["eligible"]:
-            gain_status = "unavailable"
-        elif gain_state == "adds_sig":
-            gain_status = "supported_positive"
-        elif gain_state == "adds_ns":
-            gain_status = "inconclusive_positive"
+                               and red_cka > CKA_REDUNDANT
+                               and status != "increased_held_out_performance")
+        verdict, rec = _ledger_text(status)
+        absolute_scores = {
+            "full": (
+                float(fusion_ref.primary)
+                if fusion_ref is not None and np.isfinite(fusion_ref.primary)
+                else None
+            ),
+            "reduced": float(loo.primary) if loo is not None and np.isfinite(loo.primary) else None,
+            "outcome_mean_reference": 0.0 if task == "regression" else None,
+        }
+        if (
+            task == "regression"
+            and incremental["estimate"] is not None
+            and incremental["estimate"] > 0
+            and absolute_scores["full"] is not None
+            and absolute_scores["reduced"] is not None
+            and absolute_scores["full"] < 0
+            and absolute_scores["reduced"] < 0
+        ):
+            absolute_scores["interpretation"] = "relative_score_improvement_with_negative_absolute_scores"
         else:
-            gain_status = "not_positive"
-
-        if single_modality:
-            verdict, rec = _verdict_single(
-                standalone_useful, batch_confounded, bool(miss_flags_by_mod.get(m)), leakage,
-            )
-        else:
-            verdict, rec = _verdict(
-                standalone_useful, gain_state, similarity_observed, batch_confounded, red_partner,
-                bool(miss_flags_by_mod.get(m)), leakage, gain_c, gain_c_p,
-            )
+            absolute_scores["interpretation"] = None
 
         top_features = _top_features(fusion_ref, m, k=8) if fusion_ref else []
         ledger.append({
             "modality": m,
             "n_features": int(aligned.modalities[m].shape[1]),
-            "standalone_primary": _r(standalone[m]),
+            "ledger_schema_version": 2,
+            "standalone_assessment": standalone_assessment,
+            "incremental_assessment": incremental | {"absolute_scores": absolute_scores},
+            "diagnostic_flags": {
+                "batch_structured": batch_structured,
+                "batch_confounded": batch_confounded,
+                "missingness_biased": bool(miss_flags_by_mod.get(m)),
+                "leakage_warning": leakage,
+            },
+            # v1-compatible fields remain for existing readers. They are derived
+            # output only and do not decide the v2 operational status.
+            "legacy_fields_deprecated": True,
+            "standalone_primary": standalone_assessment["estimate"],
             "foldmean_marginal_gain": _r(gain_c),
             "foldmean_marginal_gain_p": _r(gain_c_p),
             "pooled_oof_marginal_gain": pooled_oof_gain,
             "pooled_oof_marginal_gain_ci": pooled_oof_gain_ci,
-            "marginal_gain_status": gain_status,
+            "marginal_gain_status": status,
             "marginal_gain_eligibility": gain_eligibility,
             "marginal_gain_neural": _r(gain_n),
             "marginal_gain_neural_p": _r(gain_n_p),
@@ -420,20 +504,13 @@ def build_utility_ledger(
             "top_features": top_features,
         })
 
-    # -- best model across all fusion candidates -------------------------- #
-    fusion_candidates = [r for r in classical_out["results"] if r.name.endswith("::FUSION")]
-    fusion_candidates += [r for r in neural_out.get("results", []) if r.name == "neural::FUSION"]
-    best = max(fusion_candidates, key=lambda r: (r.primary if np.isfinite(r.primary) else -1), default=None)
+    # The declared reference estimator is retained; no OOF winner is selected.
+    best = fusion_ref
     if single_modality:
         # the ::FUSION fit IS the single layer refit on identical data; surface the
         # honestly-named single-layer result (linear::{mod}) so no "FUSION" name leaks.
         best = cl.get(f"{ref}::{mods[0]}") or best
-    # best_single spans BOTH classical and neural single-modality models, so the
-    # fusion-gain baseline is symmetric with `best` (which includes neural::FUSION).
-    single_pool = [r for r in classical_out["results"] if "::" in r.name and "FUSION" not in r.name
-                   and not r.name.startswith(("control::", "stress::"))]
-    single_pool += [r for r in neural_out.get("results", []) if "::" in r.name and "FUSION" not in r.name]
-    best_single = max(single_pool, key=lambda r: (r.primary if np.isfinite(r.primary) else -1), default=None)
+    best_single = None
 
     fusion_gain = (
         best.primary - best_single.primary if (best and best_single and np.isfinite(best.primary) and np.isfinite(best_single.primary)) else float("nan")
@@ -466,17 +543,20 @@ def build_utility_ledger(
                           "ci_low": bad.extra.get("ci_low"), "ci_high": bad.extra.get("ci_high")}
 
     return {
+        "ledger_schema_version": 2,
         "primary_metric": metric,
         "task": task,
         "chance_level": chance,
         "best_model": _model_brief(best),
-        "best_model_selection": "descriptive highest observed primary score across fitted fusion candidates; no inferential superiority claim",
+        "best_model_selection": "declared reference estimator before outcome fitting",
         "calibration": calibration,
         "auprc_baseline": auprc_baseline,
         "subgroups": subgroups,
         "batch_blocked": batch_blocked,
         "batch_adjusted": batch_adjusted,
         "single_modality": single_modality,
+        "intended_candidate_layers": intended_candidate_layers,
+        "intended_family_size": family_size,
         "best_single_modality": None if single_modality else _model_brief(best_single),
         "fusion_gain_over_best_single": None if single_modality else _r(fusion_gain),
         "fusion_gain_ci": fusion_gain_ci,
@@ -491,14 +571,20 @@ def build_utility_ledger(
             "reference_estimator": ref,
             "neural_results_used": False,
             "feature_attribution_used": False,
-            "thresholds": {
+            "decision_source": "incremental_assessment.decision_ci",
+            "historical_thresholds_retired_from_categories": {
                 "standalone_margin_over_chance": USEFUL_MARGIN,
                 "marginal_gain": GAIN_EPS,
                 "marginal_gain_alpha": GAIN_ALPHA,
-                "similarity_cka": CKA_REDUNDANT,
+                "control_margin": CONTROL_MARGIN,
             },
             "records": [{
                 "modality": row["modality"],
+                "ledger_schema_version": row["ledger_schema_version"],
+                "standalone_assessment": row["standalone_assessment"],
+                "incremental_assessment": row["incremental_assessment"],
+                "diagnostic_flags": row["diagnostic_flags"],
+                "legacy_fields_deprecated": row["legacy_fields_deprecated"],
                 "standalone_primary": row["standalone_primary"],
                 "foldmean_marginal_gain": row["foldmean_marginal_gain"],
                 "foldmean_marginal_gain_p": row["foldmean_marginal_gain_p"],
@@ -520,6 +606,32 @@ def build_utility_ledger(
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
+def _ledger_text(status: str) -> tuple[str, str]:
+    messages = {
+        "increased_held_out_performance": (
+            "increased held-out performance",
+            "The family decision interval is strictly above zero for this locked paired comparison.",
+        ),
+        "reduced_held_out_performance": (
+            "reduced held-out performance",
+            "The family decision interval is strictly below zero for this locked paired comparison.",
+        ),
+        "unresolved": (
+            "unresolved incremental performance",
+            "The family decision interval crosses or touches zero for this locked paired comparison.",
+        ),
+        "unavailable": (
+            "incremental performance unavailable",
+            "Required paired out-of-fold records were unavailable or failed identity validation.",
+        ),
+        "not_applicable": (
+            "incremental performance not applicable",
+            "A one-assay ledger has no leave-one-layer-out contrast.",
+        ),
+    }
+    return messages.get(status, messages["unavailable"])
+
+
 def _verdict(standalone_useful, gain_state, similarity_observed, batch_confounded, red_partner,
              miss_biased, leakage, gain_c=float("nan"), gain_c_p=float("nan")):
     """Map a modality's evidence to a verdict. gain_state is one of 'adds_sig'
@@ -680,18 +792,33 @@ def _summary_flags(ledger, leakage, fusion_gain, single_modality=False, mods=Non
     flags = []
     if leakage:
         flags.append("Control-baseline leakage warning is active.")
-    useful = [l for l in ledger if l["verdict"].startswith("predictive")]
-    inconclusive = [l for l in ledger if "inconclusive" in l["verdict"]]
-    dead = [l for l in ledger if l["verdict"].startswith("no detectable")]
+    increased = [
+        row for row in ledger
+        if row.get("incremental_assessment", {}).get("status") == "increased_held_out_performance"
+    ]
+    reduced = [
+        row for row in ledger
+        if row.get("incremental_assessment", {}).get("status") == "reduced_held_out_performance"
+    ]
+    unresolved = [
+        row for row in ledger
+        if row.get("incremental_assessment", {}).get("status") == "unresolved"
+    ]
+    unavailable = [
+        row for row in ledger
+        if row.get("incremental_assessment", {}).get("status") == "unavailable"
+    ]
     conf = [l for l in ledger if l["batch_confounded"]]
-    if useful:
-        flags.append(f"{len(useful)} modality(ies) add marginal signal: {', '.join(l['modality'] for l in useful)}.")
+    if increased:
+        flags.append(f"{len(increased)} layer(s) increased held-out performance: {', '.join(l['modality'] for l in increased)}.")
+    if reduced:
+        flags.append(f"{len(reduced)} layer(s) reduced held-out performance: {', '.join(l['modality'] for l in reduced)}.")
     if conf:
         flags.append(f"Batch-confounded layer(s): {', '.join(l['modality'] for l in conf)}.")
-    if dead:
-        flags.append(f"Control-like layer(s) with no signal: {', '.join(l['modality'] for l in dead)}.")
-    if inconclusive:
-        flags.append(f"Incremental contribution remains inconclusive for: {', '.join(l['modality'] for l in inconclusive)}.")
+    if unresolved:
+        flags.append(f"Incremental performance remains unresolved for: {', '.join(l['modality'] for l in unresolved)}.")
+    if unavailable:
+        flags.append(f"Incremental performance is unavailable for: {', '.join(l['modality'] for l in unavailable)}.")
     if single_modality:
         name = (mods[0] if mods else "one layer")
         flags.append(f"Single modality ({name}): fusion, redundancy, and marginal-contribution "
