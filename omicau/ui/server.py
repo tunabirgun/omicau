@@ -37,7 +37,11 @@ def _require_ui():
 def _free_port(preferred: int | None = None) -> int:
     if preferred:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            if s.connect_ex(("127.0.0.1", preferred)) != 0:
+            try:
+                s.bind(("127.0.0.1", preferred))
+            except OSError:
+                pass
+            else:
                 return preferred
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))

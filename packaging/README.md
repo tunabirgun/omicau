@@ -1,14 +1,14 @@
 # Desktop packaging
 
-The [Omicau v0.5.2 release](https://github.com/tunabirgun/omicau/releases/tag/v0.5.2) includes these desktop bundles alongside its Python wheel and source archive:
+Versioned desktop bundles are listed on the [current GitHub release](https://github.com/tunabirgun/omicau/releases/latest) after the platform build and frozen-application smoke checks pass. Only the files attached to that release are available for download.
 
-| Platform | Release asset | Use |
+| Platform | Bundle | Use |
 | --- | --- | --- |
-| Windows x86-64 | `omicau-0.5.2-windows-x86_64.zip` | Extract the portable bundle and run `omicau.exe`. |
-| Linux x86-64 | `omicau-x86_64.AppImage` | Make the AppImage executable and run it. |
-| macOS Apple Silicon | `omicau-arm64.dmg` | Open the disk image and run the bundled app. |
+| Windows x86-64 | Versioned portable ZIP | Extract the bundle and run omicau.exe. |
+| Linux x86-64 | AppImage | Make it executable and run it. |
+| macOS Apple Silicon | Disk image | Open the image and run the bundled app. |
 
-Opening a frozen app without command-line arguments starts the local browser interface. Passing arguments uses the same `run`, `bootstrap`, `verify`, `check-env`, and `ui` commands as the Python package. The Windows release is a portable ZIP, not an installer. The v0.5.2 macOS disk image is not notarized.
+Opening a frozen app without arguments starts the local browser interface. Arguments use the same run, bootstrap, verify, check-env and ui commands as the Python package. Signing and notarization status must be stated for the actual attached artifact.
 
 ## Build locally
 
@@ -23,3 +23,7 @@ PyInstaller builds each platform on its own operating system. The build scripts 
 Signing is conditional on the local signing environment. The Windows script signs the executable only when a signing certificate is configured; the macOS script signs or notarizes only when its corresponding credentials are configured. A local build does not establish that the published asset was signed or notarized.
 
 The [`build-desktop` workflow](../.github/workflows/release.yml) runs on a published GitHub Release or manual dispatch. It uploads build products as CI artifacts and runs frozen-app smoke checks. Its permissions do not attach assets to the GitHub Release; attaching reviewed release files is a separate step.
+
+## Conda recipe
+
+The proposed conda-forge recipe is scoped to the current source archive. Its source checksum is required by the recipe format. It has not been submitted to a channel or validated with a conda build; use the release wheel or source for the tested installation route.

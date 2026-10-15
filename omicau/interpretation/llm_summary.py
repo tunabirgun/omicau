@@ -156,9 +156,20 @@ def _rule_based(context: dict[str, Any]) -> dict[str, Any]:
     ledger_in = util.get("modality_ledger", [])
     n_samples = context.get("n_samples")
 
-    useful = [m["modality"] for m in ledger_in if str(m.get("verdict", "")).startswith("predictive")]
-    confounded = [m["modality"] for m in ledger_in if m.get("batch_confounded")]
-    dead = [m["modality"] for m in ledger_in if "no detectable" in str(m.get("verdict", ""))]
+    def assessment(row: dict[str, Any]) -> dict[str, Any]:
+        value = row.get("incremental_assessment")
+        if isinstance(value, dict):
+            return value
+        return {"status": "unavailable", "reason": "archived_ledger_without_family_decision_interval"}
+
+    increased = [m["modality"] for m in ledger_in
+                 if assessment(m).get("status") == "increased_held_out_performance"]
+    reduced = [m["modality"] for m in ledger_in
+               if assessment(m).get("status") == "reduced_held_out_performance"]
+    unresolved = [m["modality"] for m in ledger_in
+                  if assessment(m).get("status") == "unresolved"]
+    confounded = [m["modality"] for m in ledger_in if (m.get("diagnostic_flags") or {}).get(
+        "batch_confounded", m.get("batch_confounded"))]
 
     # data hygiene rating from the count of active flags.
     n_flags = len(context.get("missingness_flags", [])) + len(context.get("batch_flags", []))
@@ -167,7 +178,7 @@ def _rule_based(context: dict[str, Any]) -> dict[str, Any]:
     elif n_flags >= 1:
         rating = "moderate concerns"
     else:
-        rating = "clean"
+        rating = "no raised diagnostic flags"
     rating_text = (
         f"{rating}: {n_flags} diagnostic flag(s)"
         + (", control-baseline leakage warning active" if leakage else "")
@@ -176,28 +187,32 @@ def _rule_based(context: dict[str, Any]) -> dict[str, Any]:
 
     single_modality = util.get("single_modality", False)
     perf = f"{primary:.3f}" if isinstance(primary, (int, float)) else "n/a"
+    metric_label = "R²" if metric.lower() in {"r2", "r²"} else metric.upper()
+    reference_text = ("the conventional outcome-mean reference R²=0"
+                      if metric.lower() in {"r2", "r²"} else f"the random-ranking reference ~ {chance}")
     if single_modality:
         verdict_bits = [
-            "With a single modality, omicau runs its leakage-safe honesty check rather than a fusion "
-            f"benchmark. The {best.get('name', 'n/a')} model reaches {metric.upper()}={perf} "
-            f"(chance ~ {chance}) under group-aware cross-validation."
+            "With a single modality, the report provides descriptive standalone performance rather than a "
+            f"leave-one-layer-out comparison. The declared reference model ({best.get('name', 'n/a')}) "
+            f"reaches {metric_label}={perf}, interpreted against {reference_text}."
         ]
     else:
         verdict_bits = [
-            f"The best fusion model ({best.get('name', 'n/a')}) reaches {metric.upper()}={perf} "
-            f"(chance ~ {chance})."
+            f"The declared reference fusion model ({best.get('name', 'n/a')}) reaches {metric_label}={perf} "
+            f"and is interpreted against {reference_text}."
         ]
-    if isinstance(gain, (int, float)):
-        if gain > 0.01:
-            verdict_bits.append(
-                f"Fusion adds {gain:+.3f} over the best single modality, so combining layers is justified."
-            )
-        else:
-            verdict_bits.append(
-                f"Fusion does not beat the best single modality ({gain:+.3f}); a single layer may suffice."
-            )
-    if useful:
-        verdict_bits.append(f"Modalities carrying independent signal: {', '.join(useful)}.")
+    if increased:
+        verdict_bits.append(
+            f"The locked paired layer comparison reports increased held-out performance for: {', '.join(increased)}."
+        )
+    if reduced:
+        verdict_bits.append(
+            f"The locked paired comparison reports reduced held-out performance when retaining: {', '.join(reduced)}."
+        )
+    if unresolved:
+        verdict_bits.append(
+            f"The contribution comparison is unresolved for: {', '.join(unresolved)}."
+        )
     if confounded:
         verdict_bits.append(
             f"Treat {', '.join(confounded)} with caution: batch structure dominates its variance."
@@ -210,8 +225,8 @@ def _rule_based(context: dict[str, Any]) -> dict[str, Any]:
     ledger_out = [
         {
             "modality": m["modality"],
-            "verdict": m.get("verdict", "n/a"),
-            "recommendation": m.get("recommendation", ""),
+            "verdict": assessment(m).get("status", "unavailable"),
+            "recommendation": "See the report ledger for the paired interval and diagnostics.",
         }
         for m in ledger_in
     ]
@@ -219,17 +234,14 @@ def _rule_based(context: dict[str, Any]) -> dict[str, Any]:
     recs: list[str] = []
     if confounded:
         recs.append(f"Correct or regress out batch effects in: {', '.join(confounded)}.")
-    if dead:
-        recs.append(f"Consider dropping control-like layers with no signal: {', '.join(dead)}.")
     for f in context.get("missingness_flags", [])[:3]:
         recs.append(f"Investigate missingness bias: {f}")
     if leakage:
         recs.append("Re-audit cross-validation splits for group leakage (control baseline elevated).")
     if not recs:
         recs.append(
-            "No critical data-hygiene issues detected; the single-layer signal is the honest ceiling "
-            "here — validate externally." if single_modality
-            else "No critical data-hygiene issues detected; proceed with the fusion model.")
+            "No diagnostic flag was raised by the configured checks; standalone performance remains descriptive here." if single_modality
+            else "No diagnostic flag was raised by the configured checks; use the paired layer categories and intervals for this locked analysis.")
     if isinstance(n_samples, int) and n_samples < 60:
         recs.append(f"Sample size is small (n={n_samples}); treat effect sizes as preliminary.")
 
@@ -245,21 +257,44 @@ def _rule_based(context: dict[str, Any]) -> dict[str, Any]:
 # PHI-safe context construction
 # --------------------------------------------------------------------------- #
 def _sanitize_context(context: dict[str, Any]) -> dict[str, Any]:
-    """Strip anything sample-identifying; keep only aggregate statistics."""
+    """Whitelist aggregate fields permitted in an optional interpretation payload."""
     util = context.get("utility", {})
+    def interval(value: Any) -> dict[str, Any] | None:
+        if not isinstance(value, dict):
+            return None
+        return {key: value.get(key) for key in ("lower", "upper", "quantile_method")}
+
+    def incremental(row: dict[str, Any]) -> dict[str, Any]:
+        value = row.get("incremental_assessment")
+        if not isinstance(value, dict):
+            return {"status": "unavailable", "reason": "archived_ledger_without_family_decision_interval"}
+        family = value.get("multiplicity_family") if isinstance(value.get("multiplicity_family"), dict) else {}
+        return {
+            "status": value.get("status"), "estimate": value.get("estimate"),
+            "ordinary_95_ci": interval(value.get("ordinary_95_ci")),
+            "decision_ci": interval(value.get("decision_ci")),
+            "multiplicity_family": {key: family.get(key) for key in (
+                "family_size", "family_alpha", "decision_quantiles", "scope")},
+            "resampling_unit": value.get("resampling_unit"),
+            "n_valid_resamples": value.get("n_valid_resamples"),
+            "reason": value.get("reason"),
+        }
+
     safe_ledger = [
         {
             "modality": m.get("modality"),
             "n_features": m.get("n_features"),
-            "standalone_primary": m.get("standalone_primary"),
-            "foldmean_marginal_gain": m.get("foldmean_marginal_gain"),
-            "foldmean_marginal_gain_p": m.get("foldmean_marginal_gain_p"),
-            "pooled_oof_marginal_gain": m.get("pooled_oof_marginal_gain"),
-            "pooled_oof_marginal_gain_ci": m.get("pooled_oof_marginal_gain_ci"),
-            "marginal_gain_status": m.get("marginal_gain_status"),
-            "batch_confounded": m.get("batch_confounded"),
-            "missingness_biased": m.get("missingness_biased"),
-            "verdict": m.get("verdict"),
+            "standalone": {
+                "status": (m.get("standalone_assessment") or {}).get("status", "unavailable"),
+                "estimate": (m.get("standalone_assessment") or {}).get("estimate", m.get("standalone_primary")),
+                "ordinary_95_ci": interval((m.get("standalone_assessment") or {}).get("ordinary_95_ci")),
+            },
+            "incremental": incremental(m),
+            "diagnostic_flags": {
+                "batch_confounded": (m.get("diagnostic_flags") or {}).get("batch_confounded", m.get("batch_confounded")),
+                "missingness_biased": (m.get("diagnostic_flags") or {}).get("missingness_biased", m.get("missingness_biased")),
+                "leakage_warning": (m.get("diagnostic_flags") or {}).get("leakage_warning", False),
+            },
         }
         for m in util.get("modality_ledger", [])
     ]
@@ -273,11 +308,12 @@ def _sanitize_context(context: dict[str, Any]) -> dict[str, Any]:
             "primary": (util.get("best_model") or {}).get("primary"),
         },
         "fusion_gain_over_best_single": util.get("fusion_gain_over_best_single"),
-        "leakage_warning": util.get("leakage_warning"),
-        "controls": util.get("controls"),
+        "leakage_warning": bool(util.get("leakage_warning")),
+        "controls": [{key: control.get(key) for key in ("name", "primary", "ci_low", "ci_high", "global_chance_evidence")}
+                     for control in util.get("controls", [])],
         "modality_ledger": safe_ledger,
-        "missingness_flags": context.get("missingness_flags", []),
-        "batch_flags": context.get("batch_flags", []),
+        "missingness_flag_count": len(context.get("missingness_flags", [])),
+        "batch_flag_count": len(context.get("batch_flags", [])),
     }
 
 

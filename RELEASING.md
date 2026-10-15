@@ -1,6 +1,6 @@
 # Releasing omicau
 
-The [GitHub v0.5.2 release](https://github.com/tunabirgun/omicau/releases/tag/v0.5.2) contains a Python wheel and source archive, a portable Windows x86-64 ZIP, a Linux x86-64 AppImage, and a macOS Apple Silicon disk image. As checked on 23 September 2026, [PyPI](https://pypi.org/project/omicau/) still lists v0.4.0. A GitHub release and a PyPI publication are separate actions.
+GitHub release assets and PyPI publication are separate actions. Use the versioned release wheel or source archive for the current workflow, and describe only files that have actually been attached after validation.
 
 ## Python package
 
@@ -15,7 +15,7 @@ A manual dispatch with `publish=false` builds validation artifacts without publi
 
 The [`build-desktop` workflow](.github/workflows/release.yml) runs when a GitHub Release is published or when manually dispatched. It builds and smoke-tests frozen bundles on Windows, Linux, and macOS. The workflow stores the products as CI artifacts and has read-only repository permissions; it does not attach files to a GitHub Release.
 
-Review the platform artifacts and their smoke results before attaching any desktop bundles to a release. Describe the actual attached files. The v0.5.2 Windows asset is a portable ZIP rather than an installer, and the macOS arm64 disk image is not notarized. Local build commands and outputs are documented in [packaging/README.md](packaging/README.md).
+Review the platform artifacts and their smoke results before attaching any desktop bundles to a release. Describe the actual attached files. The Windows bundle may be a portable ZIP when an installer is not built. State the actual signing and notarization status of the macOS disk image. Local build commands and outputs are documented in [packaging/README.md](packaging/README.md).
 
 ## Conda-forge
 

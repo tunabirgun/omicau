@@ -182,7 +182,7 @@ def register(app) -> None:  # noqa: C901 - a flat set of small handlers
     @app.post("/api/session/{sid}/options")
     async def options(sid: str, payload: dict):
         s = _sess(sid)
-        for k in ("n_splits", "neural", "run_name", "n_bootstrap", "batch_blocked",
+        for k in ("n_splits", "neural", "run_name", "n_bootstrap", "independent_rows", "batch_blocked",
                   "batch_adjust_sensitivity", "normalization"):
             if k in payload:
                 s[k] = payload[k]
@@ -211,6 +211,7 @@ def register(app) -> None:  # noqa: C901 - a flat set of small handlers
             "clinical": {"path": _clinical_path(s), **cm},
             "n_splits": s.get("n_splits", 5),
             "n_bootstrap": s.get("n_bootstrap", 1000),
+            "independent_rows": s.get("independent_rows", False),
             "neural": s.get("neural", True),
             "batch_blocked": s.get("batch_blocked", False),
             "batch_adjust_sensitivity": s.get("batch_adjust_sensitivity", False),

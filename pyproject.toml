@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "omicau"
-version = "0.5.2"
+version = "0.6.0"
 description = "Omics Audit: a reproducible multi-omics data-audit and fusion-benchmarking CLI with explicit split and control limitations."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -36,7 +36,7 @@ dependencies = [
 [project.optional-dependencies]
 # Optional plugin tiers -- the core tool degrades gracefully when these are absent.
 llm = ["anthropic>=0.39", "openai>=1.0"]   # anthropic=Claude; openai SDK also drives ChatGPT/Gemini/local
-data = ["requests>=2.31", "google-cloud-storage>=2.10"]   # remote data hubs (TCGA/CCLE/Xena/OpenPBTA/Metabolomics/Expression Atlas)
+data = ["requests>=2.31", "google-cloud-storage>=2.10", "google-cloud-bigquery[pandas]>=3.0"]   # remote data hubs (TCGA/CCLE/Xena/OpenPBTA/Metabolomics/Expression Atlas)
 # CPTAC is isolated because its `cptac` dependency needs a C/build toolchain and
 # ships no Windows / Python 3.12 wheel; keeping it out of [data]/[all] means the
 # common installs resolve cleanly on every platform.
@@ -53,6 +53,7 @@ all = [
     "openai>=1.0",
     "requests>=2.31",
     "google-cloud-storage>=2.10",
+    "google-cloud-bigquery[pandas]>=3.0",
     "pyyaml>=6.0",
     "fastapi>=0.110",
     "uvicorn>=0.27",
