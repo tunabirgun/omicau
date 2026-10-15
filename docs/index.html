@@ -79,7 +79,7 @@ document.documentElement.setAttribute('data-theme',t);})();
   </table></div>
   <div class="callout plain">
     <span class="lbl">Read the result</span>
-    A standalone score describes prediction from one layer. The contribution category uses matched held-out predictions from the full reference model and the same analysis without that layer: increased when its family decision interval lies above zero, reduced when it lies below zero, and unresolved when it crosses or touches zero. Ordinary intervals and diagnostic warnings remain visible separately.
+    A standalone score describes prediction from one layer. The contribution category uses matched held-out predictions from the full reference model and the same analysis without that layer: increased when its family decision interval lies above zero, reduced when it lies below zero, and unresolved when it crosses or touches zero. Invalid or missing paired records are unavailable with a reason. Single-layer contribution is not applicable. Ordinary intervals and diagnostic warnings remain visible separately. Intervals condition on saved predictions and omit retraining and partition-selection variability; family quantiles are an operational rule without an established population-coverage or family-error guarantee.
   </div>
 </section>
 
