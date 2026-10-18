@@ -61,7 +61,7 @@ document.documentElement.setAttribute('data-theme',t);})();
   </div>
   <div class="callout repro" style="margin-top:24px">
     <span class="lbl">Published evaluation</span>
-    Current RF <a href="https://doi.org/10.5281/zenodo.23404413">evaluation results</a> and the <a href="https://doi.org/10.5281/zenodo.23404072">executed protocol</a> are archived on Zenodo with readable reproduction materials. The <a href="https://zenodo.org/records/22922940">earlier results</a> and <a href="https://doi.org/10.5281/zenodo.22304152">earlier protocol</a> remain historical records.
+    Current aggregate <a href="https://doi.org/10.5281/zenodo.23444757">evaluation results (v3.0.0)</a> and the <a href="https://doi.org/10.5281/zenodo.23444777">executed-study protocol (v6.3.0)</a> are archived on Zenodo with readable reproduction materials. They document the stable numerical Omicau 0.6.0 evaluation; the <a href="https://github.com/tunabirgun/omicau/releases/tag/v0.6.0">versioned software release</a> remains separate. The <a href="https://doi.org/10.5281/zenodo.23404413">previous results</a>, <a href="https://doi.org/10.5281/zenodo.23404072">previous protocol</a>, <a href="https://zenodo.org/records/22922940">earlier results</a>, and <a href="https://doi.org/10.5281/zenodo.22304152">earlier protocol</a> remain historical records.
   </div>
 </section>
 
@@ -120,16 +120,16 @@ omicau verify --config demo/config.json --audit demo/run/audit.json</code></pre>
 
 <section id="reproducibility" class="reveal">
   <h2>Reproducibility and release materials</h2>
-  <p>Each run records its resolved configuration, input identity, group-aware split, diagnostics, model outputs, and runtime. The current Zenodo records contain the RF paired-ledger protocol, aggregate results and reproduction phases, with nine numbered deviations. The protocol is a post-execution consolidation, not a preregistration. Earlier records retain their stated historical versions. These archives are separate from ordinary command-line and browser runs.</p>
+  <p>Each run records its resolved configuration, input identity, group-aware split, diagnostics, model outputs, and runtime. The current Zenodo records contain the executed-study protocol, aggregate results, and reproduction phases. The results record contains 303 qualified numerical outcomes from 360 native evaluation slots, with 57 unavailable: 16 of 24 series are complete and 8 are unavailable; 32 of 48 questions have numerical outcomes and 16 are unavailable; 443 of 445 core fits and 164 of 165 contrasts are recorded. These aggregates apply only to the configured component boundary. They do not establish a general method ranking, calibrated error control, or full high-level workflow matches for DIABLO, fuseMLR, or IntegratedLearner. The protocol is a post-execution consolidation, not a preregistration. Earlier records retain their stated historical versions. These archives are separate from ordinary command-line and browser runs.</p>
   <div class="tablewrap"><table>
     <thead><tr><th>Resource</th><th>Use</th></tr></thead>
     <tbody>
       <tr><td><a href="https://github.com/tunabirgun/omicau/releases/tag/v0.6.0">Omicau v0.6.0 release</a></td><td>Python wheel, software source and validation archive; verified desktop bundles are listed on the release page</td></tr>
       <tr><td><a href="https://github.com/tunabirgun/omicau">GitHub repository</a></td><td>Source and usage documentation</td></tr>
-      <tr><td><a href="https://doi.org/10.5281/zenodo.23404072">Current executed protocol, version 4.0.0</a></td><td>RF scientific protocol and readable reproduction phases</td></tr>
-      <tr><td><a href="https://doi.org/10.5281/zenodo.23404413">Current evaluation results, version 2.0.0</a></td><td>Aggregate Omicau 0.6.0 results and reproduction materials</td></tr>
-      <tr><td><a href="https://zenodo.org/records/22922940">Historical evaluation results</a></td><td>Earlier version-specific aggregate results</td></tr>
-      <tr><td><a href="https://doi.org/10.5281/zenodo.22304152">Historical frozen suite</a></td><td>Pre-execution protocol and source-registry context</td></tr>
+      <tr><td><a href="https://doi.org/10.5281/zenodo.23444777">Current executed-study protocol, version 6.3.0</a></td><td>Scientific protocol and readable reproduction phases</td></tr>
+      <tr><td><a href="https://doi.org/10.5281/zenodo.23444757">Current aggregate evaluation results, version 3.0.0</a></td><td>Aggregate numerical results and reproduction materials for the stable Omicau 0.6.0 evaluation</td></tr>
+      <tr><td><a href="https://doi.org/10.5281/zenodo.23404072">Previous protocol</a> and <a href="https://doi.org/10.5281/zenodo.23404413">previous results</a></td><td>Superseded records retained as historical versions</td></tr>
+      <tr><td><a href="https://zenodo.org/records/22922940">Earlier evaluation results</a> and <a href="https://doi.org/10.5281/zenodo.22304152">earlier frozen suite</a></td><td>Historical version-specific aggregate results and pre-execution context</td></tr>
     </tbody>
   </table></div>
   <pre><code>omicau verify --config config.json --audit run/audit.json</code></pre>

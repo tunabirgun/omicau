@@ -2,7 +2,7 @@
 
 `omicau` v0.6.0 is a local command-line and browser-based workflow for multi-omics data auditing and fusion evaluation. It aligns molecular layers, examines missingness and batch information, compares single-layer and fusion models with group-aware resampling, and writes a self-contained HTML report with machine-readable results. The report distinguishes a layer's standalone predictive performance from its added contribution to a specified model and endpoint.
 
-Source and release code: [github.com/tunabirgun/omicau](https://github.com/tunabirgun/omicau). Current RF validation materials are archived on [Zenodo](https://doi.org/10.5281/zenodo.23404413) and accompany the [0.6.0 release](https://github.com/tunabirgun/omicau/releases/download/v0.6.0/omicau-validation-0.6.0.zip).
+Source and release code: [github.com/tunabirgun/omicau](https://github.com/tunabirgun/omicau). Current aggregate [evaluation results](https://doi.org/10.5281/zenodo.23444757) and the [executed-study protocol](https://doi.org/10.5281/zenodo.23444777) are archived on Zenodo. They document the stable numerical Omicau 0.6.0 evaluation; the [versioned software release](https://github.com/tunabirgun/omicau/releases/tag/v0.6.0) and its assets remain separate.
 
 Ordinary users run `omicau run` or the optional local browser interface. The repository's `benchmarks/` harness and `benchmark_record/` files are archived evaluation materials; they are not invoked by the ordinary run or UI paths.
 
@@ -17,7 +17,7 @@ Research use only. Predictive performance does not establish clinical utility, i
 
 ## Evaluation materials
 
-The [executed protocol and reproduction scripts](https://doi.org/10.5281/zenodo.23404072) and [0.6.0 evaluation results](https://doi.org/10.5281/zenodo.23404413) provide the current RF protocol, aggregate results, environment pins and separate readable reproduction phases. Both records list nine numbered deviations and preserve their earlier versions. The [earlier protocol](https://doi.org/10.5281/zenodo.22304152) and [earlier results](https://doi.org/10.5281/zenodo.22922940) remain explicitly historical records. The current protocol is a post-execution consolidation, not a preregistration. Evaluation scripts are separate from the ordinary `omicau run` and browser workflows. The report from an ordinary run includes its own split, model, control, and runtime records so that a user can assess the specific analysis performed.
+The [executed protocol and reproduction scripts](https://doi.org/10.5281/zenodo.23444777) (version 6.3.0) and [evaluation results](https://doi.org/10.5281/zenodo.23444757) (version 3.0.0) provide the current protocol, aggregate results, environment pins and separate readable reproduction phases for the stable numerical Omicau 0.6.0 evaluation. The results record contains 303 qualified numerical outcomes from 360 native evaluation slots, with 57 unavailable. It covers 24 series (16 complete and 8 unavailable) and 48 questions (32 numerical and 16 unavailable), and records 443 of 445 core fits and 164 of 165 contrasts. These aggregates apply only to the configured component boundary. They do not establish a general method ranking, calibrated error control, or full high-level workflow matches for DIABLO, fuseMLR, or IntegratedLearner. The [previous protocol](https://doi.org/10.5281/zenodo.23404072), [previous results](https://doi.org/10.5281/zenodo.23404413), [earlier protocol](https://doi.org/10.5281/zenodo.22304152), and [earlier results](https://doi.org/10.5281/zenodo.22922940) remain explicitly historical records. The current protocol is a post-execution consolidation, not a preregistration. Evaluation scripts are separate from the ordinary `omicau run` and browser workflows. The report from an ordinary run includes its own split, model, control, and runtime records so that a user can assess the specific analysis performed.
 
 ## Reading layer results
 
@@ -168,9 +168,9 @@ These safeguards reduce specific, testable sources of optimistic bias. They do n
 | --- | --- | --- |
 | Software release | [`omicau` v0.6.0](https://github.com/tunabirgun/omicau/releases/tag/v0.6.0) | Installable command-line software and archived source code. |
 | Source repository | [github.com/tunabirgun/omicau](https://github.com/tunabirgun/omicau) | Release code, configuration schema, and documentation. |
-| Current executed protocol | [Version 4.0.0](https://doi.org/10.5281/zenodo.23404072) | Current scientific protocol and readable reproduction phases; post-execution consolidation. |
-| Current RF evaluation | [Version 2.0.0](https://doi.org/10.5281/zenodo.23404413) | Complete aggregate results and reproduction materials for Omicau 0.6.0. |
-| Historical evaluation | [Protocol](https://doi.org/10.5281/zenodo.22304152) and [results](https://doi.org/10.5281/zenodo.22922940) | Earlier version-specific settings and results; not the current paired-ledger evaluation. |
+| Current executed protocol | [Version 6.3.0](https://doi.org/10.5281/zenodo.23444777) | Current scientific protocol and readable reproduction phases; post-execution consolidation. |
+| Current aggregate evaluation | [Version 3.0.0](https://doi.org/10.5281/zenodo.23444757) | Aggregate numerical results and reproduction materials for the stable Omicau 0.6.0 evaluation. |
+| Historical evaluation records | [Previous protocol](https://doi.org/10.5281/zenodo.23404072), [previous results](https://doi.org/10.5281/zenodo.23404413), [earlier protocol](https://doi.org/10.5281/zenodo.22304152), and [earlier results](https://doi.org/10.5281/zenodo.22922940) | Superseded version-specific settings and results; not the current aggregate evaluation. |
 
 Each run records the resolved configuration, aligned-value SHA-256 provenance, relevant dependency versions, diagnostics, and output paths in `audit.json`. Re-run `omicau verify` against the source configuration and stored audit to detect changes in aligned inputs or feature footprints.
 
