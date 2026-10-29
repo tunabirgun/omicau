@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Build the Linux onedir app + AppImage.
 #   bash packaging/build-linux.sh
-# CPU-only torch is essential on Linux: the default manylinux torch wheel bundles
-# CUDA (~900 MB); the CPU index drops it to ~170-190 MB.
+# Install PyTorch from its CPU wheel index for this Linux bundle.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"

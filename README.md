@@ -86,6 +86,8 @@ Research use only. Results depend on the cohort, endpoint, assays and reference 
 
 Stacking requires a validated nested plan through `cv.split_manifest` and `cv.inner_splits`; ordinary dynamic-split runs report it as unavailable. The manifest format is `omicau_public_split_manifest_v2`, bound to aligned values, group identities and declared design strata.
 
+The [fixed-split guide](docs/fixed-split-controls.md) describes the supported tasks, required grouping and manifest structure.
+
 Fixed-plan target-permutation controls require `clinical.permutation_strata` declared before fitting. They permute endpoint-constant groups within training strata under an exchangeability assumption. Feature-shuffling, noise and legacy dynamic-split controls are descriptive stress checks, not universal leakage guarantees.
 
 ## Outputs and verification
@@ -113,6 +115,8 @@ The evaluation includes 737 completed simulation datasets out of 740 intended, 2
 Comparisons concern the evaluated configurations, including dense DIABLO-framework PLS-DA and component-level fuseMLR and IntegratedLearner adapters. No IntegratedLearner series met the complete-series requirement. Expanded-panel comparisons are secondary and descriptive; they do not establish a general method ranking. See the [evaluation guide](https://tunabirgun.github.io/omicau/reproducibility.html#evaluation) for tuning, eligibility and uncertainty.
 
 Archived evaluation scripts are separate from ordinary CLI and browser runs. Start with the archive README and `protocol/EXECUTED_STUDY.md`. Molecular matrices, individual outcomes, identifiers and predictions are excluded; prediction-level reproduction requires obtaining the documented sources under their access terms and generating records locally. See [reproduction scope](https://tunabirgun.github.io/omicau/reproducibility.html#reproduce) and [earlier records](https://tunabirgun.github.io/omicau/reproducibility.html#history).
+
+The repository's legacy protocol and harness are distinguished from the current deposits in the [benchmark-record guide](https://github.com/tunabirgun/omicau/blob/main/docs/benchmark-records.md).
 
 ## Development
 

@@ -1,8 +1,8 @@
-# Build the Windows onedir app + installer.
+# Build the Windows directory bundle and optional installer.
 #   powershell -File packaging/build-windows.ps1
-# Prereqs: Python 3.12, and (for signing) the code-signing identity used for
-# BulkSeq Studio so SmartScreen reputation carries over. Inno Setup 6 on PATH
-# (iscc) is needed for the installer step.
+# Run from the repository root with Python 3.12, as in CI.
+# Inno Setup 6 (iscc on PATH) enables the optional installer step.
+# Executable signing additionally requires signtool and a configured certificate.
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 
@@ -19,7 +19,7 @@ $dist = Join-Path $root "dist/omicau"
 if (-not (Test-Path (Join-Path $dist "omicau.exe"))) { throw "build failed: omicau.exe missing" }
 Write-Host "Built $dist"
 
-# Optional: sign the inner exe (reuse the BulkSeq identity or Azure Trusted Signing)
+# Optional: sign the inner executable. This does not sign the installer.
 if ($env:OMICAU_SIGN_CERT) {
   Write-Host "== signing omicau.exe =="
   signtool sign /fd SHA256 /f $env:OMICAU_SIGN_CERT /p $env:OMICAU_SIGN_PASS /tr http://timestamp.digicert.com /td SHA256 (Join-Path $dist "omicau.exe")

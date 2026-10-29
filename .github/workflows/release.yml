@@ -1,4 +1,4 @@
-# Build the desktop app on each OS and attach the installers to a GitHub Release.
+# Build and smoke-test desktop bundles on each OS; store them as CI artifacts.
 # PyInstaller cannot cross-compile, so each artifact is built on its own runner.
 name: build-desktop
 
@@ -44,7 +44,7 @@ jobs:
         run: ${{ matrix.script }}
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
-          # Signing secrets are injected only in the release environment.
+          # Optional signing secrets are passed to the build scripts.
           OMICAU_SIGN_CERT: ${{ secrets.WINDOWS_SIGN_CERT }}
           OMICAU_SIGN_PASS: ${{ secrets.WINDOWS_SIGN_PASS }}
           OMICAU_SIGN_ID: ${{ secrets.MACOS_SIGN_ID }}

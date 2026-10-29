@@ -1,42 +1,50 @@
 # Fixed splits and controls
 
-Use the normal workflow when a study-specific split plan is not pre-specified:
+This guide describes the public fixed-partition interface in Omicau v0.6.0. For installation and an ordinary synthetic run, use the [quickstart](../README.md#minimal-usage) or [browser guide](https://tunabirgun.github.io/omicau/guide.html).
+
+## Optional browser interface
+
+From the extracted release source directory, install the interface and launch it locally:
 
 ```bash
-omicau check-env
-omicau bootstrap --dataset mock --out-dir demo
-omicau run --config demo/config.json --cores 8 --device cpu --no-llm
-omicau verify --config demo/config.json --audit demo/run/audit.json
+python -m pip install ".[ui]"
+omicau ui --host 127.0.0.1
 ```
 
-Install the wheel from the GitHub release:
+Use the versioned release source; v0.6.0 was not published to PyPI. The browser exposes a subset of configuration options and does not provide an external-holdout workflow. Advanced split configuration is supplied through the JSON configuration and manifest.
 
-```bash
-python -m pip install ./omicau-0.6.0-py3-none-any.whl
-```
+## Define a fixed nested plan
 
-This installation route uses the release asset directly.
+The v0.6.0 CLI accepts fixed manifests for classification and regression and requires `clinical.group`. The `cv.independent_rows` option does not replace that requirement on the fixed-plan route.
 
-`omicau ui --host 127.0.0.1` starts the optional local browser interface after installation with `omicau[ui]`. The interface binds to localhost; it does not provide an external-holdout workflow.
-
-The repository's `benchmarks/` harness and `benchmark_record/` are archived evaluation materials. They are separate from the ordinary `omicau run` and UI execution paths.
-
-For a pre-specified nested evaluation, create and freeze a JSON manifest before model fitting, then add its relative or absolute path as `cv.split_manifest` and its nested fold count as `cv.inner_splits`. A public manifest has exactly these top-level fields:
+Create the plan before model fitting. Set `cv.split_manifest` to its JSON path, `cv.n_splits` to its outer-fold count, and `cv.inner_splits` to its nested-fold count. Relative manifest paths are resolved from the configuration directory. The envelope has exactly these five fields:
 
 ```json
 {
   "schema_version": "omicau_public_split_manifest_v2",
-  "aligned_provenance_sha256": "...",
-  "aligned_group_sha256": "...",
-  "aligned_permutation_strata_sha256": "... or null",
+  "aligned_provenance_sha256": "<aligned-input digest>",
+  "aligned_group_sha256": "<aligned-group digest>",
+  "aligned_permutation_strata_sha256": null,
   "outer_folds": []
 }
 ```
 
-Each outer fold records `train`, `assessment`, and `inner_folds` in the canonical aligned order. The implementation verifies the value, group, and strata bindings before model construction. The executable construction example is `tests/test_public_fixed_split_cli.py`; it derives the bindings with `omicau.models.split_plan.public_manifest_identity_binding` after alignment.
+This shows the structure, not a runnable manifest: replace the digest placeholders and empty fold list with values derived from the aligned inputs. The strata field is `null` only when no permutation strata are declared; otherwise it contains their ordered-identity digest.
 
-Stacking fusion is available only after this nested plan validates. Without a validated nested plan, the ordinary dynamic-split route omits stacking and records an unavailable status rather than producing a nonnested estimate.
+Each outer fold has `train`, `assessment` and `inner_folds`. Each inner fold has `train` and `assessment`. All indices are zero-based positions in the full canonical aligned sample order, including inner-fold indices; they are not sample identifiers or positions relative to the outer-training subset. Inner folds partition only their outer-training rows. The validator checks group separation, exact assessment coverage, fold counts and task-specific outcome support before constructing models.
 
-To request the fixed-plan group target-permutation stress control, set `clinical.group`, `clinical.permutation_strata`, `cv.split_manifest`, and `cv.inner_splits`. Strata must be declared clinical design variables and must not be derived from the endpoint. The endpoint must be constant within each group. The control permutes whole groups inside declared training strata while preserving assessment outcomes. Its result is conditional on the stated exchangeability assumption; it is not automatically a global-chance result. Read the control receipt before interpretation.
+Use `omicau.models.split_plan.public_manifest_identity_binding` after alignment to derive group and strata bindings. The [v0.6.0 synthetic construction example](https://github.com/tunabirgun/omicau/blob/v0.6.0/tests/test_public_fixed_split_cli.py) demonstrates the format and rejection of changed input, group, strata or fold bindings. Tests are available in the repository, rather than the source distribution. Adapt the split design to the study; the test fixture is not a study partition plan.
 
-Feature shuffling and random-noise controls are descriptive stress controls. Ordinary dynamic-split target shuffling remains descriptive and is not group-safe. No control result proves absence of leakage, bias, or confounding.
+Stacking is available only after the nested plan validates. Ordinary dynamic-split runs record stacking as unavailable instead of supplying a nonnested estimate.
+
+## Permutation and stress controls
+
+When `controls.enabled` and `controls.shuffle_target` are both true, a fixed-plan run also requires `clinical.permutation_strata`. Declare those design variables before analysis; they must not be endpoint columns or derived from the outcome. The endpoint must be constant within each group. To omit this control, set `controls.shuffle_target` to `false` before fitting and retain that choice in the configuration.
+
+The fixed-plan control permutes whole groups within declared training strata while preserving assessment outcomes. Its interpretation depends on exchangeability within those strata. It is not automatically a global-chance result; inspect the recorded control eligibility and scope.
+
+Feature-shuffling and random-noise controls are descriptive stress checks. Ordinary dynamic-split target shuffling is also descriptive and is not group-safe. No control result proves the absence of leakage, bias or confounding.
+
+## Application and study records
+
+An ordinary run records the actual split and control information in its audit. `omicau verify` compares the aligned-input fingerprint; it does not revalidate the whole split design, replay fitting or establish scientific validity. The [current evaluation scripts](https://github.com/tunabirgun/omicau/blob/main/docs/benchmark-records.md) are a separate study workflow, with their own recorded configuration and reproduction scope.
