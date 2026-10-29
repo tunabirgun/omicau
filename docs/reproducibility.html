@@ -1,0 +1,53 @@
+<!doctype html>
+
+<html lang="en" data-theme="light">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark"><title>Evaluation and sources | Omicau</title><meta name="description" content="Omicau: local multi-omics input checks, matched predictive comparisons and assay-contribution reports."><link rel="stylesheet" href="assets/site.css"><script src="assets/site.js" defer></script>
+</head>
+
+<body data-page=""><a class="skip-link" href="#main-content">Skip to content</a>
+<header class="site-header shell"><a class="brand" href="index.html">Omicau<span class="version">v0.6.0</span></a>
+<div class="header-tools">
+<nav class="site-nav" id="site-navigation" aria-label="Main navigation"><a href="guide.html">Start</a><a href="interpretation.html">Interpret</a><a href="reproducibility.html" aria-current="page">Reproduce</a>
+</nav>
+<div class="appearance" hidden role="group" aria-label="Appearance"><button type="button" data-theme-choice="light" aria-pressed="true">Light</button><span aria-hidden="true">/</span><button type="button" data-theme-choice="dark" aria-pressed="false">Dark</button>
+</div><button id="menu-button" hidden type="button" aria-controls="site-navigation" aria-expanded="false">Menu</button>
+</div>
+</header>
+<main id="main-content" tabindex="-1" class="page-layout shell">
+<nav class="page-sidebar" aria-label="On this page"><p>On this page</p><a href="#resources">Current resources</a><a href="#evaluation">What the evaluation covers</a><a href="#reproduce">Reproduce a run</a><a href="#history">Earlier records</a>
+</nav>
+<article class="article"><h1>Inspect the evidence.</h1><p class="lead">Software releases, evaluation results and the study protocol are separate resources.</p>
+<section id="resources"><h2>Current resources</h2>
+<dl class="resource-list">
+<div><dt><a href="https://github.com/tunabirgun/omicau/releases/tag/v0.6.0">Omicau v0.6.0</a></dt><dd>Python wheel, software source, validation archive and desktop bundles.</dd>
+</div>
+<div><dt><a href="https://doi.org/10.5281/zenodo.23444757">Evaluation results</a></dt><dd>Version 3.0.0. Aggregate numerical results and readable reproduction materials for the stable Omicau 0.6.0 evaluation.</dd>
+</div>
+<div><dt><a href="https://doi.org/10.5281/zenodo.23444777">Executed-study protocol</a></dt><dd>Version 6.3.0. Scientific settings, recorded deviations and reproduction phases. This version consolidates the executed study after completion.</dd>
+</div>
+<div><dt><a href="https://github.com/tunabirgun/omicau/releases/download/v0.6.0/omicau-validation-0.6.0.zip">Release validation archive</a></dt><dd>The validation material distributed with the versioned software release.</dd>
+</div>
+</dl>
+</section>
+<section id="evaluation"><h2>What the evaluation covers</h2><p>The current results archive contains 303 qualified numerical outcomes from 360 native evaluation slots, with 57 unavailable. Of 24 series, 16 are complete and 8 are unavailable; 32 of 48 questions have numerical outcomes and 16 are unavailable. It also records 443 of 445 core fits and 164 of 165 contrasts.</p><p>These results describe the configured components and their evaluation conditions. They do not establish a general method ranking or calibrated error control. The evaluated DIABLO, fuseMLR and IntegratedLearner configurations do not reproduce every part of the packages’ high-level workflows.</p><p>The current protocol is a post-execution consolidation, not a preregistration. Earlier records retain their stated prospective or historical roles.</p>
+</section>
+<section id="reproduce"><h2>Reproduce a run</h2><p>Each ordinary run records its resolved configuration, input identity, split information, diagnostics, model outputs and runtime. Retain these with the inputs when inspecting an analysis.</p>
+<div class="code-block">
+<div class="code-actions"><span role="status" aria-live="polite"></span><button type="button" data-copy="verify-command" hidden>Copy commands</button>
+</div><pre tabindex="0"><code id="verify-command">omicau verify --config config.json --audit run/audit.json</code></pre>
+</div><p>The archived evaluation scripts are separate from ordinary command-line and browser runs. Use the environment pins and numbered reproduction phases supplied with the evaluation archive to inspect the study.</p>
+</section>
+<section id="history"><h2>Earlier records</h2>
+<details>
+<summary>View the archived protocol and result versions
+</summary>
+<div><ul><li><a href="https://doi.org/10.5281/zenodo.23404072">Previous protocol</a> and <a href="https://doi.org/10.5281/zenodo.23404413">previous results</a>.</li><li><a href="https://doi.org/10.5281/zenodo.22304152">Earlier frozen suite</a> and <a href="https://zenodo.org/records/22922940">earlier evaluation results</a>.</li></ul><p>Use the current resources above for the consolidated evaluation. Earlier deposits remain available as part of the study record.</p>
+</div>
+</details>
+</section>
+</article>
+</main>
+<footer class="site-footer shell"><p>Built by <a href="https://github.com/tunabirgun">Tuna Birgün</a>. Research use only.</p><a href="https://github.com/tunabirgun/omicau">Source on GitHub</a>
+</footer>
+</body>
+</html>

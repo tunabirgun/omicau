@@ -1,0 +1,80 @@
+<!doctype html>
+
+<html lang="en" data-theme="light">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark"><title>Start a run | Omicau</title><meta name="description" content="Omicau: local multi-omics input checks, matched predictive comparisons and assay-contribution reports."><link rel="stylesheet" href="assets/site.css"><script src="assets/site.js" defer></script>
+</head>
+
+<body data-page=""><a class="skip-link" href="#main-content">Skip to content</a>
+<header class="site-header shell"><a class="brand" href="index.html">Omicau<span class="version">v0.6.0</span></a>
+<div class="header-tools">
+<nav class="site-nav" id="site-navigation" aria-label="Main navigation"><a href="guide.html" aria-current="page">Start</a><a href="interpretation.html">Interpret</a><a href="reproducibility.html">Reproduce</a>
+</nav>
+<div class="appearance" hidden role="group" aria-label="Appearance"><button type="button" data-theme-choice="light" aria-pressed="true">Light</button><span aria-hidden="true">/</span><button type="button" data-theme-choice="dark" aria-pressed="false">Dark</button>
+</div><button id="menu-button" hidden type="button" aria-controls="site-navigation" aria-expanded="false">Menu</button>
+</div>
+</header>
+<main id="main-content" tabindex="-1" class="page-layout shell">
+<nav class="page-sidebar" aria-label="On this page"><p>On this page</p><a href="#quickstart">Command line</a><a href="#browser">Local browser interface</a><a href="#inputs">Prepare your inputs</a><a href="#workflow">Follow the run</a><a href="#outputs">Inspect the outputs</a>
+</nav>
+<article class="article"><h1>Start with your data.</h1><p class="lead">Use the bundled synthetic example first, then define an endpoint and the assays you want to compare.</p>
+<section id="quickstart"><h2>Command line</h2><p>Download the Python wheel from the <a href="https://github.com/tunabirgun/omicau/releases/tag/v0.6.0">v0.6.0 release</a>. With Python 3.10 or later installed, run these commands from the directory containing the wheel.</p>
+<div class="code-block">
+<div class="code-actions"><span role="status" aria-live="polite"></span><button type="button" data-copy="cli-commands" hidden>Copy commands</button>
+</div><pre tabindex="0"><code id="cli-commands">python -m pip install ./omicau-0.6.0-py3-none-any.whl
+omicau check-env
+omicau bootstrap --dataset mock --out-dir demo
+omicau run --config demo/config.json --cores 8
+omicau verify --config demo/config.json --audit demo/run/audit.json</code></pre>
+</div><p>Open <code>demo/run/report.html</code> when the run finishes. Choose a core count that fits your available memory and workload.</p><p>Desktop bundles for Windows, Linux and macOS are also listed on the release page.</p>
+</section>
+<section id="browser"><h2>Local browser interface</h2><p>For guided input selection, download and extract the software source from the <a href="https://github.com/tunabirgun/omicau/releases/tag/v0.6.0">release page</a>. From that source directory, install the optional interface and launch it:</p>
+<div class="code-block">
+<div class="code-actions"><span role="status" aria-live="polite"></span><button type="button" data-copy="ui-commands" hidden>Copy commands</button>
+</div><pre tabindex="0"><code id="ui-commands">python -m pip install &quot;.[ui]&quot;
+omicau ui</code></pre>
+</div><p>Open the local address printed in the terminal. The browser uses the same analysis pipeline and exposes a subset of its configuration options. Keep the terminal running while using the interface.</p>
+</section>
+<section id="inputs"><h2>Prepare your inputs</h2><p>Provide one numeric CSV or TSV matrix per assay and a clinical table containing the outcome. Omicau aligns the samples across those inputs.</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr><th scope="col">Input</th><th scope="col">What it supplies</th>
+</tr>
+</thead>
+<tbody>
+<tr><td>Assay matrices</td><td>Numeric features for each molecular layer.</td>
+</tr>
+<tr><td>Clinical table</td><td>Sample identifiers, endpoint, and available group and batch columns.</td>
+</tr>
+<tr><td>Configuration</td><td>Input paths, outcome definition, model settings and output directory.</td>
+</tr>
+</tbody>
+</table>
+</div><p>Use the outermost independent source as the group: for example, keep repeated observations from one participant together. Include a batch variable when it is available.</p><p><a href="https://github.com/tunabirgun/omicau#minimal-configuration">See the configuration example</a></p>
+</section>
+<section id="workflow"><h2>Follow the run</h2><p>The workflow aligns inputs and records sample availability, missingness and group structure. Learned preprocessing is fitted in training data, and models are evaluated on shared partitions that respect the declared groups.</p><p>Single-assay, full-fusion and omitted-assay reference models provide complementary views of prediction. Inspect their scores together with the <a href="interpretation.html">paired layer results and diagnostics</a>.</p>
+</section>
+<section id="outputs"><h2>Inspect the outputs</h2>
+<div class="table-wrap">
+<table>
+<thead>
+<tr><th scope="col">File</th><th scope="col">Use</th>
+</tr>
+</thead>
+<tbody>
+<tr><td><code>report.html</code></td><td>Read the interactive report in a browser.</td>
+</tr>
+<tr><td><code>audit.json</code></td><td>Inspect the configuration, provenance, model summaries and diagnostic records.</td>
+</tr>
+<tr><td>CSV exports</td><td>Read model metrics and modality-level results in other tools.</td>
+</tr>
+</tbody>
+</table>
+</div><p>Keep the resolved configuration with the run outputs. Use <code>omicau verify</code> to check the stored provenance.</p>
+</section>
+</article>
+</main>
+<footer class="site-footer shell"><p>Built by <a href="https://github.com/tunabirgun">Tuna Birgün</a>. Research use only.</p><a href="https://github.com/tunabirgun/omicau">Source on GitHub</a>
+</footer>
+</body>
+</html>
