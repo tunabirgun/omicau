@@ -98,7 +98,7 @@ pre code{font-size:1em;overflow-wrap:normal}
 .code-actions{display:flex;justify-content:flex-end;align-items:center;gap:16px;margin-bottom:8px;font-size:.75rem}
 .code-actions button{border:0;border-bottom:1px solid var(--muted);background:none;padding:2px 0}
 .code-actions [role=status]{color:var(--muted)}
-.table-wrap{overflow-x:auto}
+.table-wrap{overflow-x:auto;margin-block:20px}
 table{width:100%;border-collapse:collapse;text-align:left;font-size:.9rem;line-height:1.55}
 th{font-weight:600;border-bottom:1px solid var(--ink);padding:12px 14px 12px 0}
 td{padding:15px 14px 15px 0;vertical-align:top;border-bottom:1px solid var(--line)}

@@ -17,9 +17,9 @@
 <nav class="page-sidebar" aria-label="On this page"><p>On this page</p><a href="#scores">Start with absolute scores</a><a href="#contribution">Read the layer contribution</a><a href="#uncertainty">Keep uncertainty in view</a><a href="#checks">Inspect analysis checks</a><a href="#scope">Use within the evaluated scope</a>
 </nav>
 <article class="article"><h1>Read the comparison.</h1><p class="lead">A standalone score, an assay-omission contrast and a diagnostic warning answer different questions.</p>
-<section id="scores"><h2>Start with absolute scores</h2><p>Compare each assay alone with the full-fusion model. Strong prediction from a single assay does not by itself show a benefit from combining assays.</p><p>Then inspect the reference model with each assay omitted and refitted on the same assessment partitions. The paired difference measures the performance change associated with including that assay in this configured pipeline.</p>
+<section id="scores"><h2>Start with absolute scores</h2><p>Compare each assay alone with the full-fusion model. Strong prediction from a single assay does not by itself show a benefit from combining assays.</p><p>The layer ledger uses the declared classical reference estimator, selected before fitting rather than by the best observed score. Neural scores and feature attributions do not determine its category.</p><p>Then inspect that reference model with each assay omitted and refitted on the same assessment partitions. The paired difference is the full-model score minus the omitted-assay score: AUROC for classification and R-squared for regression. Read absolute scores alongside the change; a relative improvement can still leave both R-squared scores below zero.</p>
 </section>
-<section id="contribution"><h2>Read the layer contribution</h2><p>The layer ledger compares the full-model score with the score after an assay is omitted. Its category uses the unrounded interval bounds.</p>
+<section id="contribution"><h2>Read the layer contribution</h2><p>The ledger reports an ordinary 95% interval and a family decision interval. The category uses the unrounded bounds of the family decision interval for the intended assay comparisons in that reference-model ledger.</p>
 <div class="table-wrap">
 <table>
 <thead>
@@ -29,17 +29,17 @@
 <tbody>
 <tr><td>Increased held-out performance</td><td>The family decision interval lies entirely above zero.</td>
 </tr>
-<tr><td>Reduced held-out performance</td><td>The interval lies entirely below zero.</td>
+<tr><td>Reduced held-out performance</td><td>The family decision interval lies entirely below zero.</td>
 </tr>
-<tr><td>Unresolved</td><td>The interval crosses or touches zero.</td>
+<tr><td>Unresolved</td><td>The family decision interval crosses or touches zero.</td>
 </tr>
 <tr><td>Unavailable</td><td>Paired records are missing or incompatible; read the recorded reason.</td>
 </tr>
 </tbody>
 </table>
-</div><p>With only one assay, a layer-contribution comparison is not applicable. Diagnostic warnings remain separate from the category.</p>
+</div><p>With only one assay, a layer-contribution comparison is not applicable. The v0.6.0 paired category supports classification and regression; survival comparisons are unavailable under this rule. Standalone scores and diagnostic warnings remain separate from the category.</p>
 </section>
-<section id="uncertainty"><h2>Keep uncertainty in view</h2><p>Intervals resample saved held-out predictions. They describe those fitted predictions and omit variation from retraining, feature reselection or choosing another partition.</p><p>The wider family quantiles are an operational reporting convention; population coverage and family-error control have not been established. Read the effect size, interval and standalone scores together. An unresolved category does not establish an absence of biological information.</p>
+<section id="uncertainty"><h2>Keep uncertainty in view</h2><p>Intervals resample saved held-out predictions at the declared independent-unit level: groups, or individual rows when independence is explicitly declared. They describe those fitted predictions and omit variation from retraining, feature reselection or choosing another partition.</p><p>The family quantiles are an operational reporting convention; population coverage and family-error control have not been established. Read the effect size, both intervals and standalone scores together. An unresolved category does not establish an absence of biological information.</p>
 </section>
 <section id="checks"><h2>Inspect analysis checks</h2><ul><li><strong>Inputs:</strong> review sample alignment, missingness, group structure and available batch labels.</li><li><strong>Models:</strong> inspect the shared partitions, simpler baselines, fusion scores and calibration summaries.</li><li><strong>Controls:</strong> read which controls were eligible and what their results assess.</li></ul><p>A warning provides context for the run; it is not evidence of a causal mechanism. The report records the specific checks performed.</p>
 </section>
