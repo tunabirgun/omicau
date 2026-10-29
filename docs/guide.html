@@ -25,7 +25,7 @@ omicau check-env
 omicau bootstrap --dataset mock --out-dir demo
 omicau run --config demo/config.json --cores 8
 omicau verify --config demo/config.json --audit demo/run/audit.json</code></pre>
-</div><p>Open <code>demo/run/report.html</code> when the run finishes. Choose a core count that fits your available memory and workload.</p><p>Desktop bundles for Windows, Linux and macOS are also listed on the release page.</p>
+</div><p>Open <code>demo/run/report.html</code> when the run finishes. Choose a core count that fits your available memory and workload. The synthetic example demonstrates the workflow; it is separate from the archived evaluation datasets.</p><p>Desktop bundles are available for Windows x86-64, Linux x86-64 and macOS ARM64. The Windows bundle is unsigned; the macOS bundle is not signed or notarized. Install the versioned release assets above: v0.6.0 was not published to PyPI or a Conda channel.</p>
 </section>
 <section id="browser"><h2>Local browser interface</h2><p>For guided input selection, download and extract the software source from the <a href="https://github.com/tunabirgun/omicau/releases/tag/v0.6.0">release page</a>. From that source directory, install the optional interface and launch it:</p>
 <div class="code-block">
@@ -50,9 +50,9 @@ omicau ui</code></pre>
 </tr>
 </tbody>
 </table>
-</div><p>Use the outermost independent source as the group: for example, keep repeated observations from one participant together. Include a batch variable when it is available.</p><p><a href="https://github.com/tunabirgun/omicau#minimal-configuration">See the configuration example</a></p>
+</div><p>Matrices may place samples in rows or columns. Retain missing values as missing values. Set <code>clinical.group</code> to the outermost independent unit: for example, keep repeated observations from one participant together. Include a batch variable when it is available.</p><p>If no grouping variable exists, <code>cv.independent_rows: true</code> is an explicit assumption that rows are independent. Use it only when the study design supports that assumption, rather than to bypass missing group metadata.</p><p><a href="https://github.com/tunabirgun/omicau#minimal-configuration">See the configuration example</a></p>
 </section>
-<section id="workflow"><h2>Follow the run</h2><p>The workflow aligns inputs and records sample availability, missingness and group structure. Learned preprocessing is fitted in training data, and models are evaluated on shared partitions that respect the declared groups.</p><p>Single-assay, full-fusion and omitted-assay reference models provide complementary views of prediction. Inspect their scores together with the <a href="interpretation.html">paired layer results and diagnostics</a>.</p>
+<section id="workflow"><h2>Follow the run</h2><p>The workflow aligns inputs and records sample availability, missingness and group structure. Model preprocessing is fitted in the relevant training folds, and assessment partitions preserve the declared independent units. Transformations performed before importing the data remain the user's responsibility.</p><p>Single-assay, full-fusion and omitted-assay reference models provide complementary views of prediction. Inspect their scores together with the <a href="interpretation.html">paired layer results and diagnostics</a>.</p><p>Stacking requires a validated nested split plan through <code>cv.split_manifest</code> and <code>cv.inner_splits</code>. Without that plan, ordinary dynamic-split runs report stacking as unavailable. The <a href="https://github.com/tunabirgun/omicau#fixed-split-manifests-and-controls">split and control documentation</a> explains the required configuration.</p>
 </section>
 <section id="outputs"><h2>Inspect the outputs</h2>
 <div class="table-wrap">
@@ -70,7 +70,7 @@ omicau ui</code></pre>
 </tr>
 </tbody>
 </table>
-</div><p>Keep the resolved configuration with the run outputs. Use <code>omicau verify</code> to check the stored provenance.</p>
+</div><p>Keep the resolved configuration with the run outputs. <code>omicau verify</code> compares the aligned-input fingerprint with the stored audit. It does not rerun the models or validate their scientific conclusions.</p>
 </section>
 </article>
 </main>
