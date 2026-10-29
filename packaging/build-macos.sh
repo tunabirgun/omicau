@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# Build the macOS (Apple Silicon) app, sign, notarize, and package a .dmg.
+# Build a macOS ARM64 disk image with optional signing and notarization.
 #   bash packaging/build-macos.sh
 #
-# ARM64 ONLY: PyTorch stopped shipping macOS x86_64 wheels after 2.2.2 (Jan 2024),
-# so a universal2 binary with modern torch is impossible. State arm64-only in the
-# release notes; do not imply Intel support.
+# This script requires Apple Silicon and does not produce an Intel or
+# universal2 bundle. The v0.6.0 release is ARM64 only on macOS.
 #
 # Signing/notarization env (set before running):
 #   OMICAU_SIGN_ID     "Developer ID Application: Your Name (TEAMID)"

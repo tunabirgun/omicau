@@ -1,7 +1,6 @@
 ; Inno Setup script for omicau (Windows installer).
 ; Compile through packaging/build-windows.ps1, which injects the package version.
-; Sign the resulting installer and the inner omicau.exe with the same identity so
-; SmartScreen reputation accrues to one certificate.
+; Installer signing is separate from build-windows.ps1's inner-executable signing.
 
 #define AppName "omicau"
 ; Version is injected by build-windows.ps1 from pyproject.toml (iscc /DAppVersion=X.Y.Z).
